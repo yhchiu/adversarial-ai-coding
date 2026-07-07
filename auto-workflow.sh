@@ -19,6 +19,9 @@
 #   TOOLS        Claude Code 的 --allowedTools 清單
 #   GATE_CMD     確定性品質關卡指令(build+lint+test,預設依專案自動偵測)
 #   BUILD_GATE_CMD  逐任務的輕量關卡(只驗編譯,預設依專案自動偵測)
+#   HUMAN_GATE   1=規格通過審查後暫停等人工核准(預設 1;無人值守請設 0)
+#   OPEN_PR      1=結尾自動 push 並開 GitHub PR(預設 0,只印出指令)
+#   NOTIFY_CMD   通知指令,訊息以第一個參數傳入(例:NOTIFY_CMD="ntfy publish mytopic")
 set -Eeuo pipefail
 
 # ---------- 設定 ----------
@@ -26,6 +29,9 @@ ENGINE_A="${ENGINE_A:-claude}"
 ENGINE_B="${ENGINE_B:-codex}"
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
+HUMAN_GATE="${HUMAN_GATE:-1}"
+OPEN_PR="${OPEN_PR:-0}"
+NOTIFY_CMD="${NOTIFY_CMD:-}"
 TOOLS="${TOOLS:-Bash(git *),Bash(go *)}"
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
@@ -40,6 +46,11 @@ usage() {
 }
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少必要指令:$1" >&2; exit 1; }; }
+
+notify() {  # $1: 訊息;NOTIFY_CMD 會以第一個參數收到訊息
+  [[ -z "$NOTIFY_CMD" ]] && return 0
+  $NOTIFY_CMD "$1" || echo "(通知指令執行失敗:$NOTIFY_CMD)" >&2
+}
 
 # ---------- 純函式 helpers(可被測試 source) ----------
 verdict_approved() {  # $1: verdict.json 路徑;0 = 審查通過
@@ -129,6 +140,7 @@ check_protected() {  # $1: 工作者引擎;受保護檔被改動時強制回復,
     { echo "!! 受保護的驗收測試檔被改動:"; sed 's/^/  - /' <<<"$viol"; } | tee -a "$LOG" >&2
     if (( n >= 2 )); then
       echo "!! 工作者多次改動受保護測試檔仍未回復,停止,需人工介入。" >&2
+      notify "auto-workflow:[$CUR_STAGE] 受保護測試檔遭改動且未回復,需人工介入"
       exit 1
     fi
     n=$(( n + 1 ))
@@ -230,6 +242,7 @@ gate_loop() {  # $1: 工作者引擎  $2: 關卡指令(空字串 = 跳過);失�
     if (( n >= MAX_ROUNDS )); then
       echo "!! [$CUR_STAGE] 品質關卡連續 $MAX_ROUNDS 次未過,停止,需人工介入。輸出:" >&2
       printf '%s\n' "$out" | tail -50 >&2
+      notify "auto-workflow:[$CUR_STAGE] 品質關卡連續失敗,需人工介入"
       exit 1
     fi
     n=$(( n + 1 ))
@@ -255,6 +268,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
   until run_review "$1" "$3"; do
     if (( CUR_ROUND >= MAX_ROUNDS )); then
       echo "!! [$CUR_STAGE] 已審 $MAX_ROUNDS 輪仍未通過,停止。請閱讀 $WF/review.md 後人工處理。" >&2
+      notify "auto-workflow:[$CUR_STAGE] 審查 $MAX_ROUNDS 輪未過,需人工介入"
       exit 1
     fi
     CUR_ROUND=$(( CUR_ROUND + 1 ))
@@ -282,6 +296,63 @@ ensure_committed() {  # 工作者漏提交時由 script 補提交,確保流程�
 commit_if_dirty() {  # $1: 引擎  $2: 說明;沒有變更就跳過,不浪費一次 AI 呼叫
   [[ -z "$(git status --porcelain)" ]] && return 0
   commit_work "$1" "$2"
+}
+
+# ---------- 人工檢查點 ----------
+# 規格是錯誤放大器:spec 錯一行,後面的 stage 會忠實地放大成幾百行程式碼,
+# 所以人工核准放在最高槓桿處——spec 通過 AI 互審之後、開始花大錢實作之前。
+human_gate_spec() {
+  [[ "$HUMAN_GATE" == "1" ]] || return 0
+  notify "auto-workflow:規格待人工核准($SPEC_DIR/spec.md)"
+  echo ""
+  echo "### 人工檢查點:請審閱 $SPEC_DIR/spec.md,特別是「假設與未決問題」一節。"
+  echo "### 可直接編輯該檔後再繼續,你的改動會一併提交。"
+  if ! { : </dev/tty; } 2>/dev/null; then
+    echo "!! 沒有互動終端可供核准。請在互動終端執行,或設 HUMAN_GATE=0 跳過(不建議)。" >&2
+    exit 1
+  fi
+  local ans
+  read -rp "輸入 y 核准並繼續,其他任意輸入中止:" ans </dev/tty
+  if [[ "$ans" != "y" && "$ans" != "Y" ]]; then
+    echo "已中止:規格未獲人工核准。" >&2
+    exit 1
+  fi
+  echo "規格已人工核准 ✔" | tee -a "$LOG"
+}
+
+# ---------- 收尾:交棒給人 ----------
+# 流程的終點是「等人 merge 的 PR」,不是靜默結束;預設只印指令(OPEN_PR=1 才執行)。
+finish() {  # $1: 任務描述
+  local branch title
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  title=$(head -1 <<<"$1" | cut -c1-72)
+
+  cat > "$WF/pr-body.md" <<EOF
+## 任務
+
+$1
+
+## 產物
+
+- 規格(含假設與未決問題):\`$SPEC_DIR/spec.md\`
+- 實作計畫:\`$SPEC_DIR/plan.md\`
+
+由 auto-workflow(雙 AI 互審:A=$ENGINE_A、B=$ENGINE_B)產生;
+每個 stage 均通過確定性品質關卡與交叉審查,驗收測試由審查方撰寫且受改動保護。
+EOF
+
+  printf '\n全部 stage 完成 🎉  規格與計畫在 %s/,執行紀錄在 %s\n' "$SPEC_DIR" "$LOG"
+  if [[ "$OPEN_PR" == "1" ]] && command -v gh >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
+    git push -u origin "$branch"
+    gh pr create --title "$title" --body-file "$WF/pr-body.md"
+  else
+    echo ""
+    echo "下一步(人工執行):"
+    echo "  git push -u origin $branch"
+    echo "  gh pr create --title \"$title\" --body-file $WF/pr-body.md"
+    [[ "$OPEN_PR" == "1" ]] && echo "(OPEN_PR=1 但缺 gh 或 origin remote,已改為只印指令)" >&2
+  fi
+  notify "auto-workflow:全部 stage 完成($branch)"
 }
 
 # ---------- 主流程 ----------
@@ -330,9 +401,10 @@ main() {
   fi
 
   begin_stage "訂規格"
-  work "$ENGINE_A" "為以下需求撰寫規格,存到 $SPEC_DIR/spec.md,內容須包含:功能描述、驗收條件(可測試)、邊界情況與不做的範圍。需求:$task"
-  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md:需求完整性、驗收條件是否可測試、邊界情況是否有遺漏。"
-  commit_work "$ENGINE_A" "規格"
+  work "$ENGINE_A" "為以下需求撰寫規格,存到 $SPEC_DIR/spec.md,內容須包含:功能描述、驗收條件(可測試)、邊界情況、不做的範圍,以及「假設與未決問題」一節——非互動模式下你無法向人提問,所有自行假設之處都必須誠實列在這一節,不得默默腦補。需求:$task"
+  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md:需求完整性、驗收條件是否可測試、邊界情況是否有遺漏;逐條檢視「假設與未決問題」,假設不合理或該列未列的,列為 blocker。"
+  human_gate_spec
+  commit_work "$ENGINE_A" "規格(已通過審查與人工核准)"
 
   begin_stage "規劃實作計畫"
   work "$ENGINE_A" "依 $SPEC_DIR/spec.md 撰寫實作計畫,存到 $SPEC_DIR/plan.md,內容須包含:實作任務清單(每項一行、用「- [ ] 」checkbox 格式、可獨立實作與驗證、將逐項對應一個 commit)、測試策略(判斷需要 unit / integration / E2E 中的哪些並說明理由)。"
@@ -383,7 +455,7 @@ main() {
   review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試,並確認驗收測試未被弱化。" "$GATE_CMD"
   commit_if_dirty "$ENGINE_A" "最終修正"
 
-  printf '\n全部 stage 完成 🎉  規格與計畫在 %s/,執行紀錄在 %s\n' "$SPEC_DIR" "$LOG"
+  finish "$task"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
