@@ -60,6 +60,18 @@ d=$(tmpdir)
 out=$( cd "$d" && source "$SCRIPT" && detect_gate )
 assert_eq "detect_gate:未知專案 → 空" "" "$out"
 
+# ---------- engine_model ----------
+d=$(tmpdir)
+out=$( cd "$d" && ENGINE_A=claude ENGINE_B=codex MODEL_A=haiku MODEL_B=mini \
+      && source "$SCRIPT" && engine_model claude )
+assert_eq "engine_model:A 槽取 MODEL_A" "haiku" "$out"
+out=$( cd "$d" && ENGINE_A=claude ENGINE_B=codex MODEL_A=haiku MODEL_B=mini \
+      && source "$SCRIPT" && engine_model codex )
+assert_eq "engine_model:B 槽取 MODEL_B" "mini" "$out"
+out=$( cd "$d" && ENGINE_A=claude ENGINE_B=codex \
+      && source "$SCRIPT" && engine_model claude )
+assert_eq "engine_model:未設定 → 空(用 CLI 預設)" "" "$out"
+
 # ---------- plan_tasks ----------
 d=$(tmpdir)
 printf -- '# plan\n\n- [ ] task one\n- [x] finished task\n- [ ] task two\nplain text\n' > "$d/plan.md"

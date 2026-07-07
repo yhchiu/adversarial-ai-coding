@@ -15,6 +15,8 @@
 # 環境變數(皆可選):
 #   ENGINE_A     工作者引擎:claude | codex | agy   (預設 claude)
 #   ENGINE_B     審查者引擎:claude | codex | agy   (預設 codex)
+#   MODEL_A      A 槽引擎的模型(例 haiku / gpt-5.1-codex-mini;預設用 CLI 預設)
+#   MODEL_B      B 槽引擎的模型;A、B 同為 claude 時 MODEL_A 優先
 #   MAX_ROUNDS   每個 stage 最多審查輪數            (預設 3)
 #   AUTO_BRANCH  1=自動開新 branch;0=用目前 branch (預設 1)
 #   USE_WORKTREE 1=在獨立 git worktree 中執行(比 branch 更隔離,預設 0)
@@ -31,6 +33,8 @@ set -Eeuo pipefail
 # ---------- 設定 ----------
 ENGINE_A="${ENGINE_A:-claude}"
 ENGINE_B="${ENGINE_B:-codex}"
+MODEL_A="${MODEL_A:-}"   # A 槽引擎的模型覆寫(空 = 各 CLI 的預設模型)
+MODEL_B="${MODEL_B:-}"   # B 槽引擎的模型覆寫
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
 USE_WORKTREE="${USE_WORKTREE:-0}"
@@ -71,6 +75,14 @@ metric() {  # $1: 角色  $2: 引擎  $3: 輪次  $4: 秒數  $5: 費用(USD,可
 }
 
 # ---------- 純函式 helpers(可被測試 source) ----------
+engine_model() {  # $1: 引擎;輸出該引擎所屬槽位的模型覆寫(未設定輸出空)
+  if [[ "$1" == "$ENGINE_A" && -n "$MODEL_A" ]]; then
+    echo "$MODEL_A"
+  elif [[ "$1" == "$ENGINE_B" && -n "$MODEL_B" ]]; then
+    echo "$MODEL_B"
+  fi
+}
+
 verdict_approved() {  # $1: verdict.json 路徑;0 = 審查通過
   [[ -f "$1" ]] && jq -e '.approved == true' "$1" >/dev/null 2>&1
 }
@@ -137,6 +149,8 @@ LAST_COST=""   # claude 引擎會回報 total_cost_usd;其他引擎留空
 
 w_claude() {
   local args=(--output-format json --permission-mode acceptEdits --allowedTools "$TOOLS")
+  local m; m=$(engine_model claude)
+  [[ -n "$m" ]] && args+=(--model "$m")
   [[ -n "$WORKER_SESSION" ]] && args+=(--resume "$WORKER_SESSION")
   local out
   out=$(claude -p "$1" "${args[@]}")
@@ -146,12 +160,15 @@ w_claude() {
 }
 
 w_codex() {
+  local m margs=()
+  m=$(engine_model codex)
+  [[ -n "$m" ]] && margs=(-c "model=\"$m\"")   # -c 在 exec 與 resume 都通用
   if [[ -z "$WORKER_SESSION" ]]; then
-    codex exec --sandbox workspace-write "$1"
+    codex exec --sandbox workspace-write "${margs[@]}" "$1"
     WORKER_SESSION="last"
   else
     # exec resume 沒有 --sandbox 旗標,改用 -c 覆寫設定
-    codex exec resume --last -c 'sandbox_mode="workspace-write"' "$1"
+    codex exec resume --last -c 'sandbox_mode="workspace-write"' "${margs[@]}" "$1"
   fi
 }
 
@@ -159,6 +176,8 @@ w_agy() {
   # 注意:--dangerously-skip-permissions 會自動核准所有工具操作,
   # 建議只在隔離的 branch / 容器內使用(見 README 安全性一節)。
   local args=(--print-timeout 60m --dangerously-skip-permissions)
+  local m; m=$(engine_model agy)
+  [[ -n "$m" ]] && args+=(--model "$m")
   [[ -n "$WORKER_SESSION" ]] && args+=(--continue)
   agy --print "$1" "${args[@]}"
   WORKER_SESSION="continue"
@@ -226,8 +245,10 @@ verdict_file_instr() {
 }
 
 r_claude() {
-  local out
-  out=$(claude -p "$(review_prompt "$1")" \
+  local out args=()
+  local m; m=$(engine_model claude)
+  [[ -n "$m" ]] && args+=(--model "$m")
+  out=$(claude -p "$(review_prompt "$1")" "${args[@]}" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
     --json-schema "$VERDICT_SCHEMA")
   LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
@@ -236,13 +257,19 @@ r_claude() {
 }
 
 r_codex() {
-  codex exec --sandbox workspace-write "$(review_prompt "$1")
+  local m margs=()
+  m=$(engine_model codex)
+  [[ -n "$m" ]] && margs=(-c "model=\"$m\"")
+  codex exec --sandbox workspace-write "${margs[@]}" "$(review_prompt "$1")
 $(verdict_file_instr)"
 }
 
 r_agy() {
+  local m margs=()
+  m=$(engine_model agy)
+  [[ -n "$m" ]] && margs=(--model "$m")
   agy --print "$(review_prompt "$1")
-$(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions
+$(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}"
 }
 
 collect_suggestions() {  # 把本輪 suggestions 累積到 backlog,收尾階段統一評估
