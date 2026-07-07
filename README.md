@@ -168,7 +168,7 @@ Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 se
 ## 測試
 
 ```bash
-bash tests/helpers.test.sh   # 29 個單元測試,不呼叫任何 AI
+bash tests/helpers.test.sh   # 35 個單元測試,不呼叫任何 AI
 ```
 
 真實 E2E(會呼叫 AI、消耗 token)建議先在小專案用便宜任務試跑一輪,確認提示詞行為符合預期。
@@ -179,6 +179,8 @@ bash tests/helpers.test.sh   # 29 個單元測試,不呼叫任何 AI
 - **卡在權限詢問**:headless 下沒人能按「允許」。Claude Code 需要的指令加進 `TOOLS`;codex 確認 sandbox 模式;agy 確認旗標。
 - **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty;在 CI 等無人環境設 `HUMAN_GATE=0`,並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
+- **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
+- **工作流因引擎失敗中斷**:claude 引擎失敗時原始輸出會攤印到 stderr(常見原因:訂閱用量限額,訊息如 `You've hit your session limit`),看 log 結尾即可判斷。
 - **換行問題**:script 必須是 LF;repo 已用 `.gitattributes` 強制 `*.sh eol=lf`。
 
 ## 延伸方向

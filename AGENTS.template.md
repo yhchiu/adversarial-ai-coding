@@ -38,6 +38,10 @@ All AI participants must follow these rules.
 - The task list in plan.md uses `- [ ]` checkboxes. Each item must be small
   enough to implement and verify on its own, and maps to exactly one commit.
   Mark finished items as `- [x]`.
+- Prefer ASCII in specs, plans, and test data. Write non-ASCII characters as
+  Unicode escape sequences in source code (in Go: a backslash followed by
+  `u4e0a` denotes U+4E0A). Some AI tools misdecode non-ASCII file content on
+  Windows and will report phantom corruption.
 
 ## Commits
 
