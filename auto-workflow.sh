@@ -48,7 +48,11 @@ LOG="$LOGS/$RUN_ID.log"
 METRICS="$WF/metrics.csv"
 
 usage() {
-  echo "用法:$0 \"任務描述\"" >&2
+  {
+    echo "用法:$0 \"任務描述\""
+    echo "      $0 任務描述.md      # 參數是存在的檔案時,讀取檔案內容當任務"
+    echo "      $0 print-agents    # 輸出 AGENTS.md 規範範本後結束"
+  } >&2
   exit 1
 }
 
@@ -405,7 +409,8 @@ human_gate_spec() {
 finish() {  # $1: 任務描述
   local branch title
   branch=$(git rev-parse --abbrev-ref HEAD)
-  title=$(head -1 <<<"$1" | cut -c1-72)
+  title=$(head -1 <<<"$1")
+  title="${title:0:72}"   # 以字元計截斷(cut -c 以 byte 計,會把多位元組字切爛)
 
   cat > "$WF/pr-body.md" <<EOF
 ## 任務
