@@ -103,7 +103,8 @@ work() {  # $1: 引擎  $2: 工作指示
 }
 
 # ---------- 審查者引擎(每輪全新 context,靠檔案與 diff 取得狀態) ----------
-VERDICT_SCHEMA='{"type":"object","properties":{"approved":{"type":"boolean"}},"required":["approved"]}'
+# 裁決分級:blocker = 必須修正才放行;suggestion = 不擋關,累積到收尾階段統一評估。
+VERDICT_SCHEMA='{"type":"object","properties":{"approved":{"type":"boolean"},"blockers":{"type":"array","items":{"type":"string"}},"suggestions":{"type":"array","items":{"type":"string"}}},"required":["approved","blockers","suggestions"]}'
 
 review_prompt() {  # $1: 本輪審查範圍
   cat <<EOF
@@ -113,12 +114,14 @@ review_prompt() {  # $1: 本輪審查範圍
 - 只審查與驗證(可以執行測試),除了 $WF/review.md 與 $WF/verdict.json 之外不要修改任何檔案。
 - 把審查意見逐條寫入 $WF/review.md(直接覆蓋舊內容);若通過,寫下簡短的通過理由。
 - 若 review.md 中已有工作者對前輪意見的回覆,先逐條確認回覆是否成立。
-- 只有在沒有任何「必須修正」的問題時才判定通過;建議性的小改進不擋關,但要記在 review.md。
+- 裁決分兩級:blocker(正確性錯誤、不符規格、測試被弱化、安全問題等必須修正者)
+  與 suggestion(不必立即處理的改善建議)。只有零 blocker 才可判定通過;
+  suggestion 不擋關,但要如實列出。
 EOF
 }
 
 verdict_file_instr() {
-  echo "- 最後把裁決寫入 $WF/verdict.json,內容只有一行:{\"approved\": true} 或 {\"approved\": false}。"
+  echo "- 最後把裁決寫入 $WF/verdict.json,單行 JSON,格式:{\"approved\": true|false, \"blockers\": [\"必須修正的問題\"], \"suggestions\": [\"不擋關的建議\"]}。"
 }
 
 r_claude() {
@@ -126,7 +129,7 @@ r_claude() {
   out=$(claude -p "$(review_prompt "$1")" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
     --json-schema "$VERDICT_SCHEMA")
-  jq -c '.structured_output // {approved: false}' <<<"$out" > "$WF/verdict.json"
+  jq -c '.structured_output // {approved: false, blockers: ["審查者未產出結構化裁決"], suggestions: []}' <<<"$out" > "$WF/verdict.json"
   jq -r '.result // empty' <<<"$out"
 }
 
@@ -140,6 +143,24 @@ r_agy() {
 $(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions
 }
 
+collect_suggestions() {  # 把本輪 suggestions 累積到 backlog,收尾階段統一評估
+  [[ -f "$WF/verdict.json" ]] || return 0
+  local s
+  s=$(jq -r '.suggestions[]? // empty' "$WF/verdict.json" 2>/dev/null) || return 0
+  [[ -z "$s" ]] && return 0
+  {
+    echo "## ${CUR_STAGE}(第 ${CUR_ROUND} 輪)"
+    sed 's/^/- /' <<<"$s"
+    echo
+  } >> "$WF/suggestions.md"
+}
+
+show_blockers() {
+  [[ -f "$WF/verdict.json" ]] || return 0
+  echo "審查未通過,blockers:" | tee -a "$LOG"
+  jq -r '.blockers[]? // empty' "$WF/verdict.json" 2>/dev/null | sed 's/^/  - /' | tee -a "$LOG"
+}
+
 run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
   echo ">>> 審查者($1)審查中…"
   rm -f "$WF/verdict.json"
@@ -148,7 +169,11 @@ run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
     echo "(審查者未產出 verdict.json,視為未通過)" >&2
     return 1
   fi
-  verdict_approved "$WF/verdict.json"
+  collect_suggestions
+  if ! verdict_approved "$WF/verdict.json"; then
+    show_blockers
+    return 1
+  fi
 }
 
 # ---------- 確定性品質關卡 ----------
@@ -278,7 +303,7 @@ main() {
   commit_work "$ENGINE_A" "程式實作"
 
   begin_stage "整體 review 與修 bug"
-  work "$ENGINE_A" "對本 branch 的所有變更做一次完整的自我 review:修掉發現的問題、補上遺漏的測試,並執行完整測試套件確認全數通過。"
+  work "$ENGINE_A" "對本 branch 的所有變更做一次完整的自我 review:1) 修掉發現的問題、補上遺漏的測試;2) 若 $WF/suggestions.md 存在,逐條評估歷輪審查累積的建議——採納就實作,不採納就在該條目下方註明理由;3) 執行完整測試套件確認全數通過。"
   gate_loop "$ENGINE_A" "$GATE_CMD"
   review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試。" "$GATE_CMD"
   commit_work "$ENGINE_A" "最終修正"
