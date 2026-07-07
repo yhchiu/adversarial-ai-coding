@@ -159,8 +159,14 @@ w_claude() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   args+=($CLAUDE_ARGS)
   [[ -n "$WORKER_SESSION" ]] && args+=(--resume "$WORKER_SESSION")
-  local out
-  out=$(claude -p "$1" "${args[@]}")
+  local out rc=0
+  out=$(claude -p "$1" "${args[@]}") || rc=$?
+  if (( rc != 0 )); then
+    # 失敗時務必攤出原始輸出,否則像用量限額這類錯誤會被 $() 吞掉、無從診斷
+    printf '%s\n' "$out" >&2
+    echo "(claude 退出碼 $rc,原始輸出如上)" >&2
+    return "$rc"
+  fi
   WORKER_SESSION=$(jq -r '.session_id' <<<"$out")
   LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -r '.result // empty' <<<"$out"
@@ -261,9 +267,15 @@ r_claude() {
   [[ -n "$m" ]] && args+=(--model "$m")
   # shellcheck disable=SC2206  # 刻意依空白切割
   args+=($CLAUDE_ARGS)
+  local rc=0
   out=$(claude -p "$(review_prompt "$1")" "${args[@]}" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
-    --json-schema "$VERDICT_SCHEMA")
+    --json-schema "$VERDICT_SCHEMA") || rc=$?
+  if (( rc != 0 )); then
+    printf '%s\n' "$out" >&2
+    echo "(claude 退出碼 $rc,原始輸出如上)" >&2
+    return "$rc"
+  fi
   LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -c '.structured_output // {approved: false, blockers: ["審查者未產出結構化裁決"], suggestions: []}' <<<"$out" > "$WF/verdict.json"
   jq -r '.result // empty' <<<"$out"
@@ -374,7 +386,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
     fi
     CUR_ROUND=$(( CUR_ROUND + 1 ))
     echo "--- [$CUR_STAGE] 第 $CUR_ROUND 輪:工作者依審查意見修改 ---" | tee -a "$LOG"
-    work "$2" "審查意見在 $WF/review.md。依 AGENTS.md 的互審規範逐條回應:同意就修正,並在該條目下方註明「已修正:<摘要>」;不同意就回覆「不同意:<理由>」,不得默默忽略。修改後確保測試通過。"
+    work "$2" "審查意見在 $WF/review.md。依 AGENTS.md 的互審規範逐條回應:同意就修正,並在該條目下方註明「已修正:<摘要>」;不同意就回覆「不同意:<理由>」,不得默默忽略。只處理審查意見中的問題,不要超出本階段(${CUR_STAGE})的工作範圍——規格階段只改規格、計畫階段只改計畫,不要提前實作。若本階段有程式碼變更,修改後確保測試通過。"
     gate_loop "$2" "$gate_cmd"   # 修正後同樣要過確定性關卡,再交回審查
   done
   echo "[$CUR_STAGE] 審查通過 ✔" | tee -a "$LOG"
