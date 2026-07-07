@@ -25,6 +25,7 @@
 #   HUMAN_GATE   1=規格通過審查後暫停等人工核准(預設 1;無人值守請設 0)
 #   OPEN_PR      1=結尾自動 push 並開 GitHub PR(預設 0,只印出指令)
 #   NOTIFY_CMD   通知指令,訊息以第一個參數傳入(例:NOTIFY_CMD="ntfy publish mytopic")
+#   AGENTS_TEMPLATE  AGENTS.md 範本路徑(預設:script 同目錄的 AGENTS.template.md)
 set -Eeuo pipefail
 
 # ---------- 設定 ----------
@@ -103,61 +104,31 @@ plan_tasks() {  # $1: plan.md;每行輸出一個未完成任務(去掉「- [ ] �
 }
 
 # ---------- AGENTS.md:三種引擎共用的互審規範(跨工具標準檔) ----------
+# 規範內文放在獨立的 AGENTS.template.md 方便維護;以簡單英文撰寫,
+# 對各家模型最通用(避免個別模型中文能力不足)。
 AGENTS_MARKER='<!-- auto-workflow:begin -->'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$SCRIPT_DIR/AGENTS.template.md}"
 
-write_agents_section() {
-  cat <<'AGENTS_EOF'
-<!-- auto-workflow:begin -->
-# auto-workflow 互審規範
-
-本專案使用 auto-workflow(雙 AI 互審)開發。所有 AI 參與者遵守以下規範。
-
-## 審查與回覆(.workflow/review.md)
-
-- 審查者:意見逐條列出,每條標明檔案位置與問題;開新一輪審查時覆蓋舊內容,
-  但保留工作者尚未回應的條目。
-- 工作者:在每條意見下方縮排回覆——同意則修正並註明「已修正:<摘要>」;
-  不同意則寫「不同意:<理由>」。不得默默忽略任何條目。
-- 審查者下一輪先逐條驗證工作者的回覆是否成立,再看新問題。
-
-## 裁決(.workflow/verdict.json)
-
-- 單行 JSON:`{"approved": bool, "blockers": [...], "suggestions": [...]}`。
-- blocker = 必須修正才能放行:正確性錯誤、不符規格、測試被弱化、安全問題。
-- suggestion = 不擋關的改善建議,會累積到收尾階段統一評估。
-- 只有零 blocker 才可 `approved: true`。
-
-## 測試完整性
-
-- `.workflow/protected-tests.txt` 列出的驗收測試檔在實作階段一律禁改。
-- 認為測試本身有誤時:把異議記錄在 spec 的「假設與未決問題」,
-  不得修改、刪除或跳過(skip)測試。script 會用 git diff 硬性檢查。
-
-## 規格與計畫
-
-- spec.md 必含:功能描述、可測試的驗收條件、邊界情況、不做的範圍、
-  「假設與未決問題」(所有自行假設之處都要誠實列出)。
-- plan.md 的實作任務清單用「- [ ] 」checkbox,每項可獨立實作與驗證,
-  一項對應一個 commit;完成後改為「- [x]」。
-
-## Commit
-
-- Conventional Commits(feat: / fix: / chore(scope): …),訊息用簡單易懂的英文。
-- body 詳細記錄完成了哪些工作。
-- 不加 Co-Authored-By。
-<!-- auto-workflow:end -->
-AGENTS_EOF
+write_agents_section() {  # 輸出規範範本;找不到範本檔時回傳 1
+  if [[ ! -f "$AGENTS_TEMPLATE" ]]; then
+    echo "(找不到 AGENTS.md 範本:$AGENTS_TEMPLATE;請把 AGENTS.template.md 與 script 放在同一目錄,或用 AGENTS_TEMPLATE 指定路徑)" >&2
+    return 1
+  fi
+  cat "$AGENTS_TEMPLATE"
 }
 
 bootstrap_agents_md() {  # 缺檔才建立;既有檔案不動,只提示(避免覆蓋使用者內容)
   if [[ -f AGENTS.md ]]; then
     grep -qF "$AGENTS_MARKER" AGENTS.md \
       || echo "(提示:AGENTS.md 已存在但沒有 auto-workflow 規範段;可用「$0 print-agents」輸出範本後手動合併)" >&2
-  else
-    write_agents_section > AGENTS.md
+  elif write_agents_section > AGENTS.md; then
     echo "已產生 AGENTS.md(auto-workflow 互審規範)"
+  else
+    rm -f AGENTS.md   # 範本遺失:別留下空檔;警告已印出,流程照常繼續
+    return 0
   fi
-  [[ -f CLAUDE.md ]] || printf '請遵循 AGENTS.md 中的 auto-workflow 互審規範。\n' > CLAUDE.md
+  [[ -f CLAUDE.md ]] || printf 'Follow the auto-workflow cross-review rules in AGENTS.md.\n' > CLAUDE.md
 }
 
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
@@ -227,7 +198,7 @@ check_protected() {  # $1: 工作者引擎;受保護檔被改動時強制回復,
     CHECKING_PROTECTED=1
     work "$1" "你改動了受保護的驗收測試檔(工作流規範禁止):
 $viol
-請立刻用 git 把這些檔案完整回復到 commit $base 的內容(例如 git checkout $base -- <檔案>),並提交這個回復。若你認為測試本身有誤,把異議記錄在 $SPEC_DIR/spec.md 的「假設與未決問題」一節,但不得修改測試檔。"
+請立刻用 git 把這些檔案完整回復到 commit $base 的內容(例如 git checkout $base -- <檔案>),並提交這個回復。若你認為測試本身有誤,把異議記錄在 $SPEC_DIR/spec.md 的「Assumptions and Open Questions」一節,但不得修改測試檔。"
     CHECKING_PROTECTED=0
   done
 }
@@ -389,7 +360,7 @@ human_gate_spec() {
   [[ "$HUMAN_GATE" == "1" ]] || return 0
   notify "auto-workflow:規格待人工核准($SPEC_DIR/spec.md)"
   echo ""
-  echo "### 人工檢查點:請審閱 $SPEC_DIR/spec.md,特別是「假設與未決問題」一節。"
+  echo "### 人工檢查點:請審閱 $SPEC_DIR/spec.md,特別是「Assumptions and Open Questions(假設與未決問題)」一節。"
   echo "### 可直接編輯該檔後再繼續,你的改動會一併提交。"
   if ! { : </dev/tty; } 2>/dev/null; then
     echo "!! 沒有互動終端可供核准。請在互動終端執行,或設 HUMAN_GATE=0 跳過(不建議)。" >&2
@@ -516,8 +487,8 @@ main() {
   fi
 
   begin_stage "訂規格"
-  work "$ENGINE_A" "為以下需求撰寫規格,存到 $SPEC_DIR/spec.md,內容須包含:功能描述、驗收條件(可測試)、邊界情況、不做的範圍,以及「假設與未決問題」一節——非互動模式下你無法向人提問,所有自行假設之處都必須誠實列在這一節,不得默默腦補。需求:$task"
-  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md:需求完整性、驗收條件是否可測試、邊界情況是否有遺漏;逐條檢視「假設與未決問題」,假設不合理或該列未列的,列為 blocker。"
+  work "$ENGINE_A" "為以下需求撰寫規格,存到 $SPEC_DIR/spec.md,內容須包含:功能描述、驗收條件(可測試)、邊界情況、不做的範圍,以及「Assumptions and Open Questions(假設與未決問題)」一節——非互動模式下你無法向人提問,所有自行假設之處都必須誠實列在這一節,不得默默腦補。需求:$task"
+  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md:需求完整性、驗收條件是否可測試、邊界情況是否有遺漏;逐條檢視「Assumptions and Open Questions」,假設不合理或該列未列的,列為 blocker。"
   human_gate_spec
   commit_work "$ENGINE_A" "規格(已通過審查與人工核准)"
 

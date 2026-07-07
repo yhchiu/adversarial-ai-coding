@@ -123,6 +123,15 @@ d=$(tmpdir); echo 'my own rules' > "$d/AGENTS.md"
 ( cd "$d" && source "$SCRIPT" && bootstrap_agents_md ) >/dev/null 2>&1
 assert_eq "bootstrap:不覆蓋既有 AGENTS.md" "my own rules" "$(cat "$d/AGENTS.md")"
 
+d=$(tmpdir)
+( cd "$d" && AGENTS_TEMPLATE=/nonexistent-template && source "$SCRIPT" && bootstrap_agents_md ) >/dev/null 2>&1
+assert_rc "bootstrap:範本遺失 → 不中斷流程" 0 $?
+[[ ! -f "$d/AGENTS.md" && ! -f "$d/CLAUDE.md" ]] && ok "bootstrap:範本遺失 → 不留空檔" \
+  || bad "bootstrap:範本遺失 → 不留空檔"
+
+AGENTS_TEMPLATE=/nonexistent-template "$SCRIPT" print-agents >/dev/null 2>&1
+assert_nonzero "print-agents:範本遺失 → 失敗並提示" $?
+
 # ---------- setup_workspace(worktree) ----------
 d=$(new_repo)
 out=$( cd "$d" && source "$SCRIPT" && USE_WORKTREE=1 setup_workspace >/dev/null && git branch --show-current )
