@@ -9,12 +9,15 @@
 #
 # 用法:
 #   ./auto-workflow.sh "任務描述"
+#   ./auto-workflow.sh 任務描述.md      # 參數是存在的檔案時,讀取檔案內容當任務
+#   ./auto-workflow.sh print-agents    # 輸出 AGENTS.md 規範範本後結束
 #
 # 環境變數(皆可選):
 #   ENGINE_A     工作者引擎:claude | codex | agy   (預設 claude)
 #   ENGINE_B     審查者引擎:claude | codex | agy   (預設 codex)
 #   MAX_ROUNDS   每個 stage 最多審查輪數            (預設 3)
 #   AUTO_BRANCH  1=自動開新 branch;0=用目前 branch (預設 1)
+#   USE_WORKTREE 1=在獨立 git worktree 中執行(比 branch 更隔離,預設 0)
 #   SPEC_DIR     規格與計畫的存放目錄               (預設 specs/<執行時間戳>)
 #   TOOLS        Claude Code 的 --allowedTools 清單
 #   GATE_CMD     確定性品質關卡指令(build+lint+test,預設依專案自動偵測)
@@ -29,16 +32,20 @@ ENGINE_A="${ENGINE_A:-claude}"
 ENGINE_B="${ENGINE_B:-codex}"
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
+USE_WORKTREE="${USE_WORKTREE:-0}"
 HUMAN_GATE="${HUMAN_GATE:-1}"
 OPEN_PR="${OPEN_PR:-0}"
 NOTIFY_CMD="${NOTIFY_CMD:-}"
-TOOLS="${TOOLS:-Bash(git *),Bash(go *)}"
+# 最小權限:只放行 git 與明確的建置/測試指令。
+# 注意 Bash(go *) 會包含 go run(任意程式碼執行),不要圖方便放寬。
+TOOLS="${TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}"
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SPEC_DIR="${SPEC_DIR:-specs/$RUN_ID}"
 WF=".workflow"
 LOGS="$WF/logs"
 LOG="$LOGS/$RUN_ID.log"
+METRICS="$WF/metrics.csv"
 
 usage() {
   echo "用法:$0 \"任務描述\"" >&2
@@ -50,6 +57,12 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少必要指令:$1" >&2; 
 notify() {  # $1: 訊息;NOTIFY_CMD 會以第一個參數收到訊息
   [[ -z "$NOTIFY_CMD" ]] && return 0
   $NOTIFY_CMD "$1" || echo "(通知指令執行失敗:$NOTIFY_CMD)" >&2
+}
+
+metric() {  # $1: 角色  $2: 引擎  $3: 輪次  $4: 秒數  $5: 費用(USD,可空)
+  [[ -d "$WF" ]] || return 0
+  [[ -f "$METRICS" ]] || echo "run_id,stage,role,engine,round,duration_s,cost_usd" > "$METRICS"
+  echo "$RUN_ID,$CUR_STAGE,$1,$2,$3,$4,$5" >> "$METRICS"
 }
 
 # ---------- 純函式 helpers(可被測試 source) ----------
@@ -85,8 +98,67 @@ plan_tasks() {  # $1: plan.md;每行輸出一個未完成任務(去掉「- [ ] �
   grep -E '^- \[ \] ' "$1" | sed -E 's/^- \[ \] //' || true
 }
 
+# ---------- AGENTS.md:三種引擎共用的互審規範(跨工具標準檔) ----------
+AGENTS_MARKER='<!-- auto-workflow:begin -->'
+
+write_agents_section() {
+  cat <<'AGENTS_EOF'
+<!-- auto-workflow:begin -->
+# auto-workflow 互審規範
+
+本專案使用 auto-workflow(雙 AI 互審)開發。所有 AI 參與者遵守以下規範。
+
+## 審查與回覆(.workflow/review.md)
+
+- 審查者:意見逐條列出,每條標明檔案位置與問題;開新一輪審查時覆蓋舊內容,
+  但保留工作者尚未回應的條目。
+- 工作者:在每條意見下方縮排回覆——同意則修正並註明「已修正:<摘要>」;
+  不同意則寫「不同意:<理由>」。不得默默忽略任何條目。
+- 審查者下一輪先逐條驗證工作者的回覆是否成立,再看新問題。
+
+## 裁決(.workflow/verdict.json)
+
+- 單行 JSON:`{"approved": bool, "blockers": [...], "suggestions": [...]}`。
+- blocker = 必須修正才能放行:正確性錯誤、不符規格、測試被弱化、安全問題。
+- suggestion = 不擋關的改善建議,會累積到收尾階段統一評估。
+- 只有零 blocker 才可 `approved: true`。
+
+## 測試完整性
+
+- `.workflow/protected-tests.txt` 列出的驗收測試檔在實作階段一律禁改。
+- 認為測試本身有誤時:把異議記錄在 spec 的「假設與未決問題」,
+  不得修改、刪除或跳過(skip)測試。script 會用 git diff 硬性檢查。
+
+## 規格與計畫
+
+- spec.md 必含:功能描述、可測試的驗收條件、邊界情況、不做的範圍、
+  「假設與未決問題」(所有自行假設之處都要誠實列出)。
+- plan.md 的實作任務清單用「- [ ] 」checkbox,每項可獨立實作與驗證,
+  一項對應一個 commit;完成後改為「- [x]」。
+
+## Commit
+
+- Conventional Commits(feat: / fix: / chore(scope): …),訊息用簡單易懂的英文。
+- body 詳細記錄完成了哪些工作。
+- 不加 Co-Authored-By。
+<!-- auto-workflow:end -->
+AGENTS_EOF
+}
+
+bootstrap_agents_md() {  # 缺檔才建立;既有檔案不動,只提示(避免覆蓋使用者內容)
+  if [[ -f AGENTS.md ]]; then
+    grep -qF "$AGENTS_MARKER" AGENTS.md \
+      || echo "(提示:AGENTS.md 已存在但沒有 auto-workflow 規範段;可用「$0 print-agents」輸出範本後手動合併)" >&2
+  else
+    write_agents_section > AGENTS.md
+    echo "已產生 AGENTS.md(auto-workflow 互審規範)"
+  fi
+  [[ -f CLAUDE.md ]] || printf '請遵循 AGENTS.md 中的 auto-workflow 互審規範。\n' > CLAUDE.md
+}
+
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
 WORKER_SESSION=""
+LAST_COST=""   # claude 引擎會回報 total_cost_usd;其他引擎留空
 
 w_claude() {
   local args=(--output-format json --permission-mode acceptEdits --allowedTools "$TOOLS")
@@ -94,6 +166,7 @@ w_claude() {
   local out
   out=$(claude -p "$1" "${args[@]}")
   WORKER_SESSION=$(jq -r '.session_id' <<<"$out")
+  LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -r '.result // empty' <<<"$out"
 }
 
@@ -117,10 +190,13 @@ w_agy() {
 }
 
 work() {  # $1: 引擎  $2: 工作指示
+  local t0=$SECONDS
+  LAST_COST=""
   echo ">>> 工作者($1)執行中…"
   # 用 process substitution 而非 pipeline:引擎函式留在當前 shell,
   # WORKER_SESSION 的賦值才不會因 subshell 而遺失(session 續接才有效)。
   "w_$1" "$2" > >(tee -a "$LOG")
+  metric worker "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   # 每次工作者動作後硬性檢查受保護測試檔;旗標防止回復動作本身造成遞迴
   if (( ! CHECKING_PROTECTED )); then
     check_protected "$1"
@@ -160,7 +236,7 @@ review_prompt() {  # $1: 本輪審查範圍
   cat <<EOF
 你是嚴格的程式審查者。本輪審查範圍:$1
 
-規則:
+遵循專案 AGENTS.md 中的「auto-workflow 互審規範」。重點規則:
 - 只審查與驗證(可以執行測試),除了 $WF/review.md 與 $WF/verdict.json 之外不要修改任何檔案。
 - 把審查意見逐條寫入 $WF/review.md(直接覆蓋舊內容);若通過,寫下簡短的通過理由。
 - 若 review.md 中已有工作者對前輪意見的回覆,先逐條確認回覆是否成立。
@@ -179,6 +255,7 @@ r_claude() {
   out=$(claude -p "$(review_prompt "$1")" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
     --json-schema "$VERDICT_SCHEMA")
+  LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -c '.structured_output // {approved: false, blockers: ["審查者未產出結構化裁決"], suggestions: []}' <<<"$out" > "$WF/verdict.json"
   jq -r '.result // empty' <<<"$out"
 }
@@ -212,9 +289,12 @@ show_blockers() {
 }
 
 run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
+  local t0=$SECONDS
+  LAST_COST=""
   echo ">>> 審查者($1)審查中…"
   rm -f "$WF/verdict.json"
   "r_$1" "$2" > >(tee -a "$LOG") || echo "(警告:審查者執行失敗)" >&2
+  metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   if [[ ! -f "$WF/verdict.json" ]]; then
     echo "(審查者未產出 verdict.json,視為未通過)" >&2
     return 1
@@ -273,14 +353,14 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
     fi
     CUR_ROUND=$(( CUR_ROUND + 1 ))
     echo "--- [$CUR_STAGE] 第 $CUR_ROUND 輪:工作者依審查意見修改 ---" | tee -a "$LOG"
-    work "$2" "審查意見在 $WF/review.md。逐條回應:同意就修正,並在該條目下方註明改了什麼;不同意就在該條目下方回覆理由。修改後確保測試通過。"
+    work "$2" "審查意見在 $WF/review.md。依 AGENTS.md 的互審規範逐條回應:同意就修正,並在該條目下方註明「已修正:<摘要>」;不同意就回覆「不同意:<理由>」,不得默默忽略。修改後確保測試通過。"
     gate_loop "$2" "$gate_cmd"   # 修正後同樣要過確定性關卡,再交回審查
   done
   echo "[$CUR_STAGE] 審查通過 ✔" | tee -a "$LOG"
 }
 
 commit_work() {  # $1: 工作者引擎  $2: 本次提交的內容說明
-  work "$1" "$2 已完成並通過審查。請用 conventional commit 格式提交目前所有變更:訊息用簡單易懂的英文,body 詳細記錄完成了哪些工作,不要加 Co-Authored-By。"
+  work "$1" "$2 已完成並通過審查。依 AGENTS.md 的 commit 規範提交目前所有變更:conventional commit、簡單易懂的英文訊息、body 詳細記錄完成了哪些工作、不加 Co-Authored-By。"
   ensure_committed
 }
 
@@ -342,6 +422,13 @@ $1
 EOF
 
   printf '\n全部 stage 完成 🎉  規格與計畫在 %s/,執行紀錄在 %s\n' "$SPEC_DIR" "$LOG"
+  if [[ -f "$METRICS" ]]; then
+    echo ""
+    echo "本次執行統計(明細:$METRICS;輪數是提示詞品質的量化訊號):"
+    awk -F, 'NR>1 { calls[$2]++; secs[$2]+=$6; cost[$2]+=$7; if ($5>r[$2]) r[$2]=$5 }
+      END { for (s in calls) printf "  %-14s AI呼叫 %d 次,審查 %d 輪,%d 秒,$%.4f\n", s, calls[s], r[s], secs[s], cost[s] }' \
+      "$METRICS"
+  fi
   if [[ "$OPEN_PR" == "1" ]] && command -v gh >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
     git push -u origin "$branch"
     gh pr create --title "$title" --body-file "$WF/pr-body.md"
@@ -355,10 +442,34 @@ EOF
   notify "auto-workflow:全部 stage 完成($branch)"
 }
 
+setup_workspace() {  # 依 USE_WORKTREE / AUTO_BRANCH 準備隔離的工作區
+  if [[ "$USE_WORKTREE" == "1" ]]; then
+    local root name wt
+    root=$(git rev-parse --show-toplevel)
+    name=$(basename "$root")
+    wt="$root/../${name}-auto-$RUN_ID"
+    git worktree add -b "auto/$RUN_ID" "$wt"
+    cd "$wt"
+    echo "已建立 worktree:$wt(branch auto/$RUN_ID;結束後可用 git worktree remove 清理)"
+  elif [[ "$AUTO_BRANCH" == "1" ]]; then
+    git switch -c "auto/$RUN_ID"
+    echo "已建立並切換到 branch:auto/$RUN_ID"
+  fi
+}
+
 # ---------- 主流程 ----------
 main() {
   local task="${1:-}"
   [[ -n "$task" ]] || usage
+
+  if [[ "$task" == "print-agents" ]]; then
+    write_agents_section
+    return 0
+  fi
+  if [[ -f "$task" ]]; then
+    echo "從檔案讀取任務描述:$task"
+    task="$(cat "$task")"
+  fi
 
   need git; need jq
   local e
@@ -379,18 +490,17 @@ main() {
     exit 1
   fi
 
+  echo "工作流設定:A=$ENGINE_A  B=$ENGINE_B  MAX_ROUNDS=$MAX_ROUNDS  規格目錄=$SPEC_DIR"
+  echo "任務:$task"
+
+  setup_workspace   # 可能 cd 進 worktree,之後的相對路徑都以工作區為準
+
   mkdir -p "$LOGS" "$SPEC_DIR"
   echo '*' > "$WF/.gitignore"   # 讓 .workflow/ 整個目錄不進版控
 
   trap 'echo "!! 工作流中斷(exit=$?)。完整過程見 '"$LOG"'" >&2' ERR
 
-  echo "工作流設定:A=$ENGINE_A  B=$ENGINE_B  MAX_ROUNDS=$MAX_ROUNDS  規格目錄=$SPEC_DIR"
-  echo "任務:$task"
-
-  if [[ "$AUTO_BRANCH" == "1" ]]; then
-    git switch -c "auto/$RUN_ID"
-    echo "已建立並切換到 branch:auto/$RUN_ID"
-  fi
+  bootstrap_agents_md
 
   GATE_CMD="${GATE_CMD:-$(detect_gate)}"
   BUILD_GATE_CMD="${BUILD_GATE_CMD:-$(detect_build_gate)}"
