@@ -17,6 +17,8 @@
 #   AUTO_BRANCH  1=自動開新 branch;0=用目前 branch (預設 1)
 #   SPEC_DIR     規格與計畫的存放目錄               (預設 specs/<執行時間戳>)
 #   TOOLS        Claude Code 的 --allowedTools 清單
+#   GATE_CMD     確定性品質關卡指令(build+lint+test,預設依專案自動偵測)
+#   BUILD_GATE_CMD  逐任務的輕量關卡(只驗編譯,預設依專案自動偵測)
 set -Eeuo pipefail
 
 # ---------- 設定 ----------
@@ -42,6 +44,24 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少必要指令:$1" >&2; 
 # ---------- 純函式 helpers(可被測試 source) ----------
 verdict_approved() {  # $1: verdict.json 路徑;0 = 審查通過
   [[ -f "$1" ]] && jq -e '.approved == true' "$1" >/dev/null 2>&1
+}
+
+detect_gate() {  # 依專案類型偵測完整品質關卡(build+lint+test);偵測不到輸出空字串
+  if [[ -f go.mod ]]; then
+    echo "go build ./... && go vet ./... && go test ./..."
+  elif [[ -f package.json ]] && jq -e '.scripts.test // empty' package.json >/dev/null 2>&1; then
+    echo "npm test"
+  elif [[ -f Cargo.toml ]]; then
+    echo "cargo test"
+  fi
+}
+
+detect_build_gate() {  # 逐任務的輕量關卡:只驗編譯,容忍驗收測試還是紅燈
+  if [[ -f go.mod ]]; then
+    echo "go build ./..."
+  elif [[ -f Cargo.toml ]]; then
+    echo "cargo build"
+  fi
 }
 
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
@@ -131,6 +151,30 @@ run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
   verdict_approved "$WF/verdict.json"
 }
 
+# ---------- 確定性品質關卡 ----------
+# 業界共識:能用機器驗證的一律由 script 直接執行,AI 的「測試通過」回報只當參考。
+gate_loop() {  # $1: 工作者引擎  $2: 關卡指令(空字串 = 跳過);失敗輸出餵給工作者修
+  local engine="$1" cmd="$2" n=1 out
+  [[ -z "$cmd" ]] && return 0
+  while true; do
+    echo ">>> 品質關卡:$cmd"
+    if out=$(bash -c "$cmd" 2>&1); then
+      echo "品質關卡通過 ✔" | tee -a "$LOG"
+      return 0
+    fi
+    printf '%s\n' "$out" >> "$LOG"
+    echo "品質關卡失敗(第 $n 次)" | tee -a "$LOG"
+    if (( n >= MAX_ROUNDS )); then
+      echo "!! [$CUR_STAGE] 品質關卡連續 $MAX_ROUNDS 次未過,停止,需人工介入。輸出:" >&2
+      printf '%s\n' "$out" | tail -50 >&2
+      exit 1
+    fi
+    n=$(( n + 1 ))
+    work "$engine" "品質關卡指令「$cmd」失敗,以下是輸出(只保留最後 150 行)。請修正問題,直到這個指令能通過:
+$(printf '%s\n' "$out" | tail -150)"
+  done
+}
+
 # ---------- stage 流程 ----------
 CUR_STAGE=""
 CUR_ROUND=1
@@ -142,7 +186,8 @@ begin_stage() {  # $1: 名稱;工作者在 stage 內延續 session、跨 stage �
   printf '\n================ [%s] ================\n' "$1" | tee -a "$LOG"
 }
 
-review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍
+review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $4: 修正輪的關卡指令(可省略)
+  local gate_cmd="${4:-}"
   CUR_ROUND=1
   until run_review "$1" "$3"; do
     if (( CUR_ROUND >= MAX_ROUNDS )); then
@@ -152,6 +197,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍
     CUR_ROUND=$(( CUR_ROUND + 1 ))
     echo "--- [$CUR_STAGE] 第 $CUR_ROUND 輪:工作者依審查意見修改 ---" | tee -a "$LOG"
     work "$2" "審查意見在 $WF/review.md。逐條回應:同意就修正,並在該條目下方註明改了什麼;不同意就在該條目下方回覆理由。修改後確保測試通過。"
+    gate_loop "$2" "$gate_cmd"   # 修正後同樣要過確定性關卡,再交回審查
   done
   echo "[$CUR_STAGE] 審查通過 ✔" | tee -a "$LOG"
 }
@@ -207,6 +253,14 @@ main() {
     echo "已建立並切換到 branch:auto/$RUN_ID"
   fi
 
+  GATE_CMD="${GATE_CMD:-$(detect_gate)}"
+  BUILD_GATE_CMD="${BUILD_GATE_CMD:-$(detect_build_gate)}"
+  if [[ -n "$GATE_CMD" ]]; then
+    echo "品質關卡:$GATE_CMD"
+  else
+    echo "(警告:偵測不到品質關卡指令,確定性關卡停用;可用 GATE_CMD 環境變數指定)" >&2
+  fi
+
   begin_stage "訂規格"
   work "$ENGINE_A" "為以下需求撰寫規格,存到 $SPEC_DIR/spec.md,內容須包含:功能描述、驗收條件(可測試)、邊界情況與不做的範圍。需求:$task"
   review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md:需求完整性、驗收條件是否可測試、邊界情況是否有遺漏。"
@@ -219,12 +273,14 @@ main() {
 
   begin_stage "撰寫程式碼"
   work "$ENGINE_A" "依 $SPEC_DIR/plan.md 以 TDD 方式實作:先寫測試、再實作,直到所有測試通過。"
-  review_loop "$ENGINE_B" "$ENGINE_A" "本 branch 目前的程式變更(用 git diff 與 git log 檢視):程式碼品質、是否符合 $SPEC_DIR/spec.md,並實際執行測試驗證。"
+  gate_loop "$ENGINE_A" "$GATE_CMD"
+  review_loop "$ENGINE_B" "$ENGINE_A" "本 branch 目前的程式變更(用 git diff 與 git log 檢視):程式碼品質、是否符合 $SPEC_DIR/spec.md,並實際執行測試驗證。" "$GATE_CMD"
   commit_work "$ENGINE_A" "程式實作"
 
   begin_stage "整體 review 與修 bug"
   work "$ENGINE_A" "對本 branch 的所有變更做一次完整的自我 review:修掉發現的問題、補上遺漏的測試,並執行完整測試套件確認全數通過。"
-  review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試。"
+  gate_loop "$ENGINE_A" "$GATE_CMD"
+  review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試。" "$GATE_CMD"
   commit_work "$ENGINE_A" "最終修正"
 
   printf '\n全部 stage 完成 🎉  規格與計畫在 %s/,執行紀錄在 %s\n' "$SPEC_DIR" "$LOG"
