@@ -99,6 +99,7 @@ ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
 | `ENGINE_B` | `codex` | 審查者引擎(驗收測試 stage 兩者角色互換) |
 | `MODEL_A` | (CLI 預設) | A 槽引擎的模型,例 `haiku`、`gpt-5.1-codex-mini`;便宜任務/試跑時控制成本用 |
 | `MODEL_B` | (CLI 預設) | B 槽引擎的模型;A、B 同為 claude 時以 `MODEL_A` 為準 |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各 CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |

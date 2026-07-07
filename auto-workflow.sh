@@ -15,8 +15,9 @@
 # 環境變數(皆可選):
 #   ENGINE_A     工作者引擎:claude | codex | agy   (預設 claude)
 #   ENGINE_B     審查者引擎:claude | codex | agy   (預設 codex)
-#   MODEL_A      A 槽引擎的模型(例 haiku / gpt-5.1-codex-mini;預設用 CLI 預設)
+#   MODEL_A      A 槽引擎的模型(例 haiku;預設用 CLI 預設)
 #   MODEL_B      B 槽引擎的模型;A、B 同為 claude 時 MODEL_A 優先
+#   CLAUDE_ARGS / CODEX_ARGS / AGY_ARGS  各 CLI 的額外參數(空白切割後附加)
 #   MAX_ROUNDS   每個 stage 最多審查輪數            (預設 3)
 #   AUTO_BRANCH  1=自動開新 branch;0=用目前 branch (預設 1)
 #   USE_WORKTREE 1=在獨立 git worktree 中執行(比 branch 更隔離,預設 0)
@@ -35,6 +36,10 @@ ENGINE_A="${ENGINE_A:-claude}"
 ENGINE_B="${ENGINE_B:-codex}"
 MODEL_A="${MODEL_A:-}"   # A 槽引擎的模型覆寫(空 = 各 CLI 的預設模型)
 MODEL_B="${MODEL_B:-}"   # B 槽引擎的模型覆寫
+# 各 CLI 的額外參數(依空白切割後原樣附加;例:CODEX_ARGS='-c model_reasoning_effort=low')
+CLAUDE_ARGS="${CLAUDE_ARGS:-}"
+CODEX_ARGS="${CODEX_ARGS:-}"
+AGY_ARGS="${AGY_ARGS:-}"
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
 USE_WORKTREE="${USE_WORKTREE:-0}"
@@ -151,6 +156,8 @@ w_claude() {
   local args=(--output-format json --permission-mode acceptEdits --allowedTools "$TOOLS")
   local m; m=$(engine_model claude)
   [[ -n "$m" ]] && args+=(--model "$m")
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  args+=($CLAUDE_ARGS)
   [[ -n "$WORKER_SESSION" ]] && args+=(--resume "$WORKER_SESSION")
   local out
   out=$(claude -p "$1" "${args[@]}")
@@ -163,6 +170,8 @@ w_codex() {
   local m margs=()
   m=$(engine_model codex)
   [[ -n "$m" ]] && margs=(-c "model=\"$m\"")   # -c 在 exec 與 resume 都通用
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  margs+=($CODEX_ARGS)
   if [[ -z "$WORKER_SESSION" ]]; then
     codex exec --sandbox workspace-write "${margs[@]}" "$1"
     WORKER_SESSION="last"
@@ -178,6 +187,8 @@ w_agy() {
   local args=(--print-timeout 60m --dangerously-skip-permissions)
   local m; m=$(engine_model agy)
   [[ -n "$m" ]] && args+=(--model "$m")
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  args+=($AGY_ARGS)
   [[ -n "$WORKER_SESSION" ]] && args+=(--continue)
   agy --print "$1" "${args[@]}"
   WORKER_SESSION="continue"
@@ -248,6 +259,8 @@ r_claude() {
   local out args=()
   local m; m=$(engine_model claude)
   [[ -n "$m" ]] && args+=(--model "$m")
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  args+=($CLAUDE_ARGS)
   out=$(claude -p "$(review_prompt "$1")" "${args[@]}" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
     --json-schema "$VERDICT_SCHEMA")
@@ -260,6 +273,8 @@ r_codex() {
   local m margs=()
   m=$(engine_model codex)
   [[ -n "$m" ]] && margs=(-c "model=\"$m\"")
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  margs+=($CODEX_ARGS)
   codex exec --sandbox workspace-write "${margs[@]}" "$(review_prompt "$1")
 $(verdict_file_instr)"
 }
@@ -268,6 +283,8 @@ r_agy() {
   local m margs=()
   m=$(engine_model agy)
   [[ -n "$m" ]] && margs=(--model "$m")
+  # shellcheck disable=SC2206  # 刻意依空白切割
+  margs+=($AGY_ARGS)
   agy --print "$(review_prompt "$1")
 $(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}"
 }
