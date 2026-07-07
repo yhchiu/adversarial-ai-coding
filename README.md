@@ -58,7 +58,8 @@ done
 ## 快速開始
 
 ```bash
-cp auto-workflow.sh /path/to/your-project/ && cd /path/to/your-project
+# script 與 AGENTS.md 範本要一起帶走(bootstrap 從 script 所在目錄讀範本)
+cp auto-workflow.sh AGENTS.template.md /path/to/your-project/ && cd /path/to/your-project
 
 # 預設:A = Claude Code,B = Codex
 ./auto-workflow.sh "為 CLI 加上 --json 輸出選項"
@@ -104,6 +105,7 @@ ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、完成 |
+| `AGENTS_TEMPLATE` | script 同目錄的 `AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬** |
 
@@ -113,7 +115,8 @@ Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && 
 
 ```
 your-project/
-├── AGENTS.md            # 互審規範(缺檔時自動產生;既有檔案絕不覆蓋,只提示)
+├── AGENTS.template.md   # 互審規範範本(獨立檔案方便維護;簡單英文撰寫,對各家模型最通用)
+├── AGENTS.md            # 互審規範(缺檔時由範本產生;既有檔案絕不覆蓋,只提示)
 ├── CLAUDE.md            # 缺檔時補一行指向 AGENTS.md
 ├── specs/<RUN_ID>/
 │   ├── spec.md          # 規格(含驗收條件、假設與未決問題)
