@@ -64,6 +64,11 @@ detect_build_gate() {  # 逐任務的輕量關卡:只驗編譯,容忍驗收測�
   fi
 }
 
+protected_violations() {  # $1: 受保護清單檔  $2: 基準 commit;輸出被改動的受保護檔
+  [[ -f "$1" && -s "$1" ]] || return 0
+  git diff --name-only "$2" -- 2>/dev/null | grep -Fx -f "$1" || true
+}
+
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
 WORKER_SESSION=""
 
@@ -100,6 +105,34 @@ work() {  # $1: 引擎  $2: 工作指示
   # 用 process substitution 而非 pipeline:引擎函式留在當前 shell,
   # WORKER_SESSION 的賦值才不會因 subshell 而遺失(session 續接才有效)。
   "w_$1" "$2" > >(tee -a "$LOG")
+  # 每次工作者動作後硬性檢查受保護測試檔;旗標防止回復動作本身造成遞迴
+  if (( ! CHECKING_PROTECTED )); then
+    check_protected "$1"
+  fi
+}
+
+# ---------- 受保護的驗收測試(對抗式 TDD) ----------
+# 驗收測試由審查者撰寫、清單記錄於 protected-tests.txt;實作階段工作者一律禁改,
+# script 用 git diff 硬性檢查——提示詞約束擋不住 reward hacking,diff 擋得住。
+CHECKING_PROTECTED=0
+
+check_protected() {  # $1: 工作者引擎;受保護檔被改動時強制回復,屢犯即中止
+  local base viol n=0
+  [[ -f "$WF/protected-tests.txt" && -f "$WF/protected-base.sha" ]] || return 0
+  base=$(cat "$WF/protected-base.sha")
+  while viol=$(protected_violations "$WF/protected-tests.txt" "$base"); [[ -n "$viol" ]]; do
+    { echo "!! 受保護的驗收測試檔被改動:"; sed 's/^/  - /' <<<"$viol"; } | tee -a "$LOG" >&2
+    if (( n >= 2 )); then
+      echo "!! 工作者多次改動受保護測試檔仍未回復,停止,需人工介入。" >&2
+      exit 1
+    fi
+    n=$(( n + 1 ))
+    CHECKING_PROTECTED=1
+    work "$1" "你改動了受保護的驗收測試檔(工作流規範禁止):
+$viol
+請立刻用 git 把這些檔案完整回復到 commit $base 的內容(例如 git checkout $base -- <檔案>),並提交這個回復。若你認為測試本身有誤,把異議記錄在 $SPEC_DIR/spec.md 的「假設與未決問題」一節,但不得修改測試檔。"
+    CHECKING_PROTECTED=0
+  done
 }
 
 # ---------- 審查者引擎(每輪全新 context,靠檔案與 diff 取得狀態) ----------
@@ -296,10 +329,26 @@ main() {
   review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/plan.md(對照 $SPEC_DIR/spec.md):可行性、測試涵蓋度、步驟與 commit 切分是否合理。"
   commit_work "$ENGINE_A" "實作計畫"
 
+  # 對抗式 TDD:由審查方(B)依規格寫驗收測試,工作方(A)審查——
+  # 出題者與答題者分離,實作階段 A 禁改這些測試(script 硬性檢查)。
+  begin_stage "撰寫驗收測試"
+  local test_base
+  test_base=$(git rev-parse HEAD)
+  work "$ENGINE_B" "依 $SPEC_DIR/spec.md 的驗收條件撰寫驗收測試,放在專案慣例的測試位置。現在還沒有實作,測試可以編譯失敗或紅燈——這是 TDD 的紅燈階段。不要撰寫任何產品程式碼,也不要修改 $SPEC_DIR 下的檔案。"
+  review_loop "$ENGINE_A" "$ENGINE_B" "驗收測試(檢視 git diff $test_base 之後的變更):是否完整覆蓋 $SPEC_DIR/spec.md 的每一條驗收條件、測試本身是否正確、有無夾帶產品程式碼。"
+  commit_work "$ENGINE_B" "驗收測試"
+  git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
+  git rev-parse HEAD > "$WF/protected-base.sha"
+  if [[ -s "$WF/protected-tests.txt" ]]; then
+    { echo "受保護的驗收測試檔:"; sed 's/^/  - /' "$WF/protected-tests.txt"; } | tee -a "$LOG"
+  else
+    echo "(警告:驗收測試 stage 沒有產出任何檔案,測試保護機制停用)" >&2
+  fi
+
   begin_stage "撰寫程式碼"
-  work "$ENGINE_A" "依 $SPEC_DIR/plan.md 以 TDD 方式實作:先寫測試、再實作,直到所有測試通過。"
+  work "$ENGINE_A" "依 $SPEC_DIR/plan.md 以 TDD 方式實作,讓 $WF/protected-tests.txt 列出的驗收測試由紅轉綠。可以新增自己的單元測試,但不得修改受保護的驗收測試檔。直到所有測試通過。"
   gate_loop "$ENGINE_A" "$GATE_CMD"
-  review_loop "$ENGINE_B" "$ENGINE_A" "本 branch 目前的程式變更(用 git diff 與 git log 檢視):程式碼品質、是否符合 $SPEC_DIR/spec.md,並實際執行測試驗證。" "$GATE_CMD"
+  review_loop "$ENGINE_B" "$ENGINE_A" "本 branch 目前的程式變更(用 git diff 與 git log 檢視):程式碼品質、是否符合 $SPEC_DIR/spec.md、實際執行測試驗證;並對照 $WF/protected-tests.txt 檢視測試 diff,確認驗收測試未被弱化或繞過。" "$GATE_CMD"
   commit_work "$ENGINE_A" "程式實作"
 
   begin_stage "整體 review 與修 bug"
