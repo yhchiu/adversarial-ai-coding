@@ -69,6 +69,11 @@ protected_violations() {  # $1: 受保護清單檔  $2: 基準 commit;輸出被�
   git diff --name-only "$2" -- 2>/dev/null | grep -Fx -f "$1" || true
 }
 
+plan_tasks() {  # $1: plan.md;每行輸出一個未完成任務(去掉「- [ ] 」前綴)
+  [[ -f "$1" ]] || return 0
+  grep -E '^- \[ \] ' "$1" | sed -E 's/^- \[ \] //' || true
+}
+
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
 WORKER_SESSION=""
 
@@ -274,6 +279,11 @@ ensure_committed() {  # 工作者漏提交時由 script 補提交,確保流程�
   fi
 }
 
+commit_if_dirty() {  # $1: 引擎  $2: 說明;沒有變更就跳過,不浪費一次 AI 呼叫
+  [[ -z "$(git status --porcelain)" ]] && return 0
+  commit_work "$1" "$2"
+}
+
 # ---------- 主流程 ----------
 main() {
   local task="${1:-}"
@@ -325,8 +335,8 @@ main() {
   commit_work "$ENGINE_A" "規格"
 
   begin_stage "規劃實作計畫"
-  work "$ENGINE_A" "依 $SPEC_DIR/spec.md 撰寫實作計畫,存到 $SPEC_DIR/plan.md,內容須包含:實作步驟、測試策略(判斷需要 unit / integration / E2E 中的哪些並說明理由)、commit 切分方式。"
-  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/plan.md(對照 $SPEC_DIR/spec.md):可行性、測試涵蓋度、步驟與 commit 切分是否合理。"
+  work "$ENGINE_A" "依 $SPEC_DIR/spec.md 撰寫實作計畫,存到 $SPEC_DIR/plan.md,內容須包含:實作任務清單(每項一行、用「- [ ] 」checkbox 格式、可獨立實作與驗證、將逐項對應一個 commit)、測試策略(判斷需要 unit / integration / E2E 中的哪些並說明理由)。"
+  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/plan.md(對照 $SPEC_DIR/spec.md):可行性、測試涵蓋度、任務切分是否夠小且各自獨立、checkbox 格式是否正確。"
   commit_work "$ENGINE_A" "實作計畫"
 
   # 對抗式 TDD:由審查方(B)依規格寫驗收測試,工作方(A)審查——
@@ -345,17 +355,33 @@ main() {
     echo "(警告:驗收測試 stage 沒有產出任何檔案,測試保護機制停用)" >&2
   fi
 
+  # 小批次原則:一個任務一個 commit,批次越小、審查與回退都越容易
   begin_stage "撰寫程式碼"
-  work "$ENGINE_A" "依 $SPEC_DIR/plan.md 以 TDD 方式實作,讓 $WF/protected-tests.txt 列出的驗收測試由紅轉綠。可以新增自己的單元測試,但不得修改受保護的驗收測試檔。直到所有測試通過。"
+  local tasks=() t i=1
+  mapfile -t tasks < <(plan_tasks "$SPEC_DIR/plan.md")
+  if (( ${#tasks[@]} == 0 )); then
+    echo "(警告:plan.md 沒有「- [ ] 」任務清單,退回整包實作)" >&2
+    tasks=("依 $SPEC_DIR/plan.md 完成全部實作")
+  fi
+  for t in "${tasks[@]}"; do
+    echo "--- 任務 $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
+    work "$ENGINE_A" "依 $SPEC_DIR/plan.md 實作這個任務:$t
+以 TDD 方式進行,執行與本任務相關的測試並確認通過(整體驗收測試在所有任務完成前允許紅燈)。可以新增自己的單元測試,但不得修改受保護的驗收測試檔($WF/protected-tests.txt)。完成後把 plan.md 中該任務改成「- [x]」。"
+    gate_loop "$ENGINE_A" "$BUILD_GATE_CMD"
+    commit_work "$ENGINE_A" "任務「$t」"
+    i=$(( i + 1 ))
+  done
+
+  echo "--- 全部任務完成,執行完整品質關卡(驗收測試須全綠)---" | tee -a "$LOG"
   gate_loop "$ENGINE_A" "$GATE_CMD"
   review_loop "$ENGINE_B" "$ENGINE_A" "本 branch 目前的程式變更(用 git diff 與 git log 檢視):程式碼品質、是否符合 $SPEC_DIR/spec.md、實際執行測試驗證;並對照 $WF/protected-tests.txt 檢視測試 diff,確認驗收測試未被弱化或繞過。" "$GATE_CMD"
-  commit_work "$ENGINE_A" "程式實作"
+  commit_if_dirty "$ENGINE_A" "審查修正"
 
   begin_stage "整體 review 與修 bug"
   work "$ENGINE_A" "對本 branch 的所有變更做一次完整的自我 review:1) 修掉發現的問題、補上遺漏的測試;2) 若 $WF/suggestions.md 存在,逐條評估歷輪審查累積的建議——採納就實作,不採納就在該條目下方註明理由;3) 執行完整測試套件確認全數通過。"
   gate_loop "$ENGINE_A" "$GATE_CMD"
-  review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試。" "$GATE_CMD"
-  commit_work "$ENGINE_A" "最終修正"
+  review_loop "$ENGINE_B" "$ENGINE_A" "最終驗收:對照 $SPEC_DIR/spec.md 逐項確認整個 branch 的行為與品質,實際執行完整測試,並確認驗收測試未被弱化。" "$GATE_CMD"
+  commit_if_dirty "$ENGINE_A" "最終修正"
 
   printf '\n全部 stage 完成 🎉  規格與計畫在 %s/,執行紀錄在 %s\n' "$SPEC_DIR" "$LOG"
 }
