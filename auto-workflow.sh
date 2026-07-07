@@ -252,7 +252,7 @@ EOF
 }
 
 verdict_file_instr() {
-  echo "- 最後把裁決寫入 $WF/verdict.json,單行 JSON,格式:{\"approved\": true|false, \"blockers\": [\"必須修正的問題\"], \"suggestions\": [\"不擋關的建議\"]}。"
+  echo "- 最後把裁決寫入 $WF/verdict.json(檔案已存在、內容是「未通過」的預設值,直接覆寫),單行 JSON,格式:{\"approved\": true|false, \"blockers\": [\"必須修正的問題\"], \"suggestions\": [\"不擋關的建議\"]}。"
 }
 
 r_claude() {
@@ -311,7 +311,9 @@ run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
   local t0=$SECONDS
   LAST_COST=""
   echo ">>> 審查者($1)審查中…"
-  rm -f "$WF/verdict.json"
+  # 預寫「未通過」哨兵而非刪檔:reviewer 沒寫入 = 未通過(語義相同),
+  # 且避免 codex 的 apply_patch 對不存在的檔案報錯(E2E 實測踩到)
+  printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
   "r_$1" "$2" > >(tee -a "$LOG") || echo "(警告:審查者執行失敗)" >&2
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   if [[ ! -f "$WF/verdict.json" ]]; then
