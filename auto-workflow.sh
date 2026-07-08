@@ -69,6 +69,7 @@ LOGS="${LOGS:-$WF/logs}"
 LOG="${LOG:-$LOGS/$RUN_ID.log}"
 METRICS="${METRICS:-$WF/metrics.csv}"
 ENGINE_OUT="$WF/last-engine-output.txt"   # 每次引擎呼叫的輸出落地,供限額偵測用
+ART_SEQ="${ART_SEQ:-0}"
 
 usage() {
   {
@@ -87,12 +88,149 @@ notify() {  # $1: 訊息;NOTIFY_CMD 會以第一個參數收到訊息
 }
 
 metric() {  # $1: 角色  $2: 引擎  $3: 輪次  $4: 秒數  $5: 費用(USD,可空)
+  local model model_args generated
   [[ -d "$(dirname "$METRICS")" ]] || return 0
-  [[ -f "$METRICS" ]] || echo "run_id,stage,role,engine,round,duration_s,cost_usd" > "$METRICS"
-  echo "$RUN_ID,$CUR_STAGE,$1,$2,$3,$4,$5" >> "$METRICS"
+  [[ -f "$METRICS" ]] || echo "run_id,stage,role,engine,round,duration_s,cost_usd,model,model_args,generated_at" > "$METRICS"
+  model=$(engine_model "$2")
+  model_args=$(resolve_model_args "$2")
+  generated=$(generated_at)
+  write_csv_row "$METRICS" "$RUN_ID" "$CUR_STAGE" "$1" "$2" "$3" "$4" "$5" "$model" "$model_args" "$generated"
 }
 
 # ---------- 純函式 helpers(可被測試 source) ----------
+generated_at() {
+  if [[ -n "${WF_NOW:-}" ]]; then
+    echo "$WF_NOW"
+  else
+    date '+%Y-%m-%dT%H:%M:%S%z'
+  fi
+}
+
+safe_slug() {
+  local s="$1"
+  s="${s//\//-}"
+  s="${s//\\/-}"
+  s="${s// /-}"
+  s="${s//:/-}"
+  s="${s//;/-}"
+  s="${s//|/-}"
+  s="${s//</-}"
+  s="${s//>/-}"
+  s="${s//\"/-}"
+  s="${s//\'/-}"
+  printf '%s' "$s"
+}
+
+resolve_model_args() {
+  case "$1" in
+    claude) echo "$CLAUDE_ARGS" ;;
+    codex) echo "$CODEX_ARGS" ;;
+    agy) echo "$AGY_ARGS" ;;
+    *) echo "" ;;
+  esac
+}
+
+csv_row() {
+  local first=1 field
+  for field in "$@"; do
+    [[ "$first" == "1" ]] || printf ','
+    first=0
+    field="${field//\"/\"\"}"
+    printf '"%s"' "$field"
+  done
+  printf '\n'
+}
+
+write_csv_row() {
+  local file="$1"
+  shift
+  csv_row "$@" >> "$file"
+}
+
+art_path() {
+  local name="$1" seq_file seq
+  [[ -n "$WF_RUN" ]] || { echo "WF_RUN is not set" >&2; return 1; }
+  mkdir -p "$WF_RUN"
+  seq_file="$WF_RUN/.artifact-seq"
+  if [[ -f "$seq_file" ]]; then
+    seq=$(cat "$seq_file")
+  else
+    seq="$ART_SEQ"
+  fi
+  seq=$(( seq + 1 ))
+  printf '%s\n' "$seq" > "$seq_file"
+  ART_SEQ="$seq"
+  printf '%s/%03d-%s\n' "$WF_RUN" "$seq" "$name"
+}
+
+write_meta() {  # $1: artifact  $2: role  $3: engine  $4: model  $5: model_args  $6: stage  $7: round
+  local artifact="$1" role="${2:-workflow}" engine="${3:-workflow}" model="${4:-}" model_args="${5:-}" stage="${6:-${CUR_STAGE:-startup}}" round="${7:-${CUR_ROUND:-0}}"
+  jq -n \
+    --arg generated_at "$(generated_at)" \
+    --arg generator_role "$role" \
+    --arg engine "$engine" \
+    --arg model "$model" \
+    --arg model_args "$model_args" \
+    --arg stage "$stage" \
+    --arg round "$round" \
+    --arg run_id "$RUN_ID" \
+    --arg artifact "$artifact" \
+    '{generated_at:$generated_at,generator_role:$generator_role,engine:$engine,model:$model,model_args:$model_args,stage:$stage,round:$round,run_id:$run_id,artifact:$artifact}' \
+    > "$artifact.meta.json"
+}
+
+archive_snapshot() {  # $1: source  $2: archive name  $3: role  $4: engine  $5: stage  $6: round
+  local src="$1" name="$2" role="${3:-workflow}" engine="${4:-workflow}" stage="${5:-${CUR_STAGE:-startup}}" round="${6:-${CUR_ROUND:-0}}" dst model model_args
+  [[ -f "$src" ]] || return 0
+  dst=$(art_path "$name")
+  cp "$src" "$dst"
+  model=$(engine_model "$engine")
+  model_args=$(resolve_model_args "$engine")
+  write_meta "$dst" "$role" "$engine" "$model" "$model_args" "$stage" "$round"
+  echo "$dst"
+}
+
+archive_text() {  # $1: archive name  $2: text  $3: role  $4: engine  $5: stage  $6: round
+  local name="$1" text="$2" role="${3:-workflow}" engine="${4:-workflow}" stage="${5:-${CUR_STAGE:-startup}}" round="${6:-${CUR_ROUND:-0}}" dst model model_args
+  dst=$(art_path "$name")
+  printf '%s\n' "$text" > "$dst"
+  model=$(engine_model "$engine")
+  model_args=$(resolve_model_args "$engine")
+  write_meta "$dst" "$role" "$engine" "$model" "$model_args" "$stage" "$round"
+  echo "$dst"
+}
+
+archive_task() {  # $1: arg  $2: kind  $3: source path  $4: resolved text
+  local task_arg="$1" kind="$2" source_path="$3" resolved="$4" src_art task_art
+  src_art=$(art_path "task-source.md")
+  {
+    echo "# Task Source"
+    echo
+    echo "- kind: $kind"
+    echo "- argument: $task_arg"
+    if [[ "$kind" == "file" ]]; then
+      echo "- path: $source_path"
+    fi
+    echo
+    echo '```'
+    printf '%s\n' "$resolved"
+    echo '```'
+  } > "$src_art"
+  write_meta "$src_art" "workflow" "workflow" "" "" "startup" "0"
+
+  task_art=$(art_path "task.txt")
+  printf '%s\n' "$resolved" > "$task_art"
+  write_meta "$task_art" "workflow" "workflow" "" "" "startup" "0"
+}
+
+abs_path() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1"
+  else
+    ( cd "$(dirname "$1")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$1")" )
+  fi
+}
+
 establish_run_archive() {
   local base candidate n=2
   base="$RUNS_DIR/$RUN_ID"
@@ -106,6 +244,48 @@ establish_run_archive() {
   LOG="$LOGS/001-run.log"
   METRICS="$WF_RUN/metrics.csv"
   mkdir -p "$WF" "$LOGS" "$SPEC_DIR"
+}
+
+write_run_metadata() {
+  local dst
+  dst=$(art_path "run-metadata.json")
+  jq -n \
+    --arg generated_at "$(generated_at)" \
+    --arg run_id "$RUN_ID" \
+    --arg spec_dir "$SPEC_DIR" \
+    --arg wf "$WF" \
+    --arg runs_dir "$RUNS_DIR" \
+    --arg wf_run "$WF_RUN" \
+    --arg log "$LOG" \
+    --arg metrics "$METRICS" \
+    --arg engine_a "$ENGINE_A" \
+    --arg model_a "$(engine_model "$ENGINE_A")" \
+    --arg args_a "$(resolve_model_args "$ENGINE_A")" \
+    --arg engine_b "$ENGINE_B" \
+    --arg model_b "$(engine_model "$ENGINE_B")" \
+    --arg args_b "$(resolve_model_args "$ENGINE_B")" \
+    --arg max_rounds "$MAX_ROUNDS" \
+    --arg auto_branch "$AUTO_BRANCH" \
+    --arg use_worktree "$USE_WORKTREE" \
+    '{generated_at:$generated_at,run_id:$run_id,spec_dir:$spec_dir,wf:$wf,runs_dir:$runs_dir,wf_run:$wf_run,log:$log,metrics:$metrics,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b,max_rounds:$max_rounds,auto_branch:$auto_branch,use_worktree:$use_worktree}' \
+    > "$dst"
+}
+
+write_log_metadata() {
+  mkdir -p "$(dirname "$LOG")"
+  jq -n \
+    --arg generated_at "$(generated_at)" \
+    --arg generator_role "workflow" \
+    --arg run_id "$RUN_ID" \
+    --arg log_path "$LOG" \
+    --arg engine_a "$ENGINE_A" \
+    --arg model_a "$(engine_model "$ENGINE_A")" \
+    --arg args_a "$(resolve_model_args "$ENGINE_A")" \
+    --arg engine_b "$ENGINE_B" \
+    --arg model_b "$(engine_model "$ENGINE_B")" \
+    --arg args_b "$(resolve_model_args "$ENGINE_B")" \
+    '{generated_at:$generated_at,generator_role:$generator_role,run_id:$run_id,log_path:$log_path,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b}' \
+    > "$LOG.meta.json"
 }
 
 init_live_state() {
@@ -250,6 +430,7 @@ w_claude() {
     echo "(claude 退出碼 $rc,原始輸出如上)" >&2
     return "$rc"
   fi
+  printf '%s\n' "$out" > "$ENGINE_OUT"
   WORKER_SESSION=$(jq -r '.session_id' <<<"$out")
   LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -r '.result // empty' <<<"$out"
@@ -284,11 +465,26 @@ w_agy() {
 }
 
 # ---------- 限額退避重試 ----------
-engine_call() {  # $@: 引擎函式與其參數;撞限額時等待後重試,其他錯誤原樣回傳
-  local n=0 rc w eta
+archive_engine_attempt() {  # $1: role  $2: engine  $3: slug  $4: attempt  $5: rc
+  local role="$1" engine="$2" slug="$3" attempt="$4" rc="$5" dst model model_args
+  dst=$(art_path "${slug}-attempt-${attempt}-rc${rc}.raw")
+  if [[ -f "$ENGINE_OUT" ]]; then
+    cp "$ENGINE_OUT" "$dst"
+  else
+    printf '(ENGINE_OUT was not written for this attempt)\n' > "$dst"
+  fi
+  model=$(engine_model "$engine")
+  model_args=$(resolve_model_args "$engine")
+  write_meta "$dst" "$role" "$engine" "$model" "$model_args" "$CUR_STAGE" "$CUR_ROUND"
+}
+
+engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: prompt
+  local role="$1" engine="$2" slug="$3" fn="$4" prompt="$5"
+  local n=0 attempt=1 rc w eta
   while true; do
     rc=0
-    "$@" || rc=$?
+    "$fn" "$prompt" || rc=$?
+    archive_engine_attempt "$role" "$engine" "$slug" "$attempt" "$rc"
     (( rc == 0 )) && return 0
     [[ "$RETRY_ON_LIMIT" == "1" ]] || return "$rc"
     is_rate_limited "$ENGINE_OUT" || return "$rc"
@@ -306,16 +502,22 @@ engine_call() {  # $@: 引擎函式與其參數;撞限額時等待後重試,其�
     { echo "== 撞到用量限額,等待 $(( w / 60 )) 分(約 $eta)後進行第 $n/$RETRY_MAX 次重試 =="; } | tee -a "$LOG" >&2
     notify "auto-workflow:撞用量限額,約 $eta 重試(第 $n 次)"
     sleep "$w"
+    attempt=$(( attempt + 1 ))
   done
 }
 
 work() {  # $1: 引擎  $2: 工作指示
-  local t0=$SECONDS
+  local t0=$SECONDS prompt_art output_art slug
   LAST_COST=""
   echo ">>> 工作者($1)執行中…"
+  slug="worker-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
+  archive_text "${slug}-prompt.md" "$2" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  output_art=$(art_path "${slug}-output.txt")
   # 用 process substitution 而非 pipeline:引擎函式留在當前 shell,
   # WORKER_SESSION 的賦值才不會因 subshell 而遺失(session 續接才有效)。
-  engine_call "w_$1" "$2" > >(tee -a "$LOG")
+  engine_call "worker" "$1" "$slug" "w_$1" "$2" > >(tee -a "$LOG" | tee "$output_art")
+  write_meta "$output_art" "worker" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
+  archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   metric worker "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   # 每次工作者動作後硬性檢查受保護測試檔;旗標防止回復動作本身造成遞迴
   if (( ! CHECKING_PROTECTED )); then
@@ -371,6 +573,16 @@ verdict_file_instr() {
   echo "- 最後把裁決寫入 $WF/verdict.json(檔案已存在、內容是「未通過」的預設值,直接覆寫),單行 JSON,格式:{\"approved\": true|false, \"blockers\": [\"必須修正的問題\"], \"suggestions\": [\"不擋關的建議\"]}。"
 }
 
+compose_review_prompt() {  # $1: 引擎  $2: 本輪審查範圍
+  local engine="$1" scope="$2" prompt
+  prompt="$(review_prompt "$scope")"
+  case "$engine" in
+    claude) printf '%s\n' "$prompt" ;;
+    codex|agy) printf '%s\n%s\n' "$prompt" "$(verdict_file_instr)" ;;
+    *) printf '%s\n' "$prompt" ;;
+  esac
+}
+
 r_claude() {
   local out args=()
   local m; m=$(engine_model claude)
@@ -378,7 +590,7 @@ r_claude() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   args+=($CLAUDE_ARGS)
   local rc=0
-  out=$(claude -p "$(review_prompt "$1")" "${args[@]}" \
+  out=$(claude -p "$1" "${args[@]}" \
     --output-format json --permission-mode acceptEdits --allowedTools "$TOOLS" \
     --json-schema "$VERDICT_SCHEMA") || rc=$?
   if (( rc != 0 )); then
@@ -387,6 +599,7 @@ r_claude() {
     echo "(claude 退出碼 $rc,原始輸出如上)" >&2
     return "$rc"
   fi
+  printf '%s\n' "$out" > "$ENGINE_OUT"
   LAST_COST=$(jq -r '.total_cost_usd // empty' <<<"$out")
   jq -c '.structured_output // {approved: false, blockers: ["審查者未產出結構化裁決"], suggestions: []}' <<<"$out" > "$WF/verdict.json"
   jq -r '.result // empty' <<<"$out"
@@ -398,8 +611,7 @@ r_codex() {
   [[ -n "$m" ]] && margs=(-c "model=\"$m\"")
   # shellcheck disable=SC2206  # 刻意依空白切割
   margs+=($CODEX_ARGS)
-  codex exec --sandbox workspace-write "${margs[@]}" "$(review_prompt "$1")
-$(verdict_file_instr)" 2>&1 | tee "$ENGINE_OUT"
+  codex exec --sandbox workspace-write "${margs[@]}" "$1" 2>&1 | tee "$ENGINE_OUT"
 }
 
 r_agy() {
@@ -408,8 +620,7 @@ r_agy() {
   [[ -n "$m" ]] && margs=(--model "$m")
   # shellcheck disable=SC2206  # 刻意依空白切割
   margs+=($AGY_ARGS)
-  agy --print "$(review_prompt "$1")
-$(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}" 2>&1 | tee "$ENGINE_OUT"
+  agy --print "$1" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}" 2>&1 | tee "$ENGINE_OUT"
 }
 
 collect_suggestions() {  # 把本輪 suggestions 累積到 backlog,收尾階段統一評估
@@ -431,19 +642,27 @@ show_blockers() {
 }
 
 run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
-  local t0=$SECONDS
+  local t0=$SECONDS prompt output_art slug
   LAST_COST=""
   echo ">>> 審查者($1)審查中…"
+  slug="reviewer-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
+  prompt="$(compose_review_prompt "$1" "$2")"
+  archive_text "${slug}-prompt.md" "$prompt" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  output_art=$(art_path "${slug}-output.txt")
   # 預寫「未通過」哨兵而非刪檔:reviewer 沒寫入 = 未通過(語義相同),
   # 且避免 codex 的 apply_patch 對不存在的檔案報錯(E2E 實測踩到)
   printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
-  engine_call "r_$1" "$2" > >(tee -a "$LOG") || echo "(警告:審查者執行失敗)" >&2
+  engine_call "reviewer" "$1" "$slug" "r_$1" "$prompt" > >(tee -a "$LOG" | tee "$output_art") || echo "(警告:審查者執行失敗)" >&2
+  write_meta "$output_art" "reviewer" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
+  archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   if [[ ! -f "$WF/verdict.json" ]]; then
     echo "(審查者未產出 verdict.json,視為未通過)" >&2
     return 1
   fi
   collect_suggestions
+  archive_snapshot "$WF/review.md" "review-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}.md" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_snapshot "$WF/verdict.json" "verdict-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}.json" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   if ! verdict_approved "$WF/verdict.json"; then
     show_blockers
     return 1
@@ -498,6 +717,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
     CUR_ROUND=$(( CUR_ROUND + 1 ))
     echo "--- [$CUR_STAGE] 第 $CUR_ROUND 輪:工作者依審查意見修改 ---" | tee -a "$LOG"
     work "$2" "審查意見在 $WF/review.md。依 AGENTS.md 的互審規範逐條回應:同意就修正,並在該條目下方註明「已修正:<摘要>」;不同意就回覆「不同意:<理由>」,不得默默忽略。只處理審查意見中的問題,不要超出本階段(${CUR_STAGE})的工作範圍——規格階段只改規格、計畫階段只改計畫,不要提前實作。若本階段有程式碼變更,修改後確保測試通過。"
+    archive_snapshot "$WF/review.md" "review-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}-worker.md" "worker" "$2" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
     gate_loop "$2" "$gate_cmd"   # 修正後同樣要過確定性關卡,再交回審查
   done
   echo "[$CUR_STAGE] 審查通過 ✔" | tee -a "$LOG"
@@ -584,6 +804,8 @@ EOF
     echo "  gh pr create --title \"$title\" --body-file $WF/pr-body.md"
     [[ "$OPEN_PR" == "1" ]] && echo "(OPEN_PR=1 但缺 gh 或 origin remote,已改為只印指令)" >&2
   fi
+  archive_snapshot "$WF/pr-body.md" "pr-body.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_snapshot "$WF/suggestions.md" "suggestions.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   notify "auto-workflow:全部 stage 完成($branch)"
 }
 
@@ -605,15 +827,23 @@ setup_workspace() {  # 依 USE_WORKTREE / AUTO_BRANCH 準備隔離的工作區
 # ---------- 主流程 ----------
 main() {
   local task="${1:-}"
+  local task_arg task_source_kind task_source_path="" task_resolved_text
   [[ -n "$task" ]] || usage
 
   if [[ "$task" == "print-agents" ]]; then
     write_agents_section
     return 0
   fi
+  task_arg="$task"
   if [[ -f "$task" ]]; then
+    task_source_kind="file"
+    task_source_path=$(abs_path "$task")
     echo "從檔案讀取任務描述:$task"
-    task="$(cat "$task")"
+    task_resolved_text="$(cat "$task")"
+    task="$task_resolved_text"
+  else
+    task_source_kind="literal"
+    task_resolved_text="$task"
   fi
 
   need git; need jq
@@ -643,6 +873,10 @@ main() {
   establish_run_archive
   init_live_state
   echo '*' > "$WF/.gitignore"   # 讓 .workflow/ 整個目錄不進版控
+  write_run_metadata
+  write_log_metadata
+  archive_task "$task_arg" "$task_source_kind" "$task_source_path" "$task_resolved_text"
+  printf '%s\n' "$WF_RUN" > "$WF/latest-run.txt"
 
   trap 'echo "!! 工作流中斷(exit=$?)。完整過程見 '"$LOG"'" >&2' ERR
 
@@ -677,6 +911,8 @@ main() {
   commit_work "$ENGINE_B" "驗收測試"
   git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
   git rev-parse HEAD > "$WF/protected-base.sha"
+  archive_snapshot "$WF/protected-tests.txt" "protected-tests.txt" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_snapshot "$WF/protected-base.sha" "protected-base.sha" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   if [[ -s "$WF/protected-tests.txt" ]]; then
     { echo "受保護的驗收測試檔:"; sed 's/^/  - /' "$WF/protected-tests.txt"; } | tee -a "$LOG"
   else

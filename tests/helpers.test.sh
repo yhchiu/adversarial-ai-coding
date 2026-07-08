@@ -122,8 +122,54 @@ d=$(tmpdir)
     && WF_RUN=.workflow/runs/test && METRICS="$WF_RUN/metrics.csv" \
     && CUR_STAGE=stage1 && metric worker claude 1 12 0.05 && metric reviewer codex 2 30 "" )
 assert_eq "metric:標頭 + 兩筆" 3 "$(wc -l < "$d/.workflow/runs/test/metrics.csv")"
-assert_eq "metric:CSV 標頭正確" "run_id,stage,role,engine,round,duration_s,cost_usd" \
+assert_eq "metric:CSV 標頭正確" "run_id,stage,role,engine,round,duration_s,cost_usd,model,model_args,generated_at" \
   "$(head -1 "$d/.workflow/runs/test/metrics.csv")"
+
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/runs/test/logs && CODEX_ARGS='-c model="x,y" --flag "quoted value"' \
+    && source "$SCRIPT" && WF_RUN=.workflow/runs/test && METRICS="$WF_RUN/metrics.csv" \
+    && CUR_STAGE=stage1 && metric reviewer codex 2 30 "" )
+line=$(tail -1 "$d/.workflow/runs/test/metrics.csv")
+python -c 'import csv,sys; row=next(csv.reader([sys.argv[1]])); assert row[7] == ""; assert row[8] == "-c model=\"x,y\" --flag \"quoted value\""; assert len(row) == 10' "$line"
+assert_rc "metric:CSV escaping 保留含逗號/引號的 model_args" 0 $?
+
+# ---------- archive helpers ----------
+d=$(tmpdir)
+out=$( cd "$d" && mkdir -p .workflow/runs/test && WF_NOW=2026-01-02T03:04:05+0800 \
+      && source "$SCRIPT" && WF_RUN=.workflow/runs/test && ART_SEQ=0 \
+      && a=$(art_path first.txt) && b=$(art_path second.txt) && printf '%s\n%s\n' "$a" "$b" )
+assert_eq "art_path:遞增序號" $'.workflow/runs/test/001-first.txt\n.workflow/runs/test/002-second.txt' "$out"
+
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/runs/test && WF_NOW=2026-01-02T03:04:05+0800 \
+    && source "$SCRIPT" && WF_RUN=.workflow/runs/test && ART_SEQ=0 \
+    && printf 'data\n' > src.txt && dst=$(archive_snapshot src.txt snap.txt worker claude stage 3) \
+    && jq -e '.generated_at=="2026-01-02T03:04:05+0800" and .generator_role=="worker" and .engine=="claude" and .stage=="stage" and .round=="3" and (.run_id|length > 0)' "$dst.meta.json" >/dev/null )
+assert_rc "write_meta/archive_snapshot:產出必要 metadata" 0 $?
+
+d=$(tmpdir)
+printf 'file task\n' > "$d/task.md"
+( cd "$d" && mkdir -p .workflow/runs/test && source "$SCRIPT" && WF_RUN=.workflow/runs/test && ART_SEQ=0 \
+    && archive_task task.md file "$(abs_path task.md)" "$(cat task.md)" )
+[[ -f "$d/.workflow/runs/test/001-task-source.md" && -f "$d/.workflow/runs/test/002-task.txt" ]] \
+  && ok "archive_task:保存 file task source 與 resolved text" || bad "archive_task:保存 file task source 與 resolved text"
+grep -q "$(cd "$d" && pwd -P)" "$d/.workflow/runs/test/001-task-source.md" \
+  && ok "archive_task:file source 記錄絕對路徑" || bad "archive_task:file source 記錄絕對路徑"
+
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/runs/test && source "$SCRIPT" && WF_RUN=.workflow/runs/test && ART_SEQ=0 \
+    && archive_task 'literal task' literal '' 'literal task' )
+grep -q 'kind: literal' "$d/.workflow/runs/test/001-task-source.md" \
+  && ok "archive_task:保存 literal task source" || bad "archive_task:保存 literal task source"
+
+# ---------- compose_review_prompt ----------
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt claude scope )
+if [[ "$out" != *"最後把裁決"* ]]; then ok "compose_review_prompt:claude 不附 verdict_file_instr"
+else bad "compose_review_prompt:claude 不附 verdict_file_instr"; fi
+out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt codex scope )
+if [[ "$out" == *"最後把裁決"* ]]; then ok "compose_review_prompt:codex 附 verdict_file_instr"
+else bad "compose_review_prompt:codex 附 verdict_file_instr"; fi
 
 # ---------- init_live_state ----------
 d=$(tmpdir)
@@ -252,7 +298,7 @@ d=$(tmpdir)
 run_engine_call() {  # $1: RETRY_ON_LIMIT  $2: stub 輸出內容("" = 成功)
   ( cd "$d" && mkdir -p .workflow/logs \
     && RETRY_ON_LIMIT="$1" RETRY_BASE_WAIT=1 RETRY_MAX=2 STUB="$2" \
-    && source "$SCRIPT" && LOG=.workflow/logs/t.log && touch "$LOG" \
+    && source "$SCRIPT" && WF_RUN=.workflow/runs/test && mkdir -p "$WF_RUN" && ART_SEQ=0 && LOG=.workflow/logs/t.log && touch "$LOG" \
     && CALLS=0 \
     && fake_engine() {
          CALLS=$(( CALLS + 1 ))
@@ -260,7 +306,7 @@ run_engine_call() {  # $1: RETRY_ON_LIMIT  $2: stub 輸出內容("" = 成功)
          printf '%s\n' "$STUB" > "$ENGINE_OUT"
          return 1
        } \
-    && rc=0 && engine_call fake_engine >/dev/null 2>&1 || rc=$? \
+    && rc=0 && engine_call worker claude worker-stage-r1 fake_engine prompt >/dev/null 2>&1 || rc=$? \
     ;  echo "rc=$rc calls=$CALLS" )
 }
 out=$(run_engine_call 1 'api_error_status":429 hit your session limit')
@@ -271,6 +317,17 @@ out=$(run_engine_call 1 'ordinary build failure')
 assert_eq "engine_call:非限額錯誤 → 不重試" "rc=1 calls=1" "$out"
 out=$(run_engine_call 1 '')
 assert_eq "engine_call:成功直接通過" "rc=0 calls=1" "$out"
+
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/logs .workflow/runs/test \
+    && RETRY_ON_LIMIT=1 RETRY_BASE_WAIT=1 RETRY_MAX=1 STUB='api_error_status":429 hit your session limit' \
+    && source "$SCRIPT" && WF_RUN=.workflow/runs/test && ART_SEQ=0 && LOG=.workflow/logs/t.log && touch "$LOG" \
+    && fake_engine() { printf '%s\n' "$STUB" > "$ENGINE_OUT"; return 1; } \
+    && rc=0 && engine_call worker claude worker-stage-r1 fake_engine prompt >/dev/null 2>&1 || rc=$? )
+[[ -f "$d/.workflow/runs/test/001-worker-stage-r1-attempt-1-rc1.raw" && -f "$d/.workflow/runs/test/002-worker-stage-r1-attempt-2-rc1.raw" ]] \
+  && ok "engine_call:每次 retry attempt 都保存 raw" || bad "engine_call:每次 retry attempt 都保存 raw"
+jq -e '.generator_role=="worker" and .engine=="claude"' "$d/.workflow/runs/test/001-worker-stage-r1-attempt-1-rc1.raw.meta.json" >/dev/null
+assert_rc "engine_call:attempt metadata 含 role/engine" 0 $?
 
 # ---------- 總結 ----------
 echo ""
