@@ -114,6 +114,7 @@ ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒);解析出的重置時刻若超過 6 小時視為異常、改走指數退避 |
 | `AGENTS_TEMPLATE` | script 同目錄的 `AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
+| `RUNS_DIR` | `.workflow/runs` | 每次 run 的 archive 根目錄;相對路徑會在 branch/worktree 準備完成後解析 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導引擎改用內建檔案工具 |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
@@ -134,12 +135,19 @@ your-project/
 │   ├── suggestions.md   # 歷輪累積的不擋關建議(收尾階段逐條評估)
 │   ├── protected-tests.txt / protected-base.sha   # 受保護測試檔清單與基準 commit
 │   ├── pr-body.md       # 收尾產生的 PR 內文
-│   ├── metrics.csv      # 每次 AI 呼叫的 stage/角色/引擎/輪次/秒數/費用
-│   └── logs/<RUN_ID>.log
+│   ├── latest-run.txt   # 指向最近一次 run archive 目錄
+│   └── runs/<RUN_ID>/   # 每次 run 的完整中間資料 archive
+│       ├── 001-run-metadata.json
+│       ├── 002-task-source.md / 003-task.txt
+│       ├── NNN-*-prompt.md / NNN-*-output.txt / NNN-*-attempt-*-rc*.raw
+│       ├── NNN-review-*.md / NNN-verdict-*.json
+│       ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
+│       ├── metrics.csv  # stage/角色/引擎/輪次/秒數/費用/model/args/time
+│       └── logs/001-run.log (+ 001-run.log.meta.json)
 └── auto-workflow.sh
 ```
 
-`metrics.csv` 的「審了幾輪才通過」是提示詞品質的最佳量化訊號;費用目前只有 claude 引擎會回報(`total_cost_usd`)。
+Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、引擎、模型與模型參數。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude 引擎會回報(`total_cost_usd`)。
 
 ## 引擎差異與限制
 
@@ -172,7 +180,7 @@ Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 se
 ## 測試
 
 ```bash
-bash tests/helpers.test.sh   # 46 個單元測試,不呼叫任何 AI
+bash tests/helpers.test.sh   # 單元測試,不呼叫任何 AI
 ```
 
 ### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)

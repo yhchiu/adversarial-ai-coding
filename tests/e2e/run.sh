@@ -118,6 +118,28 @@ else
   bad "受保護測試檔清單非空"
 fi
 
+run_dir=""
+if [[ -f .workflow/latest-run.txt ]]; then
+  run_dir=$(cat .workflow/latest-run.txt)
+  [[ -d "$run_dir" ]] && ok "latest-run.txt 指向存在的 run 目錄" || bad "latest-run.txt 指向存在的 run 目錄"
+else
+  bad "latest-run.txt 存在"
+fi
+
+if [[ -n "$run_dir" && -d "$run_dir" ]]; then
+  ls "$run_dir"/*-task-source.md >/dev/null 2>&1 && ok "task-source 已保存" || bad "task-source 已保存"
+  ls "$run_dir"/*-task.txt >/dev/null 2>&1 && ok "task resolved text 已保存" || bad "task resolved text 已保存"
+  ls "$run_dir"/*-prompt.md >/dev/null 2>&1 && ok "AI prompt artifact 存在" || bad "AI prompt artifact 存在"
+  ls "$run_dir"/*-output.txt >/dev/null 2>&1 && ok "AI output artifact 存在" || bad "AI output artifact 存在"
+  ls "$run_dir"/*-attempt-*-rc*.raw >/dev/null 2>&1 && ok "engine attempt raw artifact 存在" || bad "engine attempt raw artifact 存在"
+  ls "$run_dir"/*-git-status.txt >/dev/null 2>&1 && ok "git status 快照存在" || bad "git status 快照存在"
+  ls "$run_dir"/*-git-diff.patch >/dev/null 2>&1 && ok "git diff 快照存在" || bad "git diff 快照存在"
+  ls "$run_dir"/*.meta.json >/dev/null 2>&1 && ok "artifact metadata 存在" || bad "artifact metadata 存在"
+  [[ -f "$run_dir/logs/001-run.log.meta.json" ]] && ok "run log metadata 存在" || bad "run log metadata 存在"
+  jq -e '.run_id and .generator_role=="workflow"' "$run_dir/logs/001-run.log.meta.json" >/dev/null \
+    && ok "run log metadata 含 run/generator" || bad "run log metadata 含 run/generator"
+fi
+
 n=$(git rev-list --count main..HEAD)
 (( n >= 5 )) && ok "小批次 commit(main..HEAD = $n ≥ 5)" || bad "小批次 commit(main..HEAD = $n,預期 ≥ 5)"
 
@@ -125,13 +147,23 @@ echo "== 最終關卡(親測)"
 if go build ./... && go vet ./... && go test ./...; then ok "最終 build/vet/test 全綠"
 else bad "最終 build/vet/test 全綠"; fi
 
-if [[ -f .workflow/metrics.csv ]]; then
+if [[ -n "$run_dir" && -f "$run_dir/metrics.csv" ]]; then
   ok "metrics.csv 存在"
+  if python - "$run_dir/metrics.csv" <<'PY'
+import csv, sys
+with open(sys.argv[1], newline="", encoding="utf-8") as f:
+    rows = list(csv.reader(f))
+assert rows[0] == ["run_id","stage","role","engine","round","duration_s","cost_usd","model","model_args","generated_at"]
+assert len(rows) > 1
+assert all(len(r) == 10 for r in rows)
+PY
+  then ok "metrics.csv 新欄位可解析"
+  else bad "metrics.csv 新欄位可解析"; fi
   echo
   echo "== 執行統計"
   awk -F, 'NR>1 { calls[$2]++; secs[$2]+=$6; cost[$2]+=$7 }
     END { for (s in calls) printf "  %-14s %d 次呼叫,%d 秒,$%.4f\n", s, calls[s], secs[s], cost[s] }' \
-    .workflow/metrics.csv
+    "$run_dir/metrics.csv"
 else
   bad "metrics.csv 存在"
 fi
