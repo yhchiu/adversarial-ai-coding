@@ -178,7 +178,7 @@ bash tests/helpers.test.sh   # 46 個單元測試,不呼叫任何 AI
 ### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)
 
 ```bash
-bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker + codex low effort;約 20~40 分、$2~5 等值配額)
+bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker/low effort + codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
 E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關卡,不呼叫任何 AI
 ```
 

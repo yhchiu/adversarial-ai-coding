@@ -15,8 +15,8 @@
 #   E2E_DIR         工作目錄(預設 mktemp;失敗與成功現場都保留在此)
 #   E2E_SETUP_ONLY  1=只建 fixture repo 並驗證基線,不呼叫任何 AI(預設 0)
 #   其餘 auto-workflow 變數皆可透傳;本執行器的 E2E 預設:
-#     HUMAN_GATE=0  ENGINE_A=claude  MODEL_A=sonnet  ENGINE_B=codex
-#     CODEX_ARGS='-c model_reasoning_effort=low'
+#     HUMAN_GATE=0  ENGINE_A=claude  MODEL_A=sonnet  CLAUDE_ARGS='--effort=low'
+#     ENGINE_B=codex  MODEL_B=gpt-5.5  CODEX_ARGS='-c model_reasoning_effort=low'
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,7 +69,8 @@ if [[ "${E2E_SETUP_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
-echo "== 執行工作流(A=$ENGINE_A/${MODEL_A:-預設}  B=$ENGINE_B)"
+echo "== 執行工作流(A=$ENGINE_A/${MODEL_A:-預設}  B=$ENGINE_B/${MODEL_B:-預設})"
+echo "   引擎參數:CLAUDE_ARGS='$CLAUDE_ARGS'  CODEX_ARGS='$CODEX_ARGS'"
 rc=0
 "$SCRIPT" task.md 2>&1 | tee "$RUN_LOG" || rc=$?
 if (( rc != 0 )); then
