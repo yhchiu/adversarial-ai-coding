@@ -18,8 +18,9 @@ done
 ```
 訂規格(A 作 / B 審)
   │  spec.md 必含「假設與未決問題」——headless 下 AI 不能問人,禁止默默腦補
+  │  可選:DUAL_SPEC=1 時,A/B 各寫一份獨立候選 spec、互審一次、各寫比較表,再由人選 owner
   ▼
-★ 人工核准(HUMAN_GATE)── 規格是錯誤放大器,人工把關放在最高槓桿處
+★ 最終 spec 審查與人工核准── 另一方審到通過,再由人核准;規格是錯誤放大器,人工把關放在最高槓桿處
   ▼
 規劃實作計畫(A 作 / B 審)── 任務清單必須是「- [ ] 」checkbox
   ▼
@@ -70,9 +71,36 @@ cp adversarial-ai-coding.sh AGENTS.template.md /path/to/your-project/ && cd /pat
 # 交換角色
 ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
 
+# 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
+DUAL_SPEC=1 ./adversarial-ai-coding.sh task.md
+
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
 ./adversarial-ai-coding.sh print-agents
 ```
+
+## 雙 spec 模式
+
+設定 `DUAL_SPEC=1` 後,規格階段會改成:
+
+```text
+A 獨立寫 spec-a.md
+B 獨立寫 spec-b.md
+B 對 A 候選審一次,A 對 B 候選審一次
+A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
+人類選 a、b、ma 或 mb
+選定 owner 產出最終 spec.md
+另一方用既有 review_loop 將最終 spec 審到通過
+人類核准最終 spec.md 後才開始 plan
+```
+
+裁決命令:
+
+- `a`:直接複製 A 的候選成最終 `spec.md`
+- `b`:直接複製 B 的候選成最終 `spec.md`
+- `ma`:以 A 為 base,編輯 `.workflow/spec-merge-request.md`,要求 A 明確採納 B 的指定項目
+- `mb`:以 B 為 base,編輯 `.workflow/spec-merge-request.md`,要求 B 明確採納 A 的指定項目
+
+被選中的 owner 後續負責 plan、實作與自我 review;另一方成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
 ### 任務怎麼寫
 
@@ -102,6 +130,7 @@ ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各 CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
+| `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |
 | `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈) |
 | `AUTO_BRANCH` | `1` | 自動建立 `auto/<時間戳>` branch |
@@ -127,12 +156,21 @@ your-project/
 ├── AGENTS.md            # 互審規範(缺檔時由範本產生;既有檔案絕不覆蓋,只提示)
 ├── CLAUDE.md            # 缺檔時補一行指向 AGENTS.md
 ├── specs/<RUN_ID>/
+│   ├── spec-a.md                    # DUAL_SPEC=1 時 A 的候選 spec
+│   ├── spec-b.md                    # DUAL_SPEC=1 時 B 的候選 spec
+│   ├── spec-a.review-by-b.md        # DUAL_SPEC=1 時 B 對 A 的 one-shot review
+│   ├── spec-b.review-by-a.md        # DUAL_SPEC=1 時 A 對 B 的 one-shot review
+│   ├── spec-comparison-a.md         # DUAL_SPEC=1 時 A 寫的比較表
+│   ├── spec-comparison-b.md         # DUAL_SPEC=1 時 B 寫的比較表
+│   ├── spec-comparison.md           # DUAL_SPEC=1 時給人看的裁決索引
+│   ├── spec-decision.md             # DUAL_SPEC=1 時記錄選定 owner/reviewer
 │   ├── spec.md          # 規格(含驗收條件、假設與未決問題)
 │   └── plan.md          # 實作計畫(checkbox 任務清單,完成會打勾)
 ├── .workflow/           # 不進版控(script 自動放 .gitignore)
 │   ├── review.md        # B 的審查意見 + A 的逐條回覆
 │   ├── verdict.json     # 裁決:{approved, blockers[], suggestions[]}
 │   ├── suggestions.md   # 歷輪累積的不擋關建議(收尾階段逐條評估)
+│   ├── spec-merge-request.md        # DUAL_SPEC=1 merge 時的人類採納指示
 │   ├── protected-tests.txt / protected-base.sha   # 受保護測試檔清單與基準 commit
 │   ├── pr-body.md       # 收尾產生的 PR 內文
 │   ├── latest-run.txt   # 指向最近一次 run archive 目錄
@@ -172,6 +210,8 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 - **agy 引擎使用 `--dangerously-skip-permissions`**(該 CLI 無細粒度白名單),只建議搭配 `USE_WORKTREE=1` 或容器使用。
 - claude / codex 都以最小權限運作;真正的完整隔離是容器(devcontainer),branch/worktree 只隔離 git 狀態,不隔離檔案系統與網路。
 - 兩個 AI 互審**很燒 token**:`MAX_ROUNDS`、分級裁決、`commit_if_dirty`(無變更就跳過 commit 呼叫)都是止損機制。中止時已通過的 stage 均已 commit,可從斷點人工接手。
+- 雙 spec 模式會多花第二份候選、互審與比較表的 AI 呼叫;只有在規格決策值得額外成本時再開。
+- `DUAL_SPEC=1` 會拒絕 `HUMAN_GATE=0` 與無互動終端,因為此流程必須由人選定最終 spec owner。
 
 ## 自訂 stage
 

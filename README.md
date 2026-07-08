@@ -17,7 +17,9 @@ The script runs a staged workflow:
 
 ```text
 Write spec             Worker writes, reviewer checks
-Human approval         Optional gate before implementation starts
+                       Optional DUAL_SPEC=1: A/B write independent specs,
+                       cross-review once, compare, then human selects owner
+Final spec approval    Reviewer checks the final spec, then human approves it
 Write plan             Worker creates checkbox tasks
 Write acceptance tests Reviewer writes tests, worker reviews them
 Implement tasks        Worker completes one checkbox task per commit
@@ -121,11 +123,47 @@ Swap the worker and reviewer engines:
 ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
 ```
 
+Enable dual spec mode:
+
+```bash
+DUAL_SPEC=1 ./adversarial-ai-coding.sh task.md
+```
+
 Print the agent rules template for manual merging into an existing `AGENTS.md`:
 
 ```bash
 ./adversarial-ai-coding.sh print-agents
 ```
+
+## Dual Spec Mode
+
+Set `DUAL_SPEC=1` to make both slots write independent candidate specs before
+implementation planning starts. The workflow becomes:
+
+```text
+A writes spec-a.md independently
+B writes spec-b.md independently
+B reviews A once, A reviews B once
+A writes spec-comparison-a.md, B writes spec-comparison-b.md
+Human chooses a, b, ma, or mb
+Selected owner produces final spec.md
+Other slot reviews final spec.md to approval
+Human approves final spec.md
+```
+
+Decision commands:
+
+- `a`: copy Candidate A to final `spec.md`
+- `b`: copy Candidate B to final `spec.md`
+- `ma`: use Candidate A as base, edit `.workflow/spec-merge-request.md`, and
+  require A to adopt selected items from Candidate B
+- `mb`: use Candidate B as base, edit `.workflow/spec-merge-request.md`, and
+  require B to adopt selected items from Candidate A
+
+After selection, the chosen owner remains the worker for planning,
+implementation, and self-review. The other slot becomes the reviewer and writes
+the protected acceptance tests. Dual spec mode requires an interactive terminal
+and `HUMAN_GATE=1`; unattended runs should leave it disabled.
 
 ## Writing Good Tasks
 
@@ -159,6 +197,7 @@ Add `--json` output to the CLI.
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments, split on whitespace and appended to engine calls. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
+| `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
 | `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`. |
 | `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. |
 | `AUTO_BRANCH` | `1` | Create an `auto/<timestamp>` branch before running. |
@@ -192,12 +231,21 @@ your-project/
 |-- AGENTS.md
 |-- CLAUDE.md
 |-- specs/<RUN_ID>/
+|   |-- spec-a.md                    # DUAL_SPEC=1 candidate from slot A
+|   |-- spec-b.md                    # DUAL_SPEC=1 candidate from slot B
+|   |-- spec-a.review-by-b.md        # DUAL_SPEC=1 one-shot candidate review
+|   |-- spec-b.review-by-a.md        # DUAL_SPEC=1 one-shot candidate review
+|   |-- spec-comparison-a.md         # DUAL_SPEC=1 comparison from slot A
+|   |-- spec-comparison-b.md         # DUAL_SPEC=1 comparison from slot B
+|   |-- spec-comparison.md           # DUAL_SPEC=1 human decision index
+|   |-- spec-decision.md             # DUAL_SPEC=1 selected owner/reviewer
 |   |-- spec.md
 |   `-- plan.md
 |-- .workflow/
 |   |-- review.md
 |   |-- verdict.json
 |   |-- suggestions.md
+|   |-- spec-merge-request.md        # DUAL_SPEC=1 merge-adoption instructions
 |   |-- protected-tests.txt
 |   |-- protected-base.sha
 |   |-- pr-body.md
@@ -240,6 +288,11 @@ test and update `.workflow/protected-base.sha`, or remove the file from
   filesystem or network. Use a container for stronger isolation.
 - Two AI agents can consume a lot of quota. `MAX_ROUNDS`, graded verdicts, and
   `commit_if_dirty` are designed to limit waste.
+- Dual spec mode adds extra AI calls for the second candidate, candidate
+  reviews, and comparison tables. Keep it off unless the spec decision is
+  worth the extra cost.
+- `DUAL_SPEC=1` intentionally refuses `HUMAN_GATE=0` and non-interactive
+  terminals because the workflow requires a human owner decision.
 - `codex` and `agy` cannot be used as both worker and reviewer at the same time
   because both resume the most recent session.
 

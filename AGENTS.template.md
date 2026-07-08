@@ -42,6 +42,15 @@ All AI participants must follow these rules.
 - spec.md must contain: feature description, testable acceptance criteria,
   edge cases, out-of-scope items, and an "Assumptions and Open Questions"
   section that honestly lists every assumption made without asking a human.
+- In dual spec mode, `spec-a.md` and `spec-b.md` are independent candidate
+  specs. When asked to write one candidate, do not read the other candidate,
+  candidate review files, or comparison files.
+- In dual spec mode, comparison files must compare both candidates directly and
+  call out strengths, weaknesses, missing requirements, stronger acceptance
+  criteria, edge cases, assumptions, and a recommended owner.
+- When `.workflow/spec-merge-request.md` exists, the selected spec owner must
+  explicitly adopt the requested items into `spec.md` before implementation
+  planning starts.
 - The task list in plan.md uses `- [ ]` checkboxes. Each item must be small
   enough to implement and verify on its own, and maps to exactly one commit.
   Mark finished items as `- [x]`.
