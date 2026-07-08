@@ -34,6 +34,54 @@ The worker and reviewer can be different engines:
 Using different engines for worker and reviewer is recommended because their
 failure modes are different.
 
+```mermaid
+flowchart TD
+  subgraph S1["Stage: Write spec (A writes / B reviews)"]
+    spec["spec.md includes Assumptions and Open Questions<br/>Headless AI cannot ask humans, so assumptions must be explicit."]
+  end
+
+  subgraph S2["Stage: Human approval"]
+    human{"HUMAN_GATE approval<br/>Review the spec before costly implementation starts."}
+  end
+
+  subgraph S3["Stage: Write implementation plan (A writes / B reviews)"]
+    plan["plan.md uses '- [ ]' checkbox tasks<br/>Each task maps to one commit."]
+  end
+
+  subgraph S4["Stage: Write acceptance tests (B writes / A reviews)"]
+    tests["Adversarial TDD separates test author from implementer.<br/>Protected acceptance tests may be red at first."]
+  end
+
+  subgraph S5["Stage: Implement tasks"]
+    tasks["For each checkbox task:<br/>A implements -> lightweight build gate -> protected-test diff check -> commit"]
+  end
+
+  subgraph S6["Stage: Full quality gate and branch review"]
+    fullgate["Run the full quality gate.<br/>Acceptance tests must pass."]
+    branchreview["B reviews the complete branch diff."]
+    fullgate --> branchreview
+  end
+
+  subgraph S7["Stage: Final review and fixes"]
+    final["A handles accumulated suggestions and self-review findings.<br/>Run gates, then B performs final acceptance."]
+  end
+
+  subgraph S8["Stage: Finish"]
+    finish["Print git push / gh pr create commands and run metrics.<br/>OPEN_PR=1 runs push and PR creation automatically."]
+  end
+
+  spec --> human --> plan --> tests --> tasks --> fullgate --> final --> finish
+
+  style S1 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S2 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S3 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S4 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S5 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S6 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S7 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+  style S8 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+```
+
 ## Requirements
 
 - Bash. On Windows, use Git Bash or WSL.
