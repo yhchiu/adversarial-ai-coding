@@ -1,8 +1,8 @@
 # adversarial-ai-coding
 
 `adversarial-ai-coding` is a Bash workflow for agentic software development.
-One AI agent implements the work, and a second AI agent reviews it and writes
-adversarial acceptance tests.
+One AI agent is the worker, and a second AI agent is the reviewer that reviews
+the work and writes adversarial acceptance tests.
 
 The workflow is designed around spec-first development, deterministic quality
 gates, protected acceptance tests, small commits, and human review before costly
@@ -49,7 +49,7 @@ flowchart TD
   end
 
   subgraph S4["Stage: Write acceptance tests (B writes / A reviews)"]
-    tests["Adversarial TDD separates test author from implementer.<br/>Protected acceptance tests may be red at first."]
+    tests["Adversarial TDD separates test author from worker.<br/>Protected acceptance tests may be red at first."]
   end
 
   subgraph S5["Stage: Implement tasks"]
