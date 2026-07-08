@@ -193,6 +193,34 @@ out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt codex scope )
 if [[ "$out" == *"Finally write the verdict"* ]]; then ok "compose_review_prompt:codex includes verdict_file_instr"
 else bad "compose_review_prompt:codex includes verdict_file_instr"; fi
 
+# ---------- dual spec helpers ----------
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && echo "$DUAL_SPEC" )
+assert_eq "dual_spec:default disabled" "0" "$out"
+
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && normalize_dual_spec_decision A )
+assert_eq "dual_spec:decision A adopts candidate A" "adopt-a" "$out"
+out=$( cd "$d" && source "$SCRIPT" && normalize_dual_spec_decision mb )
+assert_eq "dual_spec:decision mb merges from base B" "merge-b" "$out"
+( cd "$d" && source "$SCRIPT" && normalize_dual_spec_decision nope ) >/dev/null 2>&1
+assert_nonzero "dual_spec:invalid decision fails" $?
+
+d=$(tmpdir)
+out=$( cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && dual_spec_owner_slot adopt-a )
+assert_eq "dual_spec:adopt-a owner slot" "A" "$out"
+out=$( cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && dual_spec_owner_slot merge-b )
+assert_eq "dual_spec:merge-b owner slot" "B" "$out"
+out=$( cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && engine_for_slot B )
+assert_eq "dual_spec:engine_for_slot B" "codex" "$out"
+out=$( cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && set_spec_roles_from_slot B && printf '%s/%s\n' "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" )
+assert_eq "dual_spec:set roles from slot B" "codex/claude" "$out"
+
+d=$(new_repo)
+( cd "$d" && DUAL_SPEC=1 HUMAN_GATE=0 "$SCRIPT" "task" ) >/dev/null 2>&1
+assert_rc "dual_spec:HUMAN_GATE=0 is blocked before branch setup" 1 $?
+assert_eq "dual_spec:block leaves no branch side effect" "main" "$(git -C "$d" branch --show-current)"
+
 # ---------- init_live_state ----------
 d=$(tmpdir)
 mkdir -p "$d/.workflow"

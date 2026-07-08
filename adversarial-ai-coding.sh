@@ -26,6 +26,7 @@
 #   GATE_CMD     Deterministic quality gate command, auto-detected by default
 #   BUILD_GATE_CMD  Lightweight per-task build gate, auto-detected by default
 #   HUMAN_GATE   1=pause for human spec approval (default: 1; set 0 for unattended runs)
+#   DUAL_SPEC    1=run dual independent spec candidates before selecting final spec (default: 0)
 #   OPEN_PR      1=push and create a GitHub PR at the end (default: 0, print commands only)
 #   NOTIFY_CMD   Notification command. The message is passed as the first argument.
 #   AGENTS_TEMPLATE  Path to AGENTS.md template (default: AGENTS.template.md beside this script)
@@ -49,6 +50,7 @@ MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
 USE_WORKTREE="${USE_WORKTREE:-0}"
 HUMAN_GATE="${HUMAN_GATE:-1}"
+DUAL_SPEC="${DUAL_SPEC:-0}"
 OPEN_PR="${OPEN_PR:-0}"
 NOTIFY_CMD="${NOTIFY_CMD:-}"
 # Rate-limit retry: quota windows are not quality failures, so wait instead of burning review rounds.
@@ -70,6 +72,10 @@ LOG="${LOG:-$LOGS/$RUN_ID.log}"
 METRICS="${METRICS:-$WF/metrics.csv}"
 ENGINE_OUT="$WF/last-engine-output.txt"   # Engine output for the latest call, used for rate-limit detection.
 ART_SEQ="${ART_SEQ:-0}"
+SPEC_OWNER_SLOT="${SPEC_OWNER_SLOT:-A}"
+SPEC_REVIEWER_SLOT="${SPEC_REVIEWER_SLOT:-B}"
+SPEC_OWNER_ENGINE="${SPEC_OWNER_ENGINE:-$ENGINE_A}"
+SPEC_REVIEWER_ENGINE="${SPEC_REVIEWER_ENGINE:-$ENGINE_B}"
 
 usage() {
   {
@@ -302,10 +308,11 @@ write_run_metadata() {
     --arg engine_b "$ENGINE_B" \
     --arg model_b "$(engine_model "$ENGINE_B")" \
     --arg args_b "$(resolve_model_args "$ENGINE_B")" \
+    --arg dual_spec "$DUAL_SPEC" \
     --arg max_rounds "$MAX_ROUNDS" \
     --arg auto_branch "$AUTO_BRANCH" \
     --arg use_worktree "$USE_WORKTREE" \
-    '{generated_at:$generated_at,run_id:$run_id,spec_dir:$spec_dir,wf:$wf,runs_dir:$runs_dir,wf_run:$wf_run,log:$log,metrics:$metrics,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b,max_rounds:$max_rounds,auto_branch:$auto_branch,use_worktree:$use_worktree}' \
+    '{generated_at:$generated_at,run_id:$run_id,spec_dir:$spec_dir,wf:$wf,runs_dir:$runs_dir,wf_run:$wf_run,log:$log,metrics:$metrics,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b,dual_spec:$dual_spec,max_rounds:$max_rounds,auto_branch:$auto_branch,use_worktree:$use_worktree}' \
     > "$dst"
 }
 
@@ -322,7 +329,8 @@ write_log_metadata() {
     --arg engine_b "$ENGINE_B" \
     --arg model_b "$(engine_model "$ENGINE_B")" \
     --arg args_b "$(resolve_model_args "$ENGINE_B")" \
-    '{generated_at:$generated_at,generator_role:$generator_role,run_id:$run_id,log_path:$log_path,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b}' \
+    --arg dual_spec "$DUAL_SPEC" \
+    '{generated_at:$generated_at,generator_role:$generator_role,run_id:$run_id,log_path:$log_path,engine_a:$engine_a,model_a:$model_a,args_a:$args_a,engine_b:$engine_b,model_b:$model_b,args_b:$args_b,dual_spec:$dual_spec}' \
     > "$LOG.meta.json"
 }
 
@@ -433,6 +441,61 @@ protected_violations() {  # $1: protected list file  $2: base commit; output mod
 plan_tasks() {  # $1: plan.md; output unfinished task lines without the "- [ ] " prefix.
   [[ -f "$1" ]] || return 0
   grep -E '^- \[ \] ' "$1" | sed -E 's/^- \[ \] //' || true
+}
+
+normalize_dual_spec_decision() {  # $1: a|b|ma|mb; output canonical decision or fail.
+  local decision="${1:-}"
+  decision="${decision,,}"
+  case "$decision" in
+    a)  echo "adopt-a" ;;
+    b)  echo "adopt-b" ;;
+    ma) echo "merge-a" ;;
+    mb) echo "merge-b" ;;
+    *)  return 1 ;;
+  esac
+}
+
+dual_spec_owner_slot() {  # $1: canonical dual-spec decision; output A or B.
+  case "$1" in
+    adopt-a|merge-a) echo "A" ;;
+    adopt-b|merge-b) echo "B" ;;
+    *) return 1 ;;
+  esac
+}
+
+engine_for_slot() {  # $1: A or B; output configured engine for that slot.
+  case "$1" in
+    A) echo "$ENGINE_A" ;;
+    B) echo "$ENGINE_B" ;;
+    *) return 1 ;;
+  esac
+}
+
+reviewer_slot_for_owner_slot() {  # $1: owner slot A or B; output the opposite slot.
+  case "$1" in
+    A) echo "B" ;;
+    B) echo "A" ;;
+    *) return 1 ;;
+  esac
+}
+
+set_spec_roles_from_slot() {  # $1: owner slot A or B; set owner/reviewer slot and engine globals.
+  SPEC_OWNER_SLOT="$1"
+  SPEC_REVIEWER_SLOT=$(reviewer_slot_for_owner_slot "$SPEC_OWNER_SLOT")
+  SPEC_OWNER_ENGINE=$(engine_for_slot "$SPEC_OWNER_SLOT")
+  SPEC_REVIEWER_ENGINE=$(engine_for_slot "$SPEC_REVIEWER_SLOT")
+}
+
+dual_spec_preflight() {
+  [[ "$DUAL_SPEC" == "1" ]] || return 0
+  if [[ "$HUMAN_GATE" != "1" ]]; then
+    echo "DUAL_SPEC=1 requires HUMAN_GATE=1 because a human must choose the final spec owner." >&2
+    return 1
+  fi
+  if ! { : </dev/tty; } 2>/dev/null; then
+    echo "DUAL_SPEC=1 requires an interactive terminal for spec selection. Run interactively or set DUAL_SPEC=0." >&2
+    return 1
+  fi
 }
 
 # ---------- AGENTS.md shared cross-review rules ----------
@@ -924,8 +987,9 @@ main() {
     echo "A and B cannot both use $ENGINE_A because session resume would interfere. Use different engines." >&2
     exit 1
   fi
+  dual_spec_preflight || exit 1
 
-  echo "Workflow settings:A=$ENGINE_A  B=$ENGINE_B  MAX_ROUNDS=$MAX_ROUNDS  SPEC_DIR=$SPEC_DIR"
+  echo "Workflow settings:A=$ENGINE_A  B=$ENGINE_B  DUAL_SPEC=$DUAL_SPEC  MAX_ROUNDS=$MAX_ROUNDS  SPEC_DIR=$SPEC_DIR"
   echo "Task:$task"
 
   setup_workspace   # May cd into a worktree; relative paths after this point use that workspace.
