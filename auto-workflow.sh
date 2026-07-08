@@ -313,6 +313,21 @@ write_log_metadata() {
     > "$LOG.meta.json"
 }
 
+log_section() {  # $1: title  $2: role  $3: engine  $4: stage  $5: round
+  local title="$1" role="${2:-workflow}" engine="${3:-workflow}" stage="${4:-${CUR_STAGE:-startup}}" round="${5:-${CUR_ROUND:-0}}" model model_args ts
+  ts=$(generated_at)
+  model=$(engine_model "$engine")
+  model_args=$(resolve_model_args "$engine")
+  mkdir -p "$(dirname "$LOG")"
+  {
+    echo
+    echo "--------------------------------------------------------------------------------"
+    printf '[%s] %s | role=%s engine=%s model=%s args=%s stage=%s round=%s\n' \
+      "$ts" "$title" "$role" "$engine" "$model" "$model_args" "$stage" "$round"
+    echo "--------------------------------------------------------------------------------"
+  } | tee -a "$LOG"
+}
+
 init_live_state() {
   mkdir -p "$WF"
   rm -f \
@@ -524,6 +539,7 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
       (( w > RETRY_MAX_WAIT )) && w=$RETRY_MAX_WAIT
     fi
     eta=$(date -d "+$w seconds" +%H:%M 2>/dev/null || true)
+    log_section "rate limit retry" "$role" "$engine" "$CUR_STAGE" "$CUR_ROUND"
     { echo "== 撞到用量限額,等待 $(( w / 60 )) 分(約 $eta)後進行第 $n/$RETRY_MAX 次重試 =="; } | tee -a "$LOG" >&2
     notify "auto-workflow:撞用量限額,約 $eta 重試(第 $n 次)"
     sleep "$w"
@@ -534,6 +550,7 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
 work() {  # $1: 引擎  $2: 工作指示
   local t0=$SECONDS prompt_art output_art slug
   LAST_COST=""
+  log_section "AI call" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> 工作者($1)執行中…"
   slug="worker-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
   archive_text "${slug}-prompt.md" "$2" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
@@ -559,6 +576,7 @@ CHECKING_PROTECTED=0
 check_protected() {  # $1: 工作者引擎;受保護檔被改動時強制回復,屢犯即中止
   local base viol n=0
   [[ -f "$WF/protected-tests.txt" && -f "$WF/protected-base.sha" ]] || return 0
+  log_section "protected check" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   base=$(cat "$WF/protected-base.sha")
   while viol=$(protected_violations "$WF/protected-tests.txt" "$base"); [[ -n "$viol" ]]; do
     { echo "!! 受保護的驗收測試檔被改動:"; sed 's/^/  - /' <<<"$viol"; } | tee -a "$LOG" >&2
@@ -670,6 +688,7 @@ show_blockers() {
 run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
   local t0=$SECONDS prompt output_art slug
   LAST_COST=""
+  log_section "review" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> 審查者($1)審查中…"
   slug="reviewer-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
   prompt="$(compose_review_prompt "$1" "$2")"
@@ -701,6 +720,7 @@ gate_loop() {  # $1: 工作者引擎  $2: 關卡指令(空字串 = 跳過);失�
   local engine="$1" cmd="$2" n=1 out
   [[ -z "$cmd" ]] && return 0
   while true; do
+    log_section "quality gate" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
     echo ">>> 品質關卡:$cmd"
     if out=$(bash -c "$cmd" 2>&1); then
       echo "品質關卡通過 ✔" | tee -a "$LOG"
@@ -728,6 +748,7 @@ begin_stage() {  # $1: 名稱;工作者在 stage 內延續 session、跨 stage �
   CUR_STAGE="$1"
   WORKER_SESSION=""
   CUR_ROUND=1
+  log_section "stage begin" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   printf '\n================ [%s] ================\n' "$1" | tee -a "$LOG"
 }
 
@@ -750,6 +771,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
 }
 
 commit_work() {  # $1: 工作者引擎  $2: 本次提交的內容說明
+  log_section "commit" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND"
   work "$1" "$2 已完成並通過審查。依 AGENTS.md 的 commit 規範提交目前所有變更:conventional commit、簡單易懂的英文訊息、body 詳細記錄完成了哪些工作、不加 Co-Authored-By。"
   ensure_committed
 }
@@ -773,6 +795,7 @@ commit_if_dirty() {  # $1: 引擎  $2: 說明;沒有變更就跳過,不浪費一
 # 所以人工核准放在最高槓桿處——spec 通過 AI 互審之後、開始花大錢實作之前。
 human_gate_spec() {
   [[ "$HUMAN_GATE" == "1" ]] || return 0
+  log_section "human gate" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   notify "auto-workflow:規格待人工核准($SPEC_DIR/spec.md)"
   echo ""
   echo "### 人工檢查點:請審閱 $SPEC_DIR/spec.md,特別是「Assumptions and Open Questions(假設與未決問題)」一節。"
@@ -794,6 +817,7 @@ human_gate_spec() {
 # 流程的終點是「等人 merge 的 PR」,不是靜默結束;預設只印指令(OPEN_PR=1 才執行)。
 finish() {  # $1: 任務描述
   local branch title
+  log_section "finish" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   branch=$(git rev-parse --abbrev-ref HEAD)
   title=$(head -1 <<<"$1")
   title="${title:0:72}"   # 以字元計截斷(cut -c 以 byte 計,會把多位元組字切爛)
@@ -903,6 +927,7 @@ main() {
   write_log_metadata
   archive_task "$task_arg" "$task_source_kind" "$task_source_path" "$task_resolved_text"
   printf '%s\n' "$WF_RUN" > "$WF/latest-run.txt"
+  log_section "startup settings" "workflow" "workflow" "startup" "0"
 
   trap 'echo "!! 工作流中斷(exit=$?)。完整過程見 '"$LOG"'" >&2' ERR
 
