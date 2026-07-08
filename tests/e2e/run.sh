@@ -28,7 +28,9 @@ FIXTURE="$HERE/fixture"
 export HUMAN_GATE="${HUMAN_GATE:-0}"
 export ENGINE_A="${ENGINE_A:-claude}"
 export MODEL_A="${MODEL_A:-sonnet}"
+export CLAUDE_ARGS="${CLAUDE_ARGS:---effort=low}"
 export ENGINE_B="${ENGINE_B:-codex}"
+export MODEL_B="${MODEL_B:-gpt-5.5}"
 export CODEX_ARGS="${CODEX_ARGS:--c model_reasoning_effort=low}"
 
 command -v go >/dev/null 2>&1 || { echo "缺少 go 工具鏈(fixture 是 Go 專案)" >&2; exit 1; }
