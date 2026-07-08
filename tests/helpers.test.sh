@@ -133,6 +133,16 @@ line=$(tail -1 "$d/.workflow/runs/test/metrics.csv")
 python -c 'import csv,sys; row=next(csv.reader([sys.argv[1]])); assert row[7] == ""; assert row[8] == "-c model=\"x,y\" --flag \"quoted value\""; assert len(row) == 10' "$line"
 assert_rc "metric:CSV escaping 保留含逗號/引號的 model_args" 0 $?
 
+# ---------- metrics_summary(回歸:引號跳脫的資料列要能正確加總) ----------
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/runs/test && source "$SCRIPT" \
+    && WF_RUN=.workflow/runs/test && METRICS="$WF_RUN/metrics.csv" \
+    && CUR_STAGE=stageX && metric worker claude 1 12 0.05 && metric worker claude 3 8 0.10 )
+sm=$( cd "$d" && source "$SCRIPT" && metrics_summary .workflow/runs/test/metrics.csv )
+grep -q '20 秒' <<<"$sm"; assert_rc "metrics_summary:秒數正確加總(引號未破壞數值)" 0 $?
+grep -qF '$0.1500' <<<"$sm"; assert_rc "metrics_summary:費用正確加總" 0 $?
+grep -q '審查 3 輪' <<<"$sm"; assert_rc "metrics_summary:最大輪數正確" 0 $?
+
 # ---------- archive helpers ----------
 d=$(tmpdir)
 out=$( cd "$d" && mkdir -p .workflow/runs/test && WF_NOW=2026-01-02T03:04:05+0800 \

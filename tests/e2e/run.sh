@@ -161,7 +161,11 @@ PY
   else bad "metrics.csv 新欄位可解析"; fi
   echo
   echo "== 執行統計"
-  awk -F, 'NR>1 { calls[$2]++; secs[$2]+=$6; cost[$2]+=$7 }
+  # 資料列每欄都用引號跳脫;彙總前先剝外層引號,否則秒數/費用會被當非數值加成 0
+  awk -F, 'NR>1 {
+      for (i = 1; i <= NF; i++) gsub(/^"|"$/, "", $i)
+      calls[$2]++; secs[$2] += $6; cost[$2] += $7
+    }
     END { for (s in calls) printf "  %-14s %d 次呼叫,%d 秒,$%.4f\n", s, calls[s], secs[s], cost[s] }' \
     "$run_dir/metrics.csv"
 else

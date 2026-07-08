@@ -147,6 +147,19 @@ write_csv_row() {
   csv_row "$@" >> "$file"
 }
 
+metrics_summary() {  # $1: metrics.csv;彙總每個 stage 的呼叫數/最大輪/秒數/費用
+  [[ -f "$1" ]] || return 0
+  # 資料列每欄都經 csv_row 用引號跳脫(才容得下含逗號的 model_args);
+  # 彙總前先剝掉外層引號,否則 awk 會把 "12" 當非數值、加總成 0。
+  awk -F, 'NR>1 {
+      for (i = 1; i <= NF; i++) gsub(/^"|"$/, "", $i)
+      calls[$2]++; secs[$2] += $6; cost[$2] += $7
+      if ($5 + 0 > r[$2] + 0) r[$2] = $5
+    }
+    END { for (s in calls) printf "  %-14s AI呼叫 %d 次,審查 %d 輪,%d 秒,$%.4f\n", s, calls[s], r[s], secs[s], cost[s] }' \
+    "$1"
+}
+
 art_path() {
   local name="$1" seq_file seq
   [[ -n "$WF_RUN" ]] || { echo "WF_RUN is not set" >&2; return 1; }
@@ -840,9 +853,7 @@ EOF
   if [[ -f "$METRICS" ]]; then
     echo ""
     echo "本次執行統計(明細:$METRICS;輪數是提示詞品質的量化訊號):"
-    awk -F, 'NR>1 { calls[$2]++; secs[$2]+=$6; cost[$2]+=$7; if ($5>r[$2]) r[$2]=$5 }
-      END { for (s in calls) printf "  %-14s AI呼叫 %d 次,審查 %d 輪,%d 秒,$%.4f\n", s, calls[s], r[s], secs[s], cost[s] }' \
-      "$METRICS"
+    metrics_summary "$METRICS"
   fi
   archive_snapshot "$WF/pr-body.md" "pr-body.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   archive_snapshot "$WF/suggestions.md" "suggestions.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
