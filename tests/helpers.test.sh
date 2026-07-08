@@ -177,6 +177,65 @@ assert_eq "前置:被擋下時無任何副作用(不建 branch)" "main" "$(git -
 "$SCRIPT" print-agents 2>/dev/null | grep -qF '<!-- auto-workflow:begin -->'
 assert_rc "print-agents:輸出規範範本" 0 $?
 
+# ---------- is_rate_limited ----------
+d=$(tmpdir)
+cat > "$d/hit.txt" <<'EOF'
+{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You've hit your session limit · resets 10:50am (Asia/Taipei)"}
+EOF
+( cd "$d" && source "$SCRIPT" && is_rate_limited hit.txt ) >/dev/null 2>&1
+assert_rc "限額偵測:claude 429 JSON(run5 實樣)" 0 $?
+printf 'HTTP 429 Too Many Requests\n' > "$d/tmr.txt"
+( cd "$d" && source "$SCRIPT" && is_rate_limited tmr.txt ) >/dev/null 2>&1
+assert_rc "限額偵測:Too Many Requests" 0 $?
+printf 'strutil_test.go:47:14: undefined: IsPalindrome\n' > "$d/plain.txt"
+( cd "$d" && source "$SCRIPT" && is_rate_limited plain.txt ) >/dev/null 2>&1
+assert_nonzero "限額偵測:一般錯誤不誤判" $?
+( cd "$d" && source "$SCRIPT" && is_rate_limited nothere.txt ) >/dev/null 2>&1
+assert_nonzero "限額偵測:檔案不存在 → 否" $?
+
+# ---------- parse_reset_wait ----------
+now=$(date +%s)
+fut=$(LC_ALL=C date -d "@$(( now + 7200 ))" +%-I:%M%P)   # 強制英文 am/pm(claude 訊息即此格式)
+printf 'You have hit your session limit · resets %s (Asia/Taipei)\n' "$fut" > "$d/fut.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait fut.txt "$now" )
+if [[ -n "$w" && "$w" -ge 7000 && "$w" -le 7500 ]]; then ok "reset 解析:2 小時後 → 等待約 2h+緩衝"
+else bad "reset 解析:2 小時後(得到 [$w])"; fi
+
+past=$(LC_ALL=C date -d "@$(( now - 3600 ))" +%-I:%M%P)
+printf 'resets %s\n' "$past" > "$d/past.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait past.txt "$now" )
+if [[ -z "$w" ]]; then ok "reset 解析:已過時刻 → 視為明天,>6h 交給指數退避(空)"
+else bad "reset 解析:已過時刻(得到 [$w],預期空)"; fi
+
+printf 'no reset info here\n' > "$d/none.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait none.txt "$now" )
+assert_eq "reset 解析:無資訊 → 空(走指數退避)" "" "$w"
+
+# ---------- engine_call(stub 引擎,RETRY_BASE_WAIT=1 快速跑) ----------
+d=$(tmpdir)
+run_engine_call() {  # $1: RETRY_ON_LIMIT  $2: stub 輸出內容("" = 成功)
+  ( cd "$d" && mkdir -p .workflow/logs \
+    && RETRY_ON_LIMIT="$1" RETRY_BASE_WAIT=1 RETRY_MAX=2 STUB="$2" \
+    && source "$SCRIPT" && LOG=.workflow/logs/t.log && touch "$LOG" \
+    && CALLS=0 \
+    && fake_engine() {
+         CALLS=$(( CALLS + 1 ))
+         [[ -z "$STUB" ]] && return 0
+         printf '%s\n' "$STUB" > "$ENGINE_OUT"
+         return 1
+       } \
+    && rc=0 && engine_call fake_engine >/dev/null 2>&1 || rc=$? \
+    ;  echo "rc=$rc calls=$CALLS" )
+}
+out=$(run_engine_call 1 'api_error_status":429 hit your session limit')
+assert_eq "engine_call:預設重試到上限(1 次呼叫 + 2 次重試)" "rc=1 calls=3" "$out"
+out=$(run_engine_call 0 'api_error_status":429 hit your session limit')
+assert_eq "engine_call:RETRY_ON_LIMIT=0 → 不重試" "rc=1 calls=1" "$out"
+out=$(run_engine_call 1 'ordinary build failure')
+assert_eq "engine_call:非限額錯誤 → 不重試" "rc=1 calls=1" "$out"
+out=$(run_engine_call 1 '')
+assert_eq "engine_call:成功直接通過" "rc=0 calls=1" "$out"
+
 # ---------- 總結 ----------
 echo ""
 echo "通過 $PASS,失敗 $FAIL"

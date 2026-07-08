@@ -29,6 +29,10 @@
 #   OPEN_PR      1=結尾自動 push 並開 GitHub PR(預設 0,只印出指令)
 #   NOTIFY_CMD   通知指令,訊息以第一個參數傳入(例:NOTIFY_CMD="ntfy publish mytopic")
 #   AGENTS_TEMPLATE  AGENTS.md 範本路徑(預設:script 同目錄的 AGENTS.template.md)
+#   RETRY_ON_LIMIT   1=撞用量限額/429 時等待後重試(預設 1;0=直接失敗)
+#   RETRY_MAX        每次引擎呼叫的限額重試上限(預設 6)
+#   RETRY_BASE_WAIT  解析不到 reset 時間時的初始等待秒數,指數成長(預設 300)
+#   RETRY_MAX_WAIT   指數退避的單次等待上限秒數(預設 3600)
 set -Eeuo pipefail
 
 # ---------- 設定 ----------
@@ -46,6 +50,11 @@ USE_WORKTREE="${USE_WORKTREE:-0}"
 HUMAN_GATE="${HUMAN_GATE:-1}"
 OPEN_PR="${OPEN_PR:-0}"
 NOTIFY_CMD="${NOTIFY_CMD:-}"
+# 限額退避重試:限額是時間窗問題不是品質問題,等待重試才不會燒掉審查輪數
+RETRY_ON_LIMIT="${RETRY_ON_LIMIT:-1}"
+RETRY_MAX="${RETRY_MAX:-6}"
+RETRY_BASE_WAIT="${RETRY_BASE_WAIT:-300}"
+RETRY_MAX_WAIT="${RETRY_MAX_WAIT:-3600}"
 # 最小權限:只放行 git 與明確的建置/測試指令。
 # 注意 Bash(go *) 會包含 go run(任意程式碼執行),不要圖方便放寬。
 TOOLS="${TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}"
@@ -56,6 +65,7 @@ WF=".workflow"
 LOGS="$WF/logs"
 LOG="$LOGS/$RUN_ID.log"
 METRICS="$WF/metrics.csv"
+ENGINE_OUT="$WF/last-engine-output.txt"   # 每次引擎呼叫的輸出落地,供限額偵測用
 
 usage() {
   {
@@ -90,6 +100,24 @@ engine_model() {  # $1: 引擎;輸出該引擎所屬槽位的模型覆寫(未設
 
 verdict_approved() {  # $1: verdict.json 路徑;0 = 審查通過
   [[ -f "$1" ]] && jq -e '.approved == true' "$1" >/dev/null 2>&1
+}
+
+is_rate_limited() {  # $1: 引擎輸出檔;0 = 屬於用量限額/429 類可等待重試的錯誤
+  [[ -f "$1" ]] || return 1
+  grep -qiE '"api_error_status": *429|hit your (session|usage|weekly) limit|rate.?limit|too many requests|status.?429' "$1"
+}
+
+parse_reset_wait() {  # $1: 輸出檔  $2: now epoch(測試注入用);輸出等待秒數,解析失敗輸出空
+  local f="$1" now="${2:-$(date +%s)}" t target wait
+  [[ -f "$f" ]] || return 0
+  t=$(grep -oiE 'resets +[0-9]{1,2}:[0-9]{2} ?[ap]m' "$f" | head -1 | sed -E 's/^[Rr]esets +//; s/ //g' || true)
+  [[ -z "$t" ]] && return 0
+  target=$(LC_ALL=C date -d "$t" +%s 2>/dev/null || true)
+  [[ -z "$target" ]] && return 0
+  (( target <= now )) && target=$(( target + 86400 ))
+  wait=$(( target - now + 120 ))       # 加 120 秒緩衝,避免壓線重試又撞牆
+  (( wait > 21600 )) && return 0       # 超過 6 小時視為解析異常,改走指數退避
+  echo "$wait"
 }
 
 detect_gate() {  # 依專案類型偵測完整品質關卡(build+lint+test);偵測不到輸出空字串
@@ -164,6 +192,7 @@ w_claude() {
   if (( rc != 0 )); then
     # 失敗時務必攤出原始輸出,否則像用量限額這類錯誤會被 $() 吞掉、無從診斷
     printf '%s\n' "$out" >&2
+    printf '%s\n' "$out" > "$ENGINE_OUT"   # 供 engine_call 判斷是否為限額錯誤
     echo "(claude 退出碼 $rc,原始輸出如上)" >&2
     return "$rc"
   fi
@@ -179,11 +208,11 @@ w_codex() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   margs+=($CODEX_ARGS)
   if [[ -z "$WORKER_SESSION" ]]; then
-    codex exec --sandbox workspace-write "${margs[@]}" "$1"
+    codex exec --sandbox workspace-write "${margs[@]}" "$1" 2>&1 | tee "$ENGINE_OUT"
     WORKER_SESSION="last"
   else
     # exec resume 沒有 --sandbox 旗標,改用 -c 覆寫設定
-    codex exec resume --last -c 'sandbox_mode="workspace-write"' "${margs[@]}" "$1"
+    codex exec resume --last -c 'sandbox_mode="workspace-write"' "${margs[@]}" "$1" 2>&1 | tee "$ENGINE_OUT"
   fi
 }
 
@@ -196,8 +225,34 @@ w_agy() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   args+=($AGY_ARGS)
   [[ -n "$WORKER_SESSION" ]] && args+=(--continue)
-  agy --print "$1" "${args[@]}"
+  agy --print "$1" "${args[@]}" 2>&1 | tee "$ENGINE_OUT"
   WORKER_SESSION="continue"
+}
+
+# ---------- 限額退避重試 ----------
+engine_call() {  # $@: 引擎函式與其參數;撞限額時等待後重試,其他錯誤原樣回傳
+  local n=0 rc w eta
+  while true; do
+    rc=0
+    "$@" || rc=$?
+    (( rc == 0 )) && return 0
+    [[ "$RETRY_ON_LIMIT" == "1" ]] || return "$rc"
+    is_rate_limited "$ENGINE_OUT" || return "$rc"
+    if (( n >= RETRY_MAX )); then
+      echo "!! 用量限額重試 $RETRY_MAX 次仍未恢復,放棄。" >&2
+      return "$rc"
+    fi
+    n=$(( n + 1 ))
+    w=$(parse_reset_wait "$ENGINE_OUT")   # 優先精準等到限額重置時刻
+    if [[ -z "$w" ]]; then
+      w=$(( RETRY_BASE_WAIT * (1 << (n - 1)) ))
+      (( w > RETRY_MAX_WAIT )) && w=$RETRY_MAX_WAIT
+    fi
+    eta=$(date -d "+$w seconds" +%H:%M 2>/dev/null || true)
+    { echo "== 撞到用量限額,等待 $(( w / 60 )) 分(約 $eta)後進行第 $n/$RETRY_MAX 次重試 =="; } | tee -a "$LOG" >&2
+    notify "auto-workflow:撞用量限額,約 $eta 重試(第 $n 次)"
+    sleep "$w"
+  done
 }
 
 work() {  # $1: 引擎  $2: 工作指示
@@ -206,7 +261,7 @@ work() {  # $1: 引擎  $2: 工作指示
   echo ">>> 工作者($1)執行中…"
   # 用 process substitution 而非 pipeline:引擎函式留在當前 shell,
   # WORKER_SESSION 的賦值才不會因 subshell 而遺失(session 續接才有效)。
-  "w_$1" "$2" > >(tee -a "$LOG")
+  engine_call "w_$1" "$2" > >(tee -a "$LOG")
   metric worker "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   # 每次工作者動作後硬性檢查受保護測試檔;旗標防止回復動作本身造成遞迴
   if (( ! CHECKING_PROTECTED )); then
@@ -274,6 +329,7 @@ r_claude() {
     --json-schema "$VERDICT_SCHEMA") || rc=$?
   if (( rc != 0 )); then
     printf '%s\n' "$out" >&2
+    printf '%s\n' "$out" > "$ENGINE_OUT"
     echo "(claude 退出碼 $rc,原始輸出如上)" >&2
     return "$rc"
   fi
@@ -289,7 +345,7 @@ r_codex() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   margs+=($CODEX_ARGS)
   codex exec --sandbox workspace-write "${margs[@]}" "$(review_prompt "$1")
-$(verdict_file_instr)"
+$(verdict_file_instr)" 2>&1 | tee "$ENGINE_OUT"
 }
 
 r_agy() {
@@ -299,7 +355,7 @@ r_agy() {
   # shellcheck disable=SC2206  # 刻意依空白切割
   margs+=($AGY_ARGS)
   agy --print "$(review_prompt "$1")
-$(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}"
+$(verdict_file_instr)" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}" 2>&1 | tee "$ENGINE_OUT"
 }
 
 collect_suggestions() {  # 把本輪 suggestions 累積到 backlog,收尾階段統一評估
@@ -327,7 +383,7 @@ run_review() {  # $1: 引擎  $2: 審查範圍;回傳 0 = 通過
   # 預寫「未通過」哨兵而非刪檔:reviewer 沒寫入 = 未通過(語義相同),
   # 且避免 codex 的 apply_patch 對不存在的檔案報錯(E2E 實測踩到)
   printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
-  "r_$1" "$2" > >(tee -a "$LOG") || echo "(警告:審查者執行失敗)" >&2
+  engine_call "r_$1" "$2" > >(tee -a "$LOG") || echo "(警告:審查者執行失敗)" >&2
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   if [[ ! -f "$WF/verdict.json" ]]; then
     echo "(審查者未產出 verdict.json,視為未通過)" >&2
