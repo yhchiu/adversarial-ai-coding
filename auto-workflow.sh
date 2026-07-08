@@ -844,6 +844,8 @@ EOF
       END { for (s in calls) printf "  %-14s AI呼叫 %d 次,審查 %d 輪,%d 秒,$%.4f\n", s, calls[s], r[s], secs[s], cost[s] }' \
       "$METRICS"
   fi
+  archive_snapshot "$WF/pr-body.md" "pr-body.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_snapshot "$WF/suggestions.md" "suggestions.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   if [[ "$OPEN_PR" == "1" ]] && command -v gh >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
     git push -u origin "$branch"
     gh pr create --title "$title" --body-file "$WF/pr-body.md"
@@ -854,8 +856,6 @@ EOF
     echo "  gh pr create --title \"$title\" --body-file $WF/pr-body.md"
     [[ "$OPEN_PR" == "1" ]] && echo "(OPEN_PR=1 但缺 gh 或 origin remote,已改為只印指令)" >&2
   fi
-  archive_snapshot "$WF/pr-body.md" "pr-body.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
-  archive_snapshot "$WF/suggestions.md" "suggestions.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   notify "auto-workflow:全部 stage 完成($branch)"
 }
 
