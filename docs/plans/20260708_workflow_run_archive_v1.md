@@ -1,11 +1,11 @@
 # Workflow Run Archive Plan（修訂版）
 
-> 本檔即為 `C:\Project\auto-coding\plan.md` 的修訂內容；核准後原樣寫入 plan.md。
+> 本檔即為 `C:\Project\adversarial-ai-coding\plan.md` 的修訂內容；核准後原樣寫入 plan.md。
 > 相對於前一版,本版依 code review findings 全面修正,核心改動是**改採「live 工作檔不動、快照進 archive」的設計**,以避免弄壞既有互審迴圈。
 
 ## Context（為什麼要改）
 
-現行 `auto-workflow.sh` 把跨 run 的中間狀態都寫在 `.workflow/` 的固定檔名(`review.md`、`verdict.json`、`last-engine-output.txt`、`pr-body.md`…),每輪/每次呼叫直接覆蓋,所以:
+現行 `adversarial-ai-coding.sh` 把跨 run 的中間狀態都寫在 `.workflow/` 的固定檔名(`review.md`、`verdict.json`、`last-engine-output.txt`、`pr-body.md`…),每輪/每次呼叫直接覆蓋,所以:
 
 - 一個 run 內的歷輪 review/verdict/engine output 會被後續覆蓋,事後無法完整重建過程。
 - `$task` 原文(literal 或檔案)從未落檔。
@@ -73,7 +73,7 @@
 
 ## 逐檔改動
 
-- **`auto-workflow.sh`**
+- **`adversarial-ai-coding.sh`**
   - 設定區(:62–68 附近):新增 `RUNS_DIR`;`WF_RUN` 與撞號 fallback;`LOG`/`METRICS` 指向 `$WF_RUN`;保留 `ENGINE_OUT` 為固定檔。
   - 新增純函式:`art_path`、`write_meta`、`resolve_model_args`、`archive_task`、`archive_snapshot`(cp + write_meta)、`log_section`。
   - `w_claude`/`r_claude`(:207, :344):成功時亦把 `$out` 寫入 `ENGINE_OUT`。
@@ -95,7 +95,7 @@
 
 ## Tests
 
-- `bash -n auto-workflow.sh tests/helpers.test.sh tests/e2e/run.sh`
+- `bash -n adversarial-ai-coding.sh tests/helpers.test.sh tests/e2e/run.sh`
 - `bash tests/helpers.test.sh`(新增與既有純函式測試)
 - `E2E_SETUP_ONLY=1 bash tests/e2e/run.sh`(不呼叫 AI)
 - 完整 E2E(`bash tests/e2e/run.sh`)維持手動,因會呼叫真實 AI 並消耗配額。

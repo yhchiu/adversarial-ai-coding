@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# auto-workflow.sh — SDD/TDD 雙 AI 互審自動化工作流
+# adversarial-ai-coding.sh — 雙 AI 對抗式程式開發工作流
 #
 # 每個 stage 的流程:
 #   工作者執行工作 → 審查者審查
@@ -8,9 +8,9 @@
 #     → 通過:工作者以 conventional commit 提交 → 進入下一個 stage
 #
 # 用法:
-#   ./auto-workflow.sh "任務描述"
-#   ./auto-workflow.sh 任務描述.md      # 參數是存在的檔案時,讀取檔案內容當任務
-#   ./auto-workflow.sh print-agents    # 輸出 AGENTS.md 規範範本後結束
+#   ./adversarial-ai-coding.sh "任務描述"
+#   ./adversarial-ai-coding.sh 任務描述.md      # 參數是存在的檔案時,讀取檔案內容當任務
+#   ./adversarial-ai-coding.sh print-agents    # 輸出 AGENTS.md 規範範本後結束
 #
 # 環境變數(皆可選):
 #   ENGINE_A     工作者引擎:claude | codex | agy   (預設 claude)
@@ -438,7 +438,7 @@ plan_tasks() {  # $1: plan.md;每行輸出一個未完成任務(去掉「- [ ] �
 # ---------- AGENTS.md:三種引擎共用的互審規範(跨工具標準檔) ----------
 # 規範內文放在獨立的 AGENTS.template.md 方便維護;以簡單英文撰寫,
 # 對各家模型最通用(避免個別模型中文能力不足)。
-AGENTS_MARKER='<!-- auto-workflow:begin -->'
+AGENTS_MARKER='<!-- adversarial-ai-coding:begin -->'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$SCRIPT_DIR/AGENTS.template.md}"
 
@@ -453,14 +453,14 @@ write_agents_section() {  # 輸出規範範本;找不到範本檔時回傳 1
 bootstrap_agents_md() {  # 缺檔才建立;既有檔案不動,只提示(避免覆蓋使用者內容)
   if [[ -f AGENTS.md ]]; then
     grep -qF "$AGENTS_MARKER" AGENTS.md \
-      || echo "(提示:AGENTS.md 已存在但沒有 auto-workflow 規範段;可用「$0 print-agents」輸出範本後手動合併)" >&2
+      || echo "(提示:AGENTS.md 已存在但沒有 adversarial-ai-coding 規範段;可用「$0 print-agents」輸出範本後手動合併)" >&2
   elif write_agents_section > AGENTS.md; then
-    echo "已產生 AGENTS.md(auto-workflow 互審規範)"
+    echo "已產生 AGENTS.md(adversarial-ai-coding 互審規範)"
   else
     rm -f AGENTS.md   # 範本遺失:別留下空檔;警告已印出,流程照常繼續
     return 0
   fi
-  [[ -f CLAUDE.md ]] || printf 'Follow the auto-workflow cross-review rules in AGENTS.md.\n' > CLAUDE.md
+  [[ -f CLAUDE.md ]] || printf 'Follow the adversarial-ai-coding cross-review rules in AGENTS.md.\n' > CLAUDE.md
 }
 
 # ---------- 工作者引擎(同一 stage 內延續 session,跨 stage 重置) ----------
@@ -554,7 +554,7 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
     eta=$(date -d "+$w seconds" +%H:%M 2>/dev/null || true)
     log_section "rate limit retry" "$role" "$engine" "$CUR_STAGE" "$CUR_ROUND"
     { echo "== 撞到用量限額,等待 $(( w / 60 )) 分(約 $eta)後進行第 $n/$RETRY_MAX 次重試 =="; } | tee -a "$LOG" >&2
-    notify "auto-workflow:撞用量限額,約 $eta 重試(第 $n 次)"
+    notify "adversarial-ai-coding:撞用量限額,約 $eta 重試(第 $n 次)"
     sleep "$w"
     attempt=$(( attempt + 1 ))
   done
@@ -595,7 +595,7 @@ check_protected() {  # $1: 工作者引擎;受保護檔被改動時強制回復,
     { echo "!! 受保護的驗收測試檔被改動:"; sed 's/^/  - /' <<<"$viol"; } | tee -a "$LOG" >&2
     if (( n >= 2 )); then
       echo "!! 工作者多次改動受保護測試檔仍未回復,停止,需人工介入。" >&2
-      notify "auto-workflow:[$CUR_STAGE] 受保護測試檔遭改動且未回復,需人工介入"
+      notify "adversarial-ai-coding:[$CUR_STAGE] 受保護測試檔遭改動且未回復,需人工介入"
       exit 1
     fi
     n=$(( n + 1 ))
@@ -615,7 +615,7 @@ review_prompt() {  # $1: 本輪審查範圍
   cat <<EOF
 你是嚴格的程式審查者。本輪審查範圍:$1
 
-遵循專案 AGENTS.md 中的「auto-workflow 互審規範」。重點規則:
+遵循專案 AGENTS.md 中的「adversarial-ai-coding 互審規範」。重點規則:
 - 讀檔與搜尋一律用你內建的檔案工具,不要用 shell 的 cat/ls/cd(shell 指令受白名單限制,被擋會浪費回合)。
 - 只審查與驗證(可以執行測試),除了 $WF/review.md 與 $WF/verdict.json 之外不要修改任何檔案。
 - 把審查意見逐條寫入 $WF/review.md(直接覆蓋舊內容);若通過,寫下簡短的通過理由。
@@ -744,7 +744,7 @@ gate_loop() {  # $1: 工作者引擎  $2: 關卡指令(空字串 = 跳過);失�
     if (( n >= MAX_ROUNDS )); then
       echo "!! [$CUR_STAGE] 品質關卡連續 $MAX_ROUNDS 次未過,停止,需人工介入。輸出:" >&2
       printf '%s\n' "$out" | tail -50 >&2
-      notify "auto-workflow:[$CUR_STAGE] 品質關卡連續失敗,需人工介入"
+      notify "adversarial-ai-coding:[$CUR_STAGE] 品質關卡連續失敗,需人工介入"
       exit 1
     fi
     n=$(( n + 1 ))
@@ -771,7 +771,7 @@ review_loop() {  # $1: 審查者引擎  $2: 工作者引擎  $3: 審查範圍  $
   until run_review "$1" "$3"; do
     if (( CUR_ROUND >= MAX_ROUNDS )); then
       echo "!! [$CUR_STAGE] 已審 $MAX_ROUNDS 輪仍未通過,停止。請閱讀 $WF/review.md 後人工處理。" >&2
-      notify "auto-workflow:[$CUR_STAGE] 審查 $MAX_ROUNDS 輪未過,需人工介入"
+      notify "adversarial-ai-coding:[$CUR_STAGE] 審查 $MAX_ROUNDS 輪未過,需人工介入"
       exit 1
     fi
     CUR_ROUND=$(( CUR_ROUND + 1 ))
@@ -794,7 +794,7 @@ ensure_committed() {  # 工作者漏提交時由 script 補提交,確保流程�
     echo "(工作者未完整提交,由 script 補提交)" >&2
     git add -A
     git commit -m "chore: commit remaining ${CUR_STAGE} changes" \
-      -m "Auto-committed by auto-workflow because the worker left uncommitted changes."
+      -m "Auto-committed by adversarial-ai-coding because the worker left uncommitted changes."
   fi
 }
 
@@ -809,7 +809,7 @@ commit_if_dirty() {  # $1: 引擎  $2: 說明;沒有變更就跳過,不浪費一
 human_gate_spec() {
   [[ "$HUMAN_GATE" == "1" ]] || return 0
   log_section "human gate" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
-  notify "auto-workflow:規格待人工核准($SPEC_DIR/spec.md)"
+  notify "adversarial-ai-coding:規格待人工核准($SPEC_DIR/spec.md)"
   echo ""
   echo "### 人工檢查點:請審閱 $SPEC_DIR/spec.md,特別是「Assumptions and Open Questions(假設與未決問題)」一節。"
   echo "### 可直接編輯該檔後再繼續,你的改動會一併提交。"
@@ -845,7 +845,7 @@ $1
 - 規格(含假設與未決問題):\`$SPEC_DIR/spec.md\`
 - 實作計畫:\`$SPEC_DIR/plan.md\`
 
-由 auto-workflow(雙 AI 互審:A=$ENGINE_A、B=$ENGINE_B)產生;
+由 adversarial-ai-coding(雙 AI 互審:A=$ENGINE_A、B=$ENGINE_B)產生;
 每個 stage 均通過確定性品質關卡與交叉審查,驗收測試由審查方撰寫且受改動保護。
 EOF
 
@@ -867,7 +867,7 @@ EOF
     echo "  gh pr create --title \"$title\" --body-file $WF/pr-body.md"
     [[ "$OPEN_PR" == "1" ]] && echo "(OPEN_PR=1 但缺 gh 或 origin remote,已改為只印指令)" >&2
   fi
-  notify "auto-workflow:全部 stage 完成($branch)"
+  notify "adversarial-ai-coding:全部 stage 完成($branch)"
 }
 
 setup_workspace() {  # 依 USE_WORKTREE / AUTO_BRANCH 準備隔離的工作區

@@ -13,7 +13,7 @@ review.md、.workflow/verdict.json、ENGINE_OUT 這些固定路徑。但這份�
 
 2. task 檔案來源保存時機不夠精確
    現有程式在 setup_workspace 前就把 task 檔案讀成字串，之後原始路徑資訊會遺失或因 cd 到 worktree 而變得不可靠。見
-   auto-workflow.sh:584。
+   adversarial-ai-coding.sh:584。
    計畫說 main() 解析後呼叫 archive_task，但應明確保留 task_arg、task_source_kind、task_source_path、
    task_resolved_text，且檔案路徑最好轉成絕對路徑後再 setup_workspace。
 

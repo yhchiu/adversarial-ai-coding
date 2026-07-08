@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# tests/helpers.test.sh — auto-workflow.sh 純函式與前置檢查的單元測試
+# tests/helpers.test.sh — adversarial-ai-coding.sh 純函式與前置檢查的單元測試
 #
 # 執行:bash tests/helpers.test.sh
 # 不呼叫任何 AI 引擎;每個案例在獨立 subshell + 暫存目錄中執行。
 set -u
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/auto-workflow.sh"
+SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/adversarial-ai-coding.sh"
 PASS=0; FAIL=0
 TMPDIRS=()
 
@@ -213,7 +213,7 @@ d=$(tmpdir)
 ( cd "$d" && source "$SCRIPT" && bootstrap_agents_md ) >/dev/null
 [[ -f "$d/AGENTS.md" && -f "$d/CLAUDE.md" ]] && ok "bootstrap:建立 AGENTS.md 與 CLAUDE.md" \
   || bad "bootstrap:建立 AGENTS.md 與 CLAUDE.md"
-grep -qF '<!-- auto-workflow:begin -->' "$d/AGENTS.md" && ok "bootstrap:含 marker" || bad "bootstrap:含 marker"
+grep -qF '<!-- adversarial-ai-coding:begin -->' "$d/AGENTS.md" && ok "bootstrap:含 marker" || bad "bootstrap:含 marker"
 
 d=$(tmpdir); echo 'my own rules' > "$d/AGENTS.md"
 ( cd "$d" && source "$SCRIPT" && bootstrap_agents_md ) >/dev/null 2>&1
@@ -258,7 +258,7 @@ d=$(new_repo)
 assert_rc "前置:codex+codex → 擋下" 1 $?
 assert_eq "前置:被擋下時無任何副作用(不建 branch)" "main" "$(git -C "$d" branch --show-current)"
 
-"$SCRIPT" print-agents 2>/dev/null | grep -qF '<!-- auto-workflow:begin -->'
+"$SCRIPT" print-agents 2>/dev/null | grep -qF '<!-- adversarial-ai-coding:begin -->'
 assert_rc "print-agents:輸出規範範本" 0 $?
 
 # ---------- is_rate_limited ----------

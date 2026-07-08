@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# tests/e2e/run.sh — auto-workflow 手動 E2E 測試
+# tests/e2e/run.sh — adversarial-ai-coding 手動 E2E 測試
 #
 # 會呼叫真實 AI 引擎、消耗 token 與訂閱配額(sonnet 約 $2~5 等值、20~40 分鐘),
 # 只在改動 script 核心邏輯後手動執行,絕不掛進 CI 或單元測試入口。
@@ -14,14 +14,14 @@
 # 環境變數:
 #   E2E_DIR         工作目錄(預設 mktemp;失敗與成功現場都保留在此)
 #   E2E_SETUP_ONLY  1=只建 fixture repo 並驗證基線,不呼叫任何 AI(預設 0)
-#   其餘 auto-workflow 變數皆可透傳;本執行器的 E2E 預設:
+#   其餘 adversarial-ai-coding 變數皆可透傳;本執行器的 E2E 預設:
 #     HUMAN_GATE=0  ENGINE_A=claude  MODEL_A=sonnet  CLAUDE_ARGS='--effort=low'
 #     ENGINE_B=codex  MODEL_B=gpt-5.5  CODEX_ARGS='-c model_reasoning_effort=low'
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-SCRIPT="$ROOT/auto-workflow.sh"
+SCRIPT="$ROOT/adversarial-ai-coding.sh"
 FIXTURE="$HERE/fixture"
 
 # E2E 預設(源自五次真實 run 的教訓:worker 至少 sonnet 級、codex 降 effort 省錢)
@@ -55,7 +55,7 @@ git init -q -b main
 git config user.email e2e@local
 git config user.name e2e
 git add -A
-git commit -qm "chore: baseline fixture for auto-workflow E2E"
+git commit -qm "chore: baseline fixture for adversarial-ai-coding E2E"
 
 echo "== 基線關卡(親測,不信 AI 回報)"
 # 刻意拆成三個獨立敘述:&& 串列中非末位指令的失敗不會觸發 errexit(bash 陷阱)

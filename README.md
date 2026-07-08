@@ -1,6 +1,6 @@
-# auto-workflow — SDD/TDD 雙 AI 互審自動化工作流
+# adversarial-ai-coding — 雙 AI 對抗式程式開發工作流
 
-用一支 bash script 自動化「一個 AI 做事、另一個 AI 審查」的開發流程,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、對抗式驗收測試、人工檢查點、分級裁決。對應的原始工作流:
+用一支 bash script 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
 
 ```bash
 for work in "訂規格" "規劃實作計畫" "撰寫程式碼" "整體review" "修bug"; do
@@ -59,19 +59,19 @@ done
 
 ```bash
 # script 與 AGENTS.md 範本要一起帶走(bootstrap 從 script 所在目錄讀範本)
-cp auto-workflow.sh AGENTS.template.md /path/to/your-project/ && cd /path/to/your-project
+cp adversarial-ai-coding.sh AGENTS.template.md /path/to/your-project/ && cd /path/to/your-project
 
 # 預設:A = Claude Code,B = Codex
-./auto-workflow.sh "為 CLI 加上 --json 輸出選項"
+./adversarial-ai-coding.sh "為 CLI 加上 --json 輸出選項"
 
 # 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
-./auto-workflow.sh task.md
+./adversarial-ai-coding.sh task.md
 
 # 交換角色
-ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
+ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
-./auto-workflow.sh print-agents
+./adversarial-ai-coding.sh print-agents
 ```
 
 ### 任務怎麼寫
@@ -144,7 +144,7 @@ your-project/
 │       ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
 │       ├── metrics.csv  # stage/角色/引擎/輪次/秒數/費用/model/args/time
 │       └── logs/001-run.log (+ 001-run.log.meta.json)
-└── auto-workflow.sh
+└── adversarial-ai-coding.sh
 ```
 
 Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、引擎、模型與模型參數。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude 引擎會回報(`total_cost_usd`)。

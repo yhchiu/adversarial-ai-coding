@@ -1,7 +1,8 @@
-<!-- auto-workflow:begin -->
-# auto-workflow Cross-Review Rules
+<!-- adversarial-ai-coding:begin -->
+# adversarial-ai-coding Cross-Review Rules
 
-This project is developed with auto-workflow: one AI works, another AI reviews.
+This project is developed with adversarial-ai-coding: one AI works, another AI reviews
+and writes adversarial acceptance tests.
 All AI participants must follow these rules.
 
 ## Tool discipline
@@ -54,4 +55,4 @@ All AI participants must follow these rules.
 - Use Conventional Commits (feat: / fix: / chore(scope): ...) in simple English.
 - The body must describe in detail what was done.
 - Do not add a Co-Authored-By trailer.
-<!-- auto-workflow:end -->
+<!-- adversarial-ai-coding:end -->
