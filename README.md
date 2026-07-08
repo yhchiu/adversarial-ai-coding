@@ -107,7 +107,11 @@ ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
 | `AUTO_BRANCH` | `1` | 自動建立 `auto/<時間戳>` branch |
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
-| `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、完成 |
+| `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
+| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試(能解析 `resets HH:MMam` 就精準等到重置時刻 +2 分緩衝,否則指數退避);`0` = 直接失敗 |
+| `RETRY_MAX` | `6` | 每次引擎呼叫的限額重試上限 |
+| `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
+| `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒);解析出的重置時刻若超過 6 小時視為異常、改走指數退避 |
 | `AGENTS_TEMPLATE` | script 同目錄的 `AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導引擎改用內建檔案工具 |
@@ -168,7 +172,7 @@ Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 se
 ## 測試
 
 ```bash
-bash tests/helpers.test.sh   # 35 個單元測試,不呼叫任何 AI
+bash tests/helpers.test.sh   # 46 個單元測試,不呼叫任何 AI
 ```
 
 真實 E2E(會呼叫 AI、消耗 token)建議先在小專案用便宜任務試跑一輪,確認提示詞行為符合預期。
@@ -180,7 +184,7 @@ bash tests/helpers.test.sh   # 35 個單元測試,不呼叫任何 AI
 - **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty;在 CI 等無人環境設 `HUMAN_GATE=0`,並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
 - **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
-- **工作流因引擎失敗中斷**:claude 引擎失敗時原始輸出會攤印到 stderr(常見原因:訂閱用量限額,訊息如 `You've hit your session limit`),看 log 結尾即可判斷。
+- **撞到訂閱用量限額**(`You've hit your session limit`、429):預設會自動等待重試——能從訊息解析出重置時刻就精準等待,否則指數退避;重試會發 `NOTIFY_CMD` 通知並記錄在 log,`RETRY_ON_LIMIT=0` 可關閉。非限額的引擎失敗不會重試,原始輸出攤印在 log 結尾供診斷。
 - **換行問題**:script 必須是 LF;repo 已用 `.gitattributes` 強制 `*.sh eol=lf`。
 
 ## 延伸方向
