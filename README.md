@@ -175,7 +175,16 @@ Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 se
 bash tests/helpers.test.sh   # 46 個單元測試,不呼叫任何 AI
 ```
 
-真實 E2E(會呼叫 AI、消耗 token)建議先在小專案用便宜任務試跑一輪,確認提示詞行為符合預期。
+### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)
+
+```bash
+bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker + codex low effort;約 20~40 分、$2~5 等值配額)
+E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關卡,不呼叫任何 AI
+```
+
+執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 AGENTS 範本(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,引擎與模型可用一般環境變數覆寫。
+
+**定位:改動 script 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
 
 ## 疑難排解
 
