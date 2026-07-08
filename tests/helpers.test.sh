@@ -118,11 +118,27 @@ assert_eq "protected:空清單 → 保護停用、輸出空" "" "$out"
 
 # ---------- metric ----------
 d=$(tmpdir)
-( cd "$d" && mkdir -p .workflow && source "$SCRIPT" \
+( cd "$d" && mkdir -p .workflow/runs/test/logs && source "$SCRIPT" \
+    && WF_RUN=.workflow/runs/test && METRICS="$WF_RUN/metrics.csv" \
     && CUR_STAGE=stage1 && metric worker claude 1 12 0.05 && metric reviewer codex 2 30 "" )
-assert_eq "metric:標頭 + 兩筆" 3 "$(wc -l < "$d/.workflow/metrics.csv")"
+assert_eq "metric:標頭 + 兩筆" 3 "$(wc -l < "$d/.workflow/runs/test/metrics.csv")"
 assert_eq "metric:CSV 標頭正確" "run_id,stage,role,engine,round,duration_s,cost_usd" \
-  "$(head -1 "$d/.workflow/metrics.csv")"
+  "$(head -1 "$d/.workflow/runs/test/metrics.csv")"
+
+# ---------- init_live_state ----------
+d=$(tmpdir)
+mkdir -p "$d/.workflow"
+printf 'old suggestion\n' > "$d/.workflow/suggestions.md"
+printf 'old-test.go\n' > "$d/.workflow/protected-tests.txt"
+printf 'abc123\n' > "$d/.workflow/protected-base.sha"
+printf 'old review\n' > "$d/.workflow/review.md"
+printf '{}\n' > "$d/.workflow/verdict.json"
+printf 'old output\n' > "$d/.workflow/last-engine-output.txt"
+( cd "$d" && source "$SCRIPT" && init_live_state )
+[[ ! -e "$d/.workflow/suggestions.md" && ! -e "$d/.workflow/protected-tests.txt" && ! -e "$d/.workflow/protected-base.sha" ]] \
+  && ok "init_live_state:清除跨 run 污染檔" || bad "init_live_state:清除跨 run 污染檔"
+[[ ! -e "$d/.workflow/review.md" && ! -e "$d/.workflow/verdict.json" && ! -e "$d/.workflow/last-engine-output.txt" ]] \
+  && ok "init_live_state:清除自癒 live 檔" || bad "init_live_state:清除自癒 live 檔"
 
 # ---------- bootstrap_agents_md ----------
 d=$(tmpdir)

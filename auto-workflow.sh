@@ -33,6 +33,7 @@
 #   RETRY_MAX        每次引擎呼叫的限額重試上限(預設 6)
 #   RETRY_BASE_WAIT  解析不到 reset 時間時的初始等待秒數,指數成長(預設 300)
 #   RETRY_MAX_WAIT   指數退避的單次等待上限秒數(預設 3600)
+#   RUNS_DIR         每次 run 的 archive 目錄根目錄         (預設 .workflow/runs)
 set -Eeuo pipefail
 
 # ---------- 設定 ----------
@@ -62,9 +63,11 @@ TOOLS="${TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SPEC_DIR="${SPEC_DIR:-specs/$RUN_ID}"
 WF=".workflow"
-LOGS="$WF/logs"
-LOG="$LOGS/$RUN_ID.log"
-METRICS="$WF/metrics.csv"
+RUNS_DIR="${RUNS_DIR:-$WF/runs}"
+WF_RUN="${WF_RUN:-}"
+LOGS="${LOGS:-$WF/logs}"
+LOG="${LOG:-$LOGS/$RUN_ID.log}"
+METRICS="${METRICS:-$WF/metrics.csv}"
 ENGINE_OUT="$WF/last-engine-output.txt"   # 每次引擎呼叫的輸出落地,供限額偵測用
 
 usage() {
@@ -84,12 +87,39 @@ notify() {  # $1: 訊息;NOTIFY_CMD 會以第一個參數收到訊息
 }
 
 metric() {  # $1: 角色  $2: 引擎  $3: 輪次  $4: 秒數  $5: 費用(USD,可空)
-  [[ -d "$WF" ]] || return 0
+  [[ -d "$(dirname "$METRICS")" ]] || return 0
   [[ -f "$METRICS" ]] || echo "run_id,stage,role,engine,round,duration_s,cost_usd" > "$METRICS"
   echo "$RUN_ID,$CUR_STAGE,$1,$2,$3,$4,$5" >> "$METRICS"
 }
 
 # ---------- 純函式 helpers(可被測試 source) ----------
+establish_run_archive() {
+  local base candidate n=2
+  base="$RUNS_DIR/$RUN_ID"
+  candidate="$base"
+  while [[ -e "$candidate" ]]; do
+    candidate="$base-$n"
+    n=$(( n + 1 ))
+  done
+  WF_RUN="$candidate"
+  LOGS="$WF_RUN/logs"
+  LOG="$LOGS/001-run.log"
+  METRICS="$WF_RUN/metrics.csv"
+  mkdir -p "$WF" "$LOGS" "$SPEC_DIR"
+}
+
+init_live_state() {
+  mkdir -p "$WF"
+  rm -f \
+    "$WF/suggestions.md" \
+    "$WF/protected-tests.txt" \
+    "$WF/protected-base.sha" \
+    "$WF/review.md" \
+    "$WF/verdict.json" \
+    "$WF/last-engine-output.txt" \
+    "$WF/pr-body.md"
+}
+
 engine_model() {  # $1: 引擎;輸出該引擎所屬槽位的模型覆寫(未設定輸出空)
   if [[ "$1" == "$ENGINE_A" && -n "$MODEL_A" ]]; then
     echo "$MODEL_A"
@@ -610,7 +640,8 @@ main() {
 
   setup_workspace   # 可能 cd 進 worktree,之後的相對路徑都以工作區為準
 
-  mkdir -p "$LOGS" "$SPEC_DIR"
+  establish_run_archive
+  init_live_state
   echo '*' > "$WF/.gitignore"   # 讓 .workflow/ 整個目錄不進版控
 
   trap 'echo "!! 工作流中斷(exit=$?)。完整過程見 '"$LOG"'" >&2' ERR
