@@ -227,6 +227,42 @@ assert_eq "dual_spec:candidate review can disable suggestion collection" "no" "$
 
 d=$(tmpdir)
 out=$(
+  cd "$d" && mkdir -p .workflow && source "$SCRIPT" && WF=.workflow \
+    && write_spec_merge_request_template A B \
+    && merge_request_has_content && echo yes || echo no
+)
+assert_eq "dual_spec:untouched merge request template is not content" "no" "$out"
+printf '%s\n' \
+  '# Dual Spec Merge Request' \
+  '' \
+  '## Items to adopt from B' \
+  '' \
+  '- adopt from Candidate B the stricter timeout acceptance criterion.' \
+  '- edge cases, especially empty task files, must be covered.' \
+  > "$d/.workflow/spec-merge-request.md"
+out=$( cd "$d" && source "$SCRIPT" && WF=.workflow && merge_request_has_content && echo yes || echo no )
+assert_eq "dual_spec:merge request accepts realistic human instructions" "yes" "$out"
+printf '%s\n' \
+  '# Dual Spec Merge Request' \
+  '' \
+  '## Items to adopt from B' \
+  '' \
+  'adopt from Candidate B the stricter timeout acceptance criterion.' \
+  'edge cases, especially empty task files, must be covered.' \
+  > "$d/.workflow/spec-merge-request.md"
+out=$( cd "$d" && source "$SCRIPT" && WF=.workflow && merge_request_has_content && echo yes || echo no )
+assert_eq "dual_spec:merge request accepts paragraph instructions with template-like prefixes" "yes" "$out"
+
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && SPEC_DIR=specs && dual_spec_final_review_scope merge-b )
+if [[ "$out" == *".workflow/spec-merge-request.md"* && "$out" == *"block approval"* ]]; then
+  ok "dual_spec:merge final review scope checks merge request adoption"
+else
+  bad "dual_spec:merge final review scope checks merge request adoption"
+fi
+
+d=$(tmpdir)
+out=$(
   cd "$d" && mkdir -p specs .workflow && printf 'candidate A\n' > specs/spec-a.md && printf 'candidate B\n' > specs/spec-b.md \
     && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow && ENGINE_A=claude && ENGINE_B=codex \
     && review_loop() { printf 'review:%s/%s/%s\n' "$1" "$2" "$3" >> call.log; } \
@@ -250,7 +286,7 @@ out=$(
     && printf '%s\n---\n' "$(cat specs/spec.md)" && cat call.log
 )
 assert_eq "dual_spec:merge path uses selected owner then reviews final spec and asks for human approval" \
-  $'merged B\n---\nwork:codex\nreview:claude/codex/specs/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions.\nhuman' "$out"
+  $'merged B\n---\nwork:codex\nreview:claude/codex/specs/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions. Also compare specs/spec.md with .workflow/spec-merge-request.md and block approval if any requested adoption item is missing, distorted, or contradicted.\nhuman' "$out"
 
 d=$(tmpdir)
 out=$(

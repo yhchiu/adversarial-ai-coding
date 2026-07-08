@@ -500,8 +500,13 @@ collect_review_suggestions_enabled() {
   [[ "${COLLECT_REVIEW_SUGGESTIONS:-1}" == "1" ]]
 }
 
-dual_spec_final_review_scope() {
-  echo "$SPEC_DIR/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions."
+dual_spec_final_review_scope() {  # $1: canonical decision, optional
+  local decision="${1:-}"
+  local scope="$SPEC_DIR/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions."
+  if [[ "$decision" == merge-* ]]; then
+    scope="$scope Also compare $SPEC_DIR/spec.md with $WF/spec-merge-request.md and block approval if any requested adoption item is missing, distorted, or contradicted."
+  fi
+  echo "$scope"
 }
 
 write_spec_merge_request_template() {  # $1: base slot  $2: other slot
@@ -526,18 +531,25 @@ EOF
 }
 
 merge_request_has_content() {
+  local items template_prefix
   [[ -f "$WF/spec-merge-request.md" ]] || return 1
-  awk '
+  items=$(awk '
     /^## Items to adopt / { in_items=1; next }
-    in_items && /^[[:space:]]*$/ { next }
-    in_items && /^Replace this paragraph with/ { next }
-    in_items && /^adopt from / { next }
-    in_items && /^edge cases, / { next }
-    in_items && /^adopt from / { next }
-    in_items && /^$/ { next }
-    in_items { found=1 }
-    END { exit found ? 0 : 1 }
-  ' "$WF/spec-merge-request.md"
+    in_items {
+      lines[++n]=$0
+      if ($0 !~ /^[[:space:]]*$/) last=n
+    }
+    END {
+      first=1
+      while (first <= last && lines[first] ~ /^[[:space:]]*$/) first++
+      for (i=first; i<=last; i++) print lines[i]
+    }
+  ' "$WF/spec-merge-request.md")
+  template_prefix=$'Replace this paragraph with the concrete requirements, acceptance criteria,\nedge cases, non-goals, assumptions, or wording that the final spec owner must\nadopt from '
+  case "$items" in
+    "$template_prefix"*.) return 1 ;;
+  esac
+  [[ -n "$items" ]]
 }
 
 apply_dual_spec_decision() {  # $1: canonical decision  $2: task text
@@ -569,7 +581,7 @@ Original request:$task"
       ;;
   esac
 
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$(dual_spec_final_review_scope)"
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$(dual_spec_final_review_scope "$decision")"
   human_gate_spec
 }
 
