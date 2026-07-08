@@ -36,7 +36,14 @@ export CODEX_ARGS="${CODEX_ARGS:--c model_reasoning_effort=low}"
 command -v go >/dev/null 2>&1 || { echo "缺少 go 工具鏈(fixture 是 Go 專案)" >&2; exit 1; }
 [[ -f "$SCRIPT" && -d "$FIXTURE" ]] || { echo "找不到 $SCRIPT 或 $FIXTURE" >&2; exit 1; }
 
-BASE="${E2E_DIR:-$(mktemp -d -t wf-e2e-XXXXXX)}"
+if [[ -n "${E2E_DIR:-}" ]]; then
+  BASE="$E2E_DIR"
+  if command -v cygpath >/dev/null 2>&1; then
+    BASE="$(cygpath -u "$BASE" 2>/dev/null || printf '%s' "$BASE")"
+  fi
+else
+  BASE="$(mktemp -d -t wf-e2e-XXXXXX)"
+fi
 REPO="$BASE/repo"
 RUN_LOG="$BASE/run.log"   # 放 repo 外,免得被工作流的 commit 掃進去
 
