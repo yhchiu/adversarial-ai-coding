@@ -76,6 +76,7 @@ SPEC_OWNER_SLOT="${SPEC_OWNER_SLOT:-A}"
 SPEC_REVIEWER_SLOT="${SPEC_REVIEWER_SLOT:-B}"
 SPEC_OWNER_ENGINE="${SPEC_OWNER_ENGINE:-$ENGINE_A}"
 SPEC_REVIEWER_ENGINE="${SPEC_REVIEWER_ENGINE:-$ENGINE_B}"
+DUAL_SPEC_DECISION="${DUAL_SPEC_DECISION:-}"
 
 usage() {
   {
@@ -358,6 +359,7 @@ init_live_state() {
     "$WF/review.md" \
     "$WF/verdict.json" \
     "$WF/last-engine-output.txt" \
+    "$WF/spec-merge-request.md" \
     "$WF/pr-body.md"
 }
 
@@ -484,6 +486,91 @@ set_spec_roles_from_slot() {  # $1: owner slot A or B; set owner/reviewer slot a
   SPEC_REVIEWER_SLOT=$(reviewer_slot_for_owner_slot "$SPEC_OWNER_SLOT")
   SPEC_OWNER_ENGINE=$(engine_for_slot "$SPEC_OWNER_SLOT")
   SPEC_REVIEWER_ENGINE=$(engine_for_slot "$SPEC_REVIEWER_SLOT")
+}
+
+candidate_spec_for_slot() {  # $1: A or B; output candidate spec path for that slot.
+  case "$1" in
+    A) echo "$SPEC_DIR/spec-a.md" ;;
+    B) echo "$SPEC_DIR/spec-b.md" ;;
+    *) return 1 ;;
+  esac
+}
+
+collect_review_suggestions_enabled() {
+  [[ "${COLLECT_REVIEW_SUGGESTIONS:-1}" == "1" ]]
+}
+
+dual_spec_final_review_scope() {
+  echo "$SPEC_DIR/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions."
+}
+
+write_spec_merge_request_template() {  # $1: base slot  $2: other slot
+  local base_slot="$1" other_slot="$2" base_file other_file
+  base_file=$(candidate_spec_for_slot "$base_slot")
+  other_file=$(candidate_spec_for_slot "$other_slot")
+  mkdir -p "$WF"
+  cat > "$WF/spec-merge-request.md" <<EOF
+# Dual Spec Merge Request
+
+- base owner: $base_slot
+- base spec: $base_file
+- adopt from owner: $other_slot
+- adopt from spec: $other_file
+
+## Items to adopt from $other_slot
+
+Replace this paragraph with the concrete requirements, acceptance criteria,
+edge cases, non-goals, assumptions, or wording that the final spec owner must
+adopt from $other_file.
+EOF
+}
+
+merge_request_has_content() {
+  [[ -f "$WF/spec-merge-request.md" ]] || return 1
+  awk '
+    /^## Items to adopt / { in_items=1; next }
+    in_items && /^[[:space:]]*$/ { next }
+    in_items && /^Replace this paragraph with/ { next }
+    in_items && /^adopt from / { next }
+    in_items && /^edge cases, / { next }
+    in_items && /^adopt from / { next }
+    in_items && /^$/ { next }
+    in_items { found=1 }
+    END { exit found ? 0 : 1 }
+  ' "$WF/spec-merge-request.md"
+}
+
+apply_dual_spec_decision() {  # $1: canonical decision  $2: task text
+  local decision="$1" task="$2" owner_slot other_slot base_file other_file
+  owner_slot=$(dual_spec_owner_slot "$decision")
+  set_spec_roles_from_slot "$owner_slot"
+  other_slot="$SPEC_REVIEWER_SLOT"
+  base_file=$(candidate_spec_for_slot "$owner_slot")
+  other_file=$(candidate_spec_for_slot "$other_slot")
+  mkdir -p "$SPEC_DIR"
+
+  case "$decision" in
+    adopt-a|adopt-b)
+      cp "$base_file" "$SPEC_DIR/spec.md"
+      ;;
+    merge-a|merge-b)
+      cp "$base_file" "$SPEC_DIR/spec.md"
+      work "$SPEC_OWNER_ENGINE" "Human selected $base_file as the base spec and requested explicit adoption from $other_file.
+
+Read $WF/spec-merge-request.md and update the final spec at $SPEC_DIR/spec.md.
+The final spec must clearly incorporate the requested adopted items, while preserving the selected base owner's intent unless the merge request says otherwise.
+Do not start implementation planning or code changes.
+
+Original request:$task"
+      ;;
+    *)
+      echo "Unsupported dual spec decision:$decision" >&2
+      return 1
+      ;;
+  esac
+
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$(dual_spec_final_review_scope)"
+  human_gate_spec
 }
 
 dual_spec_preflight() {
@@ -781,7 +868,7 @@ run_review() {  # $1: engine  $2: review scope; returns 0 when approved.
     echo "(reviewer did not write verdict.json; treating as failed)" >&2
     return 1
   fi
-  collect_suggestions
+  collect_review_suggestions_enabled && collect_suggestions
   archive_snapshot "$WF/review.md" "review-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}.md" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   archive_snapshot "$WF/verdict.json" "verdict-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}.json" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   if ! verdict_approved "$WF/verdict.json"; then
@@ -888,6 +975,162 @@ human_gate_spec() {
   echo "Spec approved by human" | tee -a "$LOG"
 }
 
+run_candidate_spec_review() {  # $1: reviewer engine  $2: scope  $3: review output  $4: verdict output
+  local reviewer="$1" scope="$2" review_out="$3" verdict_out="$4" old_collect="${COLLECT_REVIEW_SUGGESTIONS-__unset__}"
+  rm -f "$WF/review.md" "$WF/verdict.json"
+  COLLECT_REVIEW_SUGGESTIONS=0
+  if ! run_review "$reviewer" "$scope"; then
+    echo "(candidate spec review recorded a non-approved verdict; continuing to comparison)" | tee -a "$LOG" >&2
+  fi
+  if [[ "$old_collect" == "__unset__" ]]; then
+    unset COLLECT_REVIEW_SUGGESTIONS
+  else
+    COLLECT_REVIEW_SUGGESTIONS="$old_collect"
+  fi
+  [[ -f "$WF/review.md" ]] || printf '(reviewer did not write review.md)\n' > "$WF/review.md"
+  [[ -f "$WF/verdict.json" ]] || printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
+  cp "$WF/review.md" "$review_out"
+  cp "$WF/verdict.json" "$verdict_out"
+  archive_snapshot "$review_out" "$(basename "$review_out")" "reviewer" "$reviewer" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_snapshot "$verdict_out" "$(basename "$verdict_out")" "reviewer" "$reviewer" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+}
+
+write_spec_comparison_index() {
+  cat > "$SPEC_DIR/spec-comparison.md" <<EOF
+# Dual Spec Comparison
+
+Review these files before choosing the final spec owner:
+
+- Candidate A: $SPEC_DIR/spec-a.md
+- Candidate B: $SPEC_DIR/spec-b.md
+- A's review of B: $SPEC_DIR/spec-b.review-by-a.md
+- B's review of A: $SPEC_DIR/spec-a.review-by-b.md
+- A's comparison table: $SPEC_DIR/spec-comparison-a.md
+- B's comparison table: $SPEC_DIR/spec-comparison-b.md
+
+Decision commands:
+
+- a: adopt Candidate A as the base final spec
+- b: adopt Candidate B as the base final spec
+- ma: use Candidate A as base and explicitly adopt selected items from Candidate B
+- mb: use Candidate B as base and explicitly adopt selected items from Candidate A
+EOF
+  archive_snapshot "$SPEC_DIR/spec-comparison.md" "spec-comparison.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+}
+
+write_dual_spec_decision_file() {  # $1: canonical decision
+  local decision="$1" owner_slot reviewer_slot
+  owner_slot=$(dual_spec_owner_slot "$decision")
+  reviewer_slot=$(reviewer_slot_for_owner_slot "$owner_slot")
+  cat > "$SPEC_DIR/spec-decision.md" <<EOF
+# Dual Spec Decision
+
+- decision: $decision
+- selected owner slot: $owner_slot
+- selected owner engine: $(engine_for_slot "$owner_slot")
+- reviewer slot: $reviewer_slot
+- reviewer engine: $(engine_for_slot "$reviewer_slot")
+- candidate A: $SPEC_DIR/spec-a.md
+- candidate B: $SPEC_DIR/spec-b.md
+
+The selected owner produces or owns the final $SPEC_DIR/spec.md.
+The reviewer must approve the final spec before implementation planning starts.
+EOF
+  archive_snapshot "$SPEC_DIR/spec-decision.md" "spec-decision.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+}
+
+human_gate_dual_spec_decision() {
+  local raw decision owner_slot other_slot
+  log_section "dual spec human selection" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
+  notify "adversarial-ai-coding: dual spec comparison awaits human selection ($SPEC_DIR/spec-comparison.md)"
+  {
+    echo ""
+    echo "### Human checkpoint: compare dual spec candidates."
+    echo "### Read:"
+    echo "### - $SPEC_DIR/spec-a.md"
+    echo "### - $SPEC_DIR/spec-b.md"
+    echo "### - $SPEC_DIR/spec-comparison-a.md"
+    echo "### - $SPEC_DIR/spec-comparison-b.md"
+    echo "### - $SPEC_DIR/spec-comparison.md"
+    echo "### Choose: a, b, ma, or mb. Final spec review and human approval run after this selection."
+  } >/dev/tty
+
+  while true; do
+    read -rp "Dual spec decision [a/b/ma/mb]:" raw </dev/tty
+    if decision=$(normalize_dual_spec_decision "$raw"); then
+      break
+    fi
+    echo "Invalid decision. Enter a, b, ma, or mb." >/dev/tty
+  done
+
+  owner_slot=$(dual_spec_owner_slot "$decision")
+  other_slot=$(reviewer_slot_for_owner_slot "$owner_slot")
+  if [[ "$decision" == merge-* ]]; then
+    write_spec_merge_request_template "$owner_slot" "$other_slot"
+    {
+      echo ""
+      echo "### Edit $WF/spec-merge-request.md now."
+      echo "### List the exact items the selected owner must adopt from $(candidate_spec_for_slot "$other_slot")."
+    } >/dev/tty
+    read -rp "Enter y after editing the merge request; anything else aborts:" raw </dev/tty
+    if [[ "$raw" != "y" && "$raw" != "Y" ]]; then
+      echo "Aborted: merge request was not approved." >&2
+      exit 1
+    fi
+    if ! merge_request_has_content; then
+      echo "Aborted: $WF/spec-merge-request.md does not contain explicit adoption instructions." >&2
+      exit 1
+    fi
+    archive_snapshot "$WF/spec-merge-request.md" "spec-merge-request.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  fi
+
+  write_dual_spec_decision_file "$decision"
+  DUAL_SPEC_DECISION="$decision"
+}
+
+run_dual_spec_spec_stage() {  # $1: task text
+  local task="$1" decision
+  mkdir -p "$SPEC_DIR"
+
+  begin_stage "write-spec-a"
+  work "$ENGINE_A" "Write an independent candidate spec for the following request and save it to $SPEC_DIR/spec-a.md.
+Do not read $SPEC_DIR/spec-b.md, dual spec review files, or comparison files. This candidate must be your own independent interpretation.
+The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section.
+In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing.
+Request:$task"
+
+  begin_stage "write-spec-b"
+  work "$ENGINE_B" "Write an independent candidate spec for the following request and save it to $SPEC_DIR/spec-b.md.
+Do not read $SPEC_DIR/spec-a.md, dual spec review files, or comparison files. This candidate must be your own independent interpretation.
+The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section.
+In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing.
+Request:$task"
+
+  begin_stage "review-spec-a"
+  run_candidate_spec_review "$ENGINE_B" "$SPEC_DIR/spec-a.md: one-shot review of Candidate A for requirement completeness, testable acceptance criteria, missing edge cases, unreasonable assumptions, and useful ideas absent from Candidate B." "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"
+
+  begin_stage "review-spec-b"
+  run_candidate_spec_review "$ENGINE_A" "$SPEC_DIR/spec-b.md: one-shot review of Candidate B for requirement completeness, testable acceptance criteria, missing edge cases, unreasonable assumptions, and useful ideas absent from Candidate A." "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"
+
+  begin_stage "compare-specs-a"
+  work "$ENGINE_A" "Compare the dual spec candidates and write a concise markdown comparison table to $SPEC_DIR/spec-comparison-a.md.
+Read $SPEC_DIR/spec-a.md, $SPEC_DIR/spec-b.md, $SPEC_DIR/spec-a.review-by-b.md, and $SPEC_DIR/spec-b.review-by-a.md.
+Cover: strengths, weaknesses, missing requirements, stronger acceptance criteria, edge cases, assumptions, and recommended owner. Do not modify any spec files."
+
+  begin_stage "compare-specs-b"
+  work "$ENGINE_B" "Compare the dual spec candidates and write a concise markdown comparison table to $SPEC_DIR/spec-comparison-b.md.
+Read $SPEC_DIR/spec-a.md, $SPEC_DIR/spec-b.md, $SPEC_DIR/spec-a.review-by-b.md, and $SPEC_DIR/spec-b.review-by-a.md.
+Cover: strengths, weaknesses, missing requirements, stronger acceptance criteria, edge cases, assumptions, and recommended owner. Do not modify any spec files."
+  write_spec_comparison_index
+
+  begin_stage "select-spec"
+  human_gate_dual_spec_decision
+  decision="$DUAL_SPEC_DECISION"
+
+  begin_stage "finalize-spec"
+  apply_dual_spec_decision "$decision" "$task"
+}
+
 # ---------- Finish: hand off to a human ----------
 # The endpoint is a PR ready for human merge, not a silent exit. OPEN_PR=1 executes push/PR creation.
 finish() {  # $1: task description
@@ -907,7 +1150,8 @@ $1
 - Spec with assumptions and open questions:\`$SPEC_DIR/spec.md\`
 - Implementation plan:\`$SPEC_DIR/plan.md\`
 
-Generated by adversarial-ai-coding, with worker A=$ENGINE_A and reviewer B=$ENGINE_B.
+Generated by adversarial-ai-coding, with original slots A=$ENGINE_A and B=$ENGINE_B.
+Final spec owner/worker: $SPEC_OWNER_SLOT=$SPEC_OWNER_ENGINE. Reviewer: $SPEC_REVIEWER_SLOT=$SPEC_REVIEWER_ENGINE.
 Each stage passed deterministic quality gates and cross-review. Acceptance tests were written by the reviewer and protected against worker edits.
 EOF
 
@@ -1015,25 +1259,30 @@ main() {
     echo "(warning: no quality gate command detected; deterministic gates are disabled. Set GATE_CMD to enable one.)" >&2
   fi
 
-  begin_stage "write-spec"
-  work "$ENGINE_A" "Write a spec for the following request and save it to $SPEC_DIR/spec.md. The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section. In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing. Request:$task"
-  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/spec.md: review requirement completeness, whether acceptance criteria are testable, and whether edge cases are missing. Review the Assumptions and Open Questions section item by item. Treat unreasonable assumptions or missing assumptions as blockers."
-  human_gate_spec
-  commit_work "$ENGINE_A" "Spec, approved by review and human gate"
+  if [[ "$DUAL_SPEC" == "1" ]]; then
+    run_dual_spec_spec_stage "$task"
+  else
+    set_spec_roles_from_slot A
+    begin_stage "write-spec"
+    work "$SPEC_OWNER_ENGINE" "Write a spec for the following request and save it to $SPEC_DIR/spec.md. The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section. In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing. Request:$task"
+    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$SPEC_DIR/spec.md: review requirement completeness, whether acceptance criteria are testable, and whether edge cases are missing. Review the Assumptions and Open Questions section item by item. Treat unreasonable assumptions or missing assumptions as blockers."
+    human_gate_spec
+  fi
+  commit_work "$SPEC_OWNER_ENGINE" "Spec, approved by review and human gate"
 
   begin_stage "write-implementation-plan"
-  work "$ENGINE_A" "Write an implementation plan from $SPEC_DIR/spec.md and save it to $SPEC_DIR/plan.md. Include an implementation task list, one task per line, using the \"- [ ] \" checkbox format. Each task must be independently implementable and verifiable, and each task maps to one commit. Include a test strategy that decides whether unit, integration, or E2E tests are needed, with reasons."
-  review_loop "$ENGINE_B" "$ENGINE_A" "$SPEC_DIR/plan.md compared with $SPEC_DIR/spec.md: feasibility, test coverage, whether tasks are small and independent, and whether checkbox format is correct."
-  commit_work "$ENGINE_A" "Implementation plan"
+  work "$SPEC_OWNER_ENGINE" "Write an implementation plan from $SPEC_DIR/spec.md and save it to $SPEC_DIR/plan.md. Include an implementation task list, one task per line, using the \"- [ ] \" checkbox format. Each task must be independently implementable and verifiable, and each task maps to one commit. Include a test strategy that decides whether unit, integration, or E2E tests are needed, with reasons."
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$SPEC_DIR/plan.md compared with $SPEC_DIR/spec.md: feasibility, test coverage, whether tasks are small and independent, and whether checkbox format is correct."
+  commit_work "$SPEC_OWNER_ENGINE" "Implementation plan"
 
   # Adversarial TDD: reviewer B writes acceptance tests from the spec, worker A reviews them.
   # The test author and implementer are separated, and A cannot edit these tests during implementation.
   begin_stage "write-acceptance-tests"
   local test_base
   test_base=$(git rev-parse HEAD)
-  work "$ENGINE_B" "Write acceptance tests from the acceptance criteria in $SPEC_DIR/spec.md, using the project's normal test location. The implementation does not exist yet, so tests may fail to compile or be red; this is the TDD red phase. Do not write product code and do not modify files under $SPEC_DIR."
-  review_loop "$ENGINE_A" "$ENGINE_B" "Acceptance tests, using git diff from $test_base: do they fully cover every acceptance criterion in $SPEC_DIR/spec.md, are the tests correct, and did the change avoid product code?"
-  commit_work "$ENGINE_B" "Acceptance tests"
+  work "$SPEC_REVIEWER_ENGINE" "Write acceptance tests from the acceptance criteria in $SPEC_DIR/spec.md, using the project's normal test location. The implementation does not exist yet, so tests may fail to compile or be red; this is the TDD red phase. Do not write product code and do not modify files under $SPEC_DIR."
+  review_loop "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" "Acceptance tests, using git diff from $test_base: do they fully cover every acceptance criterion in $SPEC_DIR/spec.md, are the tests correct, and did the change avoid product code?"
+  commit_work "$SPEC_REVIEWER_ENGINE" "Acceptance tests"
   git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
   git rev-parse HEAD > "$WF/protected-base.sha"
   archive_snapshot "$WF/protected-tests.txt" "protected-tests.txt" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
@@ -1054,23 +1303,23 @@ main() {
   fi
   for t in "${tasks[@]}"; do
     echo "--- Task $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
-    work "$ENGINE_A" "Implement this task from $SPEC_DIR/plan.md:$t
+    work "$SPEC_OWNER_ENGINE" "Implement this task from $SPEC_DIR/plan.md:$t
 Use TDD. Run the tests related to this task and confirm they pass. The full acceptance test suite may stay red until all tasks are complete. You may add your own unit tests, but you must not modify protected acceptance test files listed in $WF/protected-tests.txt. When done, change this task in plan.md from \"- [ ]\" to \"- [x]\"."
-    gate_loop "$ENGINE_A" "$BUILD_GATE_CMD"
-    commit_work "$ENGINE_A" "Task \"$t\""
+    gate_loop "$SPEC_OWNER_ENGINE" "$BUILD_GATE_CMD"
+    commit_work "$SPEC_OWNER_ENGINE" "Task \"$t\""
     i=$(( i + 1 ))
   done
 
   echo "--- All tasks complete; running full quality gate. Acceptance tests must pass. ---" | tee -a "$LOG"
-  gate_loop "$ENGINE_A" "$GATE_CMD"
-  review_loop "$ENGINE_B" "$ENGINE_A" "Current code changes on this branch, using git diff and git log: code quality, conformance with $SPEC_DIR/spec.md, actual test execution, and protected acceptance-test integrity using $WF/protected-tests.txt. Confirm tests were not weakened or bypassed." "$GATE_CMD"
-  commit_if_dirty "$ENGINE_A" "Review fixes"
+  gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "Current code changes on this branch, using git diff and git log: code quality, conformance with $SPEC_DIR/spec.md, actual test execution, and protected acceptance-test integrity using $WF/protected-tests.txt. Confirm tests were not weakened or bypassed." "$GATE_CMD"
+  commit_if_dirty "$SPEC_OWNER_ENGINE" "Review fixes"
 
   begin_stage "final-review-and-fixes"
-  work "$ENGINE_A" "Do a complete self-review of all changes on this branch: 1) fix any problems you find and add missing tests; 2) if $WF/suggestions.md exists, evaluate every accumulated review suggestion, implementing accepted suggestions and writing a reason under suggestions you reject; 3) run the full test suite and confirm it passes."
-  gate_loop "$ENGINE_A" "$GATE_CMD"
-  review_loop "$ENGINE_B" "$ENGINE_A" "Final acceptance: compare the full branch against $SPEC_DIR/spec.md item by item, run the full tests, and confirm acceptance tests were not weakened." "$GATE_CMD"
-  commit_if_dirty "$ENGINE_A" "Final fixes"
+  work "$SPEC_OWNER_ENGINE" "Do a complete self-review of all changes on this branch: 1) fix any problems you find and add missing tests; 2) if $WF/suggestions.md exists, evaluate every accumulated review suggestion, implementing accepted suggestions and writing a reason under suggestions you reject; 3) run the full test suite and confirm it passes."
+  gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "Final acceptance: compare the full branch against $SPEC_DIR/spec.md item by item, run the full tests, and confirm acceptance tests were not weakened." "$GATE_CMD"
+  commit_if_dirty "$SPEC_OWNER_ENGINE" "Final fixes"
 
   finish "$task"
 }

@@ -221,6 +221,61 @@ d=$(new_repo)
 assert_rc "dual_spec:HUMAN_GATE=0 is blocked before branch setup" 1 $?
 assert_eq "dual_spec:block leaves no branch side effect" "main" "$(git -C "$d" branch --show-current)"
 
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && COLLECT_REVIEW_SUGGESTIONS=0 && collect_review_suggestions_enabled && echo yes || echo no )
+assert_eq "dual_spec:candidate review can disable suggestion collection" "no" "$out"
+
+d=$(tmpdir)
+out=$(
+  cd "$d" && mkdir -p specs .workflow && printf 'candidate A\n' > specs/spec-a.md && printf 'candidate B\n' > specs/spec-b.md \
+    && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow && ENGINE_A=claude && ENGINE_B=codex \
+    && review_loop() { printf 'review:%s/%s/%s\n' "$1" "$2" "$3" >> call.log; } \
+    && human_gate_spec() { printf 'human\n' >> call.log; } \
+    && work() { printf 'work:%s\n' "$1" >> call.log; } \
+    && apply_dual_spec_decision adopt-a 'task text' \
+    && printf '%s\n---\n' "$(cat specs/spec.md)" && cat call.log
+)
+assert_eq "dual_spec:direct adopt reviews final spec and asks for human approval" \
+  $'candidate A\n---\nreview:codex/claude/specs/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions.\nhuman' "$out"
+
+d=$(tmpdir)
+out=$(
+  cd "$d" && mkdir -p specs .workflow && printf 'candidate A\n' > specs/spec-a.md && printf 'candidate B\n' > specs/spec-b.md \
+    && printf 'adopt item\n' > .workflow/spec-merge-request.md \
+    && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow && ENGINE_A=claude && ENGINE_B=codex \
+    && review_loop() { printf 'review:%s/%s/%s\n' "$1" "$2" "$3" >> call.log; } \
+    && human_gate_spec() { printf 'human\n' >> call.log; } \
+    && work() { printf 'work:%s\n' "$1" >> call.log; printf 'merged B\n' > specs/spec.md; } \
+    && apply_dual_spec_decision merge-b 'task text' \
+    && printf '%s\n---\n' "$(cat specs/spec.md)" && cat call.log
+)
+assert_eq "dual_spec:merge path uses selected owner then reviews final spec and asks for human approval" \
+  $'merged B\n---\nwork:codex\nreview:claude/codex/specs/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions.\nhuman' "$out"
+
+d=$(tmpdir)
+out=$(
+  cd "$d" && mkdir -p specs .workflow \
+    && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow && ENGINE_A=claude && ENGINE_B=codex \
+    && begin_stage() { :; } \
+    && work() {
+         case "$2" in
+           *spec-a.md*) printf 'candidate A\n' > specs/spec-a.md ;;
+           *spec-b.md*) printf 'candidate B\n' > specs/spec-b.md ;;
+           *spec-comparison-a.md*) printf 'comparison A\n' > specs/spec-comparison-a.md ;;
+           *spec-comparison-b.md*) printf 'comparison B\n' > specs/spec-comparison-b.md ;;
+         esac
+       } \
+    && run_candidate_spec_review() { printf 'review\n' > "$3"; printf '{"approved":false,"blockers":[],"suggestions":[]}\n' > "$4"; } \
+    && write_spec_comparison_index() { printf 'index\n' > specs/spec-comparison.md; } \
+    && human_gate_dual_spec_decision() { printf 'log noise\n'; DUAL_SPEC_DECISION=adopt-a; } \
+    && review_loop() { printf 'review:%s/%s\n' "$1" "$2" >> call.log; } \
+    && human_gate_spec() { printf 'human\n' >> call.log; } \
+    && run_dual_spec_spec_stage 'task text' \
+    && printf '%s\n---\n' "$(cat specs/spec.md)" && cat call.log
+)
+assert_eq "dual_spec:runner uses decision variable instead of captured log output" \
+  $'log noise\ncandidate A\n---\nreview:codex/claude\nhuman' "$out"
+
 # ---------- init_live_state ----------
 d=$(tmpdir)
 mkdir -p "$d/.workflow"
