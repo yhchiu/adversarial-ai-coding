@@ -108,7 +108,7 @@ ENGINE_A=codex ENGINE_B=claude ./auto-workflow.sh task.md
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
-| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試(能解析 `resets HH:MMam` 就精準等到重置時刻 +2 分緩衝,否則指數退避);`0` = 直接失敗 |
+| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三引擎通用。能解析等待時間就精準等(claude 的 `resets HH:MMam` +2 分緩衝;OpenAI 的 `try again in 20s/2 minutes` +30 秒緩衝),否則指數退避;`0` = 直接失敗 |
 | `RETRY_MAX` | `6` | 每次引擎呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒);解析出的重置時刻若超過 6 小時視為異常、改走指數退避 |

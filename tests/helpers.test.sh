@@ -187,6 +187,14 @@ assert_rc "限額偵測:claude 429 JSON(run5 實樣)" 0 $?
 printf 'HTTP 429 Too Many Requests\n' > "$d/tmr.txt"
 ( cd "$d" && source "$SCRIPT" && is_rate_limited tmr.txt ) >/dev/null 2>&1
 assert_rc "限額偵測:Too Many Requests" 0 $?
+cat > "$d/codex429.txt" <<'EOF'
+ERROR: {"type":"error","status":429,"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-5.5. Please try again in 90s."}}
+EOF
+( cd "$d" && source "$SCRIPT" && is_rate_limited codex429.txt ) >/dev/null 2>&1
+assert_rc "限額偵測:codex/OpenAI 429 JSON" 0 $?
+printf "You've reached your usage limit.\n" > "$d/reached.txt"
+( cd "$d" && source "$SCRIPT" && is_rate_limited reached.txt ) >/dev/null 2>&1
+assert_rc "限額偵測:reached your usage limit(OpenAI 措辭)" 0 $?
 printf 'strutil_test.go:47:14: undefined: IsPalindrome\n' > "$d/plain.txt"
 ( cd "$d" && source "$SCRIPT" && is_rate_limited plain.txt ) >/dev/null 2>&1
 assert_nonzero "限額偵測:一般錯誤不誤判" $?
@@ -210,6 +218,18 @@ else bad "reset 解析:已過時刻(得到 [$w],預期空)"; fi
 printf 'no reset info here\n' > "$d/none.txt"
 w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait none.txt "$now" )
 assert_eq "reset 解析:無資訊 → 空(走指數退避)" "" "$w"
+
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait codex429.txt "$now" )
+assert_eq "reset 解析:try again in 90s → 120(含 30s 緩衝)" "120" "$w"
+printf 'Rate limit reached. Please try again in 2 minutes.\n' > "$d/mins.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait mins.txt "$now" )
+assert_eq "reset 解析:try again in 2 minutes → 150" "150" "$w"
+printf 'usage cap, try again in 3 hours\n' > "$d/hrs.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait hrs.txt "$now" )
+assert_eq "reset 解析:try again in 3 hours → 10830" "10830" "$w"
+printf 'try again in 12 hours\n' > "$d/toolong.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait toolong.txt "$now" )
+assert_eq "reset 解析:try again 超過 6 小時 → 空(異常防護)" "" "$w"
 
 # ---------- engine_call(stub 引擎,RETRY_BASE_WAIT=1 快速跑) ----------
 d=$(tmpdir)

@@ -104,20 +104,44 @@ verdict_approved() {  # $1: verdict.json 路徑;0 = 審查通過
 
 is_rate_limited() {  # $1: 引擎輸出檔;0 = 屬於用量限額/429 類可等待重試的錯誤
   [[ -f "$1" ]] || return 1
-  grep -qiE '"api_error_status": *429|hit your (session|usage|weekly) limit|rate.?limit|too many requests|status.?429' "$1"
+  grep -qiE '"api_error_status": *429|(hit|reached) your (session|usage|weekly|rate) limit|rate.?limit|too many requests|status.?429' "$1"
 }
 
 parse_reset_wait() {  # $1: 輸出檔  $2: now epoch(測試注入用);輸出等待秒數,解析失敗輸出空
-  local f="$1" now="${2:-$(date +%s)}" t target wait
+  local f="$1" now="${2:-$(date +%s)}" t target wait m num unit
   [[ -f "$f" ]] || return 0
+
+  # 格式一(claude):「resets 10:50am」→ 等到重置時刻 + 120 秒緩衝
   t=$(grep -oiE 'resets +[0-9]{1,2}:[0-9]{2} ?[ap]m' "$f" | head -1 | sed -E 's/^[Rr]esets +//; s/ //g' || true)
-  [[ -z "$t" ]] && return 0
-  target=$(LC_ALL=C date -d "$t" +%s 2>/dev/null || true)
-  [[ -z "$target" ]] && return 0
-  (( target <= now )) && target=$(( target + 86400 ))
-  wait=$(( target - now + 120 ))       # 加 120 秒緩衝,避免壓線重試又撞牆
-  (( wait > 21600 )) && return 0       # 超過 6 小時視為解析異常,改走指數退避
-  echo "$wait"
+  if [[ -n "$t" ]]; then
+    target=$(LC_ALL=C date -d "$t" +%s 2>/dev/null || true)
+    if [[ -n "$target" ]]; then
+      (( target <= now )) && target=$(( target + 86400 ))
+      wait=$(( target - now + 120 ))
+      (( wait > 21600 )) && return 0   # 超過 6 小時視為解析異常,改走指數退避
+      echo "$wait"
+      return 0
+    fi
+  fi
+
+  # 格式二(OpenAI/codex):「try again in 20s / 2 minutes / 3 hours」→ 等待該時長 + 30 秒緩衝
+  m=$(grep -oiE 'try again in [0-9]+(\.[0-9]+)? ?(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b' "$f" | head -1 || true)
+  if [[ -n "$m" ]]; then
+    num=$(grep -oE '[0-9]+' <<<"$m" | head -1)
+    unit=$(grep -oiE '(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)$' <<<"$m")
+    case "${unit,,}" in
+      ms|millisecond*) wait=1 ;;
+      s|sec*|second*)  wait=$num ;;
+      m|min*|minute*)  wait=$(( num * 60 )) ;;
+      h|hr*|hour*)     wait=$(( num * 3600 )) ;;
+      *) return 0 ;;
+    esac
+    wait=$(( wait + 30 ))
+    (( wait > 21600 )) && return 0
+    echo "$wait"
+    return 0
+  fi
+  return 0
 }
 
 detect_gate() {  # 依專案類型偵測完整品質關卡(build+lint+test);偵測不到輸出空字串
