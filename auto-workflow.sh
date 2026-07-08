@@ -223,6 +223,31 @@ archive_task() {  # $1: arg  $2: kind  $3: source path  $4: resolved text
   write_meta "$task_art" "workflow" "workflow" "" "" "startup" "0"
 }
 
+archive_git_state() {  # $1: role  $2: engine  $3: artifact slug
+  local role="${1:-worker}" engine="${2:-workflow}" slug="${3:-git-state}" status_art diff_art f model model_args
+  [[ -n "$WF_RUN" ]] || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  status_art=$(art_path "${slug}-git-status.txt")
+  git status --porcelain > "$status_art"
+  model=$(engine_model "$engine")
+  model_args=$(resolve_model_args "$engine")
+  write_meta "$status_art" "$role" "$engine" "$model" "$model_args" "$CUR_STAGE" "$CUR_ROUND"
+
+  diff_art=$(art_path "${slug}-git-diff.patch")
+  {
+    echo "# git diff --binary HEAD --"
+    git diff --binary HEAD -- || true
+    echo
+    echo "# untracked files"
+    while IFS= read -r -d '' f; do
+      echo
+      echo "## $f"
+      git diff --no-index --binary -- /dev/null "$f" || true
+    done < <(git ls-files --others --exclude-standard -z)
+  } > "$diff_art"
+  write_meta "$diff_art" "$role" "$engine" "$model" "$model_args" "$CUR_STAGE" "$CUR_ROUND"
+}
+
 abs_path() {
   if command -v realpath >/dev/null 2>&1; then
     realpath "$1"
@@ -518,6 +543,7 @@ work() {  # $1: 引擎  $2: 工作指示
   engine_call "worker" "$1" "$slug" "w_$1" "$2" > >(tee -a "$LOG" | tee "$output_art")
   write_meta "$output_art" "worker" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  archive_git_state "worker" "$1" "$slug"
   metric worker "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
   # 每次工作者動作後硬性檢查受保護測試檔;旗標防止回復動作本身造成遞迴
   if (( ! CHECKING_PROTECTED )); then

@@ -162,6 +162,18 @@ d=$(tmpdir)
 grep -q 'kind: literal' "$d/.workflow/runs/test/001-task-source.md" \
   && ok "archive_task:保存 literal task source" || bad "archive_task:保存 literal task source"
 
+d=$(new_repo)
+( cd "$d" && mkdir -p .workflow && echo '*' > .workflow/.gitignore && git add .workflow/.gitignore && git commit -qm workflow-ignore )
+printf 'changed\n' > "$d/base.txt"
+printf 'new content\n' > "$d/new.txt"
+before=$( cd "$d" && git status --porcelain )
+( cd "$d" && source "$SCRIPT" && WF_RUN=.workflow/runs/test && mkdir -p "$WF_RUN" && ART_SEQ=0 \
+    && CUR_STAGE=code && CUR_ROUND=2 && archive_git_state worker claude worker-code-r2 )
+after=$( cd "$d" && git status --porcelain )
+assert_eq "archive_git_state:不留下 index/status 副作用" "$before" "$after"
+grep -q 'new content' "$d/.workflow/runs/test/002-worker-code-r2-git-diff.patch" \
+  && ok "archive_git_state:保存 untracked 檔內容" || bad "archive_git_state:保存 untracked 檔內容"
+
 # ---------- compose_review_prompt ----------
 d=$(tmpdir)
 out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt claude scope )
