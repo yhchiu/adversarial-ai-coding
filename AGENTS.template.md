@@ -4,6 +4,12 @@
 This project is developed with auto-workflow: one AI works, another AI reviews.
 All AI participants must follow these rules.
 
+## Tool discipline
+
+- Prefer your built-in file read/search tools over shell commands such as
+  `cat`, `ls`, or `cd`-prefixed pipelines. Shell commands are restricted by an
+  allowlist; a blocked command wastes a turn and burns tokens.
+
 ## Review and replies (.workflow/review.md)
 
 - Reviewer: list findings one by one. For each finding, name the file and describe
