@@ -30,7 +30,7 @@
 #   DUAL_SPEC    1=run dual independent spec candidates before selecting final spec (default: 0)
 #   OPEN_PR      1=push and create a GitHub PR at the end (default: 0, print commands only)
 #   NOTIFY_CMD   Notification command. The message is passed as the first argument.
-#   AGENTS_TEMPLATE  Path to AGENTS.md template (default: AGENTS.template.md beside this script)
+#   AGENTS_TEMPLATE  Path to AGENTS.md template (default: resources/AGENTS.template.md beside this script)
 #   RETRY_ON_LIMIT   1=wait and retry on quota/rate-limit errors (default: 1; 0=fail fast)
 #   RETRY_MAX        Maximum rate-limit retries per engine call (default: 6)
 #   RETRY_BASE_WAIT  Initial fallback wait in seconds when reset time cannot be parsed (default: 300)
@@ -639,15 +639,15 @@ dual_spec_preflight() {
 }
 
 # ---------- AGENTS.md shared cross-review rules ----------
-# Keep the rules in AGENTS.template.md for easier maintenance.
+# Keep the rules in resources/AGENTS.template.md for easier maintenance.
 # Simple English works best across all supported models.
 AGENTS_MARKER='<!-- adversarial-ai-coding:begin -->'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$SCRIPT_DIR/AGENTS.template.md}"
+AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$SCRIPT_DIR/resources/AGENTS.template.md}"
 
 write_agents_section() {  # Print the rule template; return 1 when the template is missing.
   if [[ ! -f "$AGENTS_TEMPLATE" ]]; then
-    echo "(AGENTS.md template not found:$AGENTS_TEMPLATE; put AGENTS.template.md next to the script or set AGENTS_TEMPLATE)" >&2
+    echo "(AGENTS.md template not found:$AGENTS_TEMPLATE; keep resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)" >&2
     return 1
   fi
   cat "$AGENTS_TEMPLATE"

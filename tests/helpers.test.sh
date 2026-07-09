@@ -460,6 +460,10 @@ printf 'old output\n' > "$d/.workflow/last-engine-output.txt"
   && ok "init_live_state:clears self-healing live files" || bad "init_live_state:clears self-healing live files"
 
 # ---------- bootstrap_agents_md ----------
+expected_agents_template="$(cd "$(dirname "$SCRIPT")" && pwd)/resources/AGENTS.template.md"
+out=$( cd "$(dirname "$SCRIPT")" && source "$SCRIPT" && printf '%s' "$AGENTS_TEMPLATE" )
+assert_eq "bootstrap:default template lives under resources" "$expected_agents_template" "$out"
+
 d=$(tmpdir)
 ( cd "$d" && source "$SCRIPT" && bootstrap_agents_md ) >/dev/null
 [[ -f "$d/AGENTS.md" && -f "$d/CLAUDE.md" ]] && ok "bootstrap:creates AGENTS.md and CLAUDE.md" \
