@@ -1,0 +1,1 @@
+{{SPEC_FILE}}: one-shot review of Candidate {{CANDIDATE}} for requirement completeness, testable acceptance criteria, missing edge cases, unreasonable assumptions, and useful ideas absent from Candidate {{OTHER_CANDIDATE}}.

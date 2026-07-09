@@ -1,0 +1,1 @@
+{{DESCRIPTION}} is complete and approved. Commit all current changes using the AGENTS.md commit rules: Conventional Commit format, simple English subject, detailed body describing the completed work, and no Co-Authored-By trailer.

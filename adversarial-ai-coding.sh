@@ -31,6 +31,7 @@
 #   OPEN_PR      1=push and create a GitHub PR at the end (default: 0, print commands only)
 #   NOTIFY_CMD   Notification command. The message is passed as the first argument.
 #   AGENTS_TEMPLATE  Path to AGENTS.md template (default: resources/AGENTS.template.md beside this script)
+#   PROMPTS_DIR  Directory for workflow prompt templates (default: resources/prompts beside this script)
 #   RETRY_ON_LIMIT   1=wait and retry on quota/rate-limit errors (default: 1; 0=fail fast)
 #   RETRY_MAX        Maximum rate-limit retries per engine call (default: 6)
 #   RETRY_BASE_WAIT  Initial fallback wait in seconds when reset time cannot be parsed (default: 300)
@@ -258,6 +259,32 @@ archive_text() {  # $1: archive name  $2: text  $3: role  $4: engine  $5: stage 
 
 prompt_file_instruction() {  # $1: prompt artifact path; output the short prompt sent to CLIs.
   printf 'Read the full workflow prompt from this repository file and follow it exactly: %s\n' "$1"
+}
+
+prompt_template_path() {  # $1: prompt template name without .md
+  printf '%s/%s.md\n' "$PROMPTS_DIR" "$1"
+}
+
+read_prompt_template() {  # $1: prompt template name without .md
+  local path
+  path=$(prompt_template_path "$1")
+  if [[ ! -f "$path" ]]; then
+    echo "(workflow prompt template not found:$path; keep resources/prompts with the script or set PROMPTS_DIR)" >&2
+    return 1
+  fi
+  cat "$path"
+}
+
+render_prompt() {  # $1: prompt template name; rest: KEY=value placeholder replacements.
+  local name="$1" text pair key value
+  shift
+  text=$(read_prompt_template "$name") || return 1
+  for pair in "$@"; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    text="${text//"{{${key}}}"/$value}"
+  done
+  printf '%s\n' "$text"
 }
 
 archive_task() {  # $1: arg  $2: kind  $3: source path  $4: resolved text
@@ -543,11 +570,13 @@ collect_review_suggestions_enabled() {
 
 dual_spec_final_review_scope() {  # $1: canonical decision, optional
   local decision="${1:-}"
-  local scope="$SPEC_DIR/spec.md after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions."
+  local merge_instruction=""
   if [[ "$decision" == merge-* ]]; then
-    scope="$scope Also compare $SPEC_DIR/spec.md with $WF/spec-merge-request.md and block approval if any requested adoption item is missing, distorted, or contradicted."
+    merge_instruction=" Also compare $SPEC_DIR/spec.md with $WF/spec-merge-request.md and block approval if any requested adoption item is missing, distorted, or contradicted."
   fi
-  echo "$scope"
+  render_prompt review-scope-dual-final \
+    "SPEC_FILE=$SPEC_DIR/spec.md" \
+    "MERGE_INSTRUCTION=$merge_instruction"
 }
 
 write_spec_merge_request_template() {  # $1: base slot  $2: other slot
@@ -594,7 +623,7 @@ merge_request_has_content() {
 }
 
 apply_dual_spec_decision() {  # $1: canonical decision  $2: task text
-  local decision="$1" task="$2" owner_slot other_slot base_file other_file
+  local decision="$1" task="$2" owner_slot other_slot base_file other_file prompt
   owner_slot=$(dual_spec_owner_slot "$decision")
   set_spec_roles_from_slot "$owner_slot"
   other_slot="$SPEC_REVIEWER_SLOT"
@@ -608,13 +637,13 @@ apply_dual_spec_decision() {  # $1: canonical decision  $2: task text
       ;;
     merge-a|merge-b)
       cp "$base_file" "$SPEC_DIR/spec.md"
-      work "$SPEC_OWNER_ENGINE" "Human selected $base_file as the base spec and requested explicit adoption from $other_file.
-
-Read $WF/spec-merge-request.md and update the final spec at $SPEC_DIR/spec.md.
-The final spec must clearly incorporate the requested adopted items, while preserving the selected base owner's intent unless the merge request says otherwise.
-Do not start implementation planning or code changes.
-
-Original request:$task"
+      prompt=$(render_prompt dual-spec-merge-final \
+        "BASE_FILE=$base_file" \
+        "OTHER_FILE=$other_file" \
+        "MERGE_REQUEST_FILE=$WF/spec-merge-request.md" \
+        "SPEC_FILE=$SPEC_DIR/spec.md" \
+        "TASK=$task")
+      work "$SPEC_OWNER_ENGINE" "$prompt"
       ;;
     *)
       echo "Unsupported dual spec decision:$decision" >&2
@@ -643,7 +672,9 @@ dual_spec_preflight() {
 # Simple English works best across all supported models.
 AGENTS_MARKER='<!-- adversarial-ai-coding:begin -->'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$SCRIPT_DIR/resources/AGENTS.template.md}"
+RESOURCES_DIR="${RESOURCES_DIR:-$SCRIPT_DIR/resources}"
+PROMPTS_DIR="${PROMPTS_DIR:-$RESOURCES_DIR/prompts}"
+AGENTS_TEMPLATE="${AGENTS_TEMPLATE:-$RESOURCES_DIR/AGENTS.template.md}"
 
 write_agents_section() {  # Print the rule template; return 1 when the template is missing.
   if [[ ! -f "$AGENTS_TEMPLATE" ]]; then
@@ -821,7 +852,7 @@ work() {  # $1: engine  $2: work instruction
 CHECKING_PROTECTED=0
 
 check_protected() {  # $1: worker engine; force recovery when protected files are modified.
-  local base viol n=0
+  local base viol n=0 prompt
   [[ -f "$WF/protected-tests.txt" && -f "$WF/protected-base.sha" ]] || return 0
   log_section "protected check" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   base=$(cat "$WF/protected-base.sha")
@@ -834,9 +865,11 @@ check_protected() {  # $1: worker engine; force recovery when protected files ar
     fi
     n=$(( n + 1 ))
     CHECKING_PROTECTED=1
-    work "$1" "You modified protected acceptance test files, which the workflow rules forbid:
-$viol
-Restore these files exactly to commit $base, for example with git checkout $base -- <file>, and commit that restoration. If you believe a test is wrong, record the objection in the Assumptions and Open Questions section of $SPEC_DIR/spec.md, but do not modify the test file."
+    prompt=$(render_prompt protected-tests-modified \
+      "VIOLATIONS=$viol" \
+      "BASE=$base" \
+      "SPEC_FILE=$SPEC_DIR/spec.md")
+    work "$1" "$prompt"
     CHECKING_PROTECTED=0
   done
 }
@@ -846,21 +879,11 @@ Restore these files exactly to commit $base, for example with git checkout $base
 VERDICT_SCHEMA='{"type":"object","properties":{"approved":{"type":"boolean"},"blockers":{"type":"array","items":{"type":"string"}},"suggestions":{"type":"array","items":{"type":"string"}}},"required":["approved","blockers","suggestions"]}'
 
 review_prompt() {  # $1: review scope for this round
-  cat <<EOF
-You are a strict code reviewer. Review scope for this round:$1
-
-Follow the adversarial-ai-coding cross-review rules in AGENTS.md. Key rules:
-- Use your built-in file read/search tools instead of shell cat/ls/cd commands. Shell commands are allowlisted; a blocked command wastes a turn.
-- Review and verify only. You may run tests, but do not modify any files except $WF/review.md and $WF/verdict.json.
-- Write findings one by one to $WF/review.md, overwriting old content. If approved, write a short approval reason.
-- If review.md already contains worker replies from the previous round, verify each reply first.
-- Grade the verdict with blockers and suggestions. Blockers include correctness bugs, spec violations, weakened tests, and security problems that must be fixed.
-  Suggestions do not block approval, but list them honestly.
-EOF
+  render_prompt review "SCOPE=$1" "WF=$WF"
 }
 
 verdict_file_instr() {
-  echo "- Finally write the verdict to $WF/verdict.json. The file already exists with a default failed verdict, so overwrite it. Use one line of JSON: {\"approved\": true|false, \"blockers\": [\"must-fix issue\"], \"suggestions\": [\"non-blocking suggestion\"]}."
+  render_prompt verdict-file-instruction "WF=$WF"
 }
 
 compose_review_prompt() {  # $1: engine  $2: review scope for this round
@@ -977,7 +1000,7 @@ run_review() {  # $1: engine  $2: review scope; returns 0 when approved.
 # ---------- Deterministic quality gates ----------
 # Anything machine-verifiable is run by the script. AI claims about test status are only hints.
 gate_loop() {  # $1: worker engine  $2: gate command, empty to skip; failures are sent back to the worker.
-  local engine="$1" cmd="$2" n=1 out
+  local engine="$1" cmd="$2" n=1 out prompt
   [[ -z "$cmd" ]] && return 0
   while true; do
     log_section "quality gate" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
@@ -995,8 +1018,10 @@ gate_loop() {  # $1: worker engine  $2: gate command, empty to skip; failures ar
       exit 1
     fi
     n=$(( n + 1 ))
-    work "$engine" "The quality gate command \"$cmd\" failed. Here is the output, limited to the last 150 lines. Fix the problem until this command passes:
-$(printf '%s\n' "$out" | tail -150)"
+    prompt=$(render_prompt quality-gate-failed \
+      "COMMAND=$cmd" \
+      "OUTPUT=$(printf '%s\n' "$out" | tail -150)")
+    work "$engine" "$prompt"
   done
 }
 
@@ -1013,7 +1038,7 @@ begin_stage() {  # $1: name; worker session resumes within a stage and resets ac
 }
 
 review_loop() {  # $1: reviewer engine  $2: worker engine  $3: review scope  $4: optional gate command for repair rounds
-  local gate_cmd="${4:-}"
+  local gate_cmd="${4:-}" prompt
   CUR_ROUND=1
   until run_review "$1" "$3"; do
     if (( CUR_ROUND >= MAX_ROUNDS )); then
@@ -1023,7 +1048,10 @@ review_loop() {  # $1: reviewer engine  $2: worker engine  $3: review scope  $4:
     fi
     CUR_ROUND=$(( CUR_ROUND + 1 ))
     echo "--- [$CUR_STAGE] round $CUR_ROUND: worker updates from review findings ---" | tee -a "$LOG"
-    work "$2" "Review findings are in $WF/review.md. Follow the AGENTS.md cross-review rules and reply under each finding. If you agree, fix it and write \"Fixed: <summary>\" under that item. If you disagree, write \"Disagree: <reason>\". Do not ignore findings silently. Only handle issues from the review, and stay within this stage (${CUR_STAGE}): spec stage only edits the spec, plan stage only edits the plan, and no implementation starts early. If this stage changes code, make sure tests pass after the change."
+    prompt=$(render_prompt review-findings-repair \
+      "REVIEW_FILE=$WF/review.md" \
+      "STAGE=$CUR_STAGE")
+    work "$2" "$prompt"
     archive_snapshot "$WF/review.md" "review-$(safe_slug "$CUR_STAGE")-r${CUR_ROUND}-worker.md" "worker" "$2" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
     gate_loop "$2" "$gate_cmd"   # Repairs must pass the deterministic gate before review resumes.
   done
@@ -1031,8 +1059,10 @@ review_loop() {  # $1: reviewer engine  $2: worker engine  $3: review scope  $4:
 }
 
 commit_work() {  # $1: worker engine  $2: description of this commit
+  local prompt
   log_section "commit" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND"
-  work "$1" "$2 is complete and approved. Commit all current changes using the AGENTS.md commit rules: Conventional Commit format, simple English subject, detailed body describing the completed work, and no Co-Authored-By trailer."
+  prompt=$(render_prompt commit-approved-work "DESCRIPTION=$2")
+  work "$1" "$prompt"
   ensure_committed
 }
 
@@ -1186,38 +1216,54 @@ human_gate_dual_spec_decision() {
 }
 
 run_dual_spec_spec_stage() {  # $1: task text
-  local task="$1" decision
+  local task="$1" decision prompt scope
   mkdir -p "$SPEC_DIR"
 
   begin_stage "write-spec-a"
-  work "$ENGINE_A" "Write an independent candidate spec for the following request and save it to $SPEC_DIR/spec-a.md.
-Do not read $SPEC_DIR/spec-b.md, dual spec review files, or comparison files. This candidate must be your own independent interpretation.
-The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section.
-In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing.
-Request:$task"
+  prompt=$(render_prompt dual-spec-write-candidate \
+    "SPEC_FILE=$SPEC_DIR/spec-a.md" \
+    "OTHER_SPEC_FILE=$SPEC_DIR/spec-b.md" \
+    "TASK=$task")
+  work "$ENGINE_A" "$prompt"
 
   begin_stage "write-spec-b"
-  work "$ENGINE_B" "Write an independent candidate spec for the following request and save it to $SPEC_DIR/spec-b.md.
-Do not read $SPEC_DIR/spec-a.md, dual spec review files, or comparison files. This candidate must be your own independent interpretation.
-The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section.
-In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing.
-Request:$task"
+  prompt=$(render_prompt dual-spec-write-candidate \
+    "SPEC_FILE=$SPEC_DIR/spec-b.md" \
+    "OTHER_SPEC_FILE=$SPEC_DIR/spec-a.md" \
+    "TASK=$task")
+  work "$ENGINE_B" "$prompt"
 
   begin_stage "review-spec-a"
-  run_candidate_spec_review "$ENGINE_B" "$SPEC_DIR/spec-a.md: one-shot review of Candidate A for requirement completeness, testable acceptance criteria, missing edge cases, unreasonable assumptions, and useful ideas absent from Candidate B." "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"
+  scope=$(render_prompt review-scope-candidate-spec \
+    "SPEC_FILE=$SPEC_DIR/spec-a.md" \
+    "CANDIDATE=A" \
+    "OTHER_CANDIDATE=B")
+  run_candidate_spec_review "$ENGINE_B" "$scope" "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"
 
   begin_stage "review-spec-b"
-  run_candidate_spec_review "$ENGINE_A" "$SPEC_DIR/spec-b.md: one-shot review of Candidate B for requirement completeness, testable acceptance criteria, missing edge cases, unreasonable assumptions, and useful ideas absent from Candidate A." "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"
+  scope=$(render_prompt review-scope-candidate-spec \
+    "SPEC_FILE=$SPEC_DIR/spec-b.md" \
+    "CANDIDATE=B" \
+    "OTHER_CANDIDATE=A")
+  run_candidate_spec_review "$ENGINE_A" "$scope" "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"
 
   begin_stage "compare-specs-a"
-  work "$ENGINE_A" "Compare the dual spec candidates and write a concise markdown comparison table to $SPEC_DIR/spec-comparison-a.md.
-Read $SPEC_DIR/spec-a.md, $SPEC_DIR/spec-b.md, $SPEC_DIR/spec-a.review-by-b.md, and $SPEC_DIR/spec-b.review-by-a.md.
-Cover: strengths, weaknesses, missing requirements, stronger acceptance criteria, edge cases, assumptions, and recommended owner. Do not modify any spec files."
+  prompt=$(render_prompt dual-spec-compare \
+    "OUTPUT_FILE=$SPEC_DIR/spec-comparison-a.md" \
+    "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
+    "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
+    "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
+    "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
+  work "$ENGINE_A" "$prompt"
 
   begin_stage "compare-specs-b"
-  work "$ENGINE_B" "Compare the dual spec candidates and write a concise markdown comparison table to $SPEC_DIR/spec-comparison-b.md.
-Read $SPEC_DIR/spec-a.md, $SPEC_DIR/spec-b.md, $SPEC_DIR/spec-a.review-by-b.md, and $SPEC_DIR/spec-b.review-by-a.md.
-Cover: strengths, weaknesses, missing requirements, stronger acceptance criteria, edge cases, assumptions, and recommended owner. Do not modify any spec files."
+  prompt=$(render_prompt dual-spec-compare \
+    "OUTPUT_FILE=$SPEC_DIR/spec-comparison-b.md" \
+    "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
+    "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
+    "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
+    "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
+  work "$ENGINE_B" "$prompt"
   write_spec_comparison_index
 
   begin_stage "select-spec"
@@ -1291,7 +1337,7 @@ setup_workspace() {  # Prepare an isolated workspace according to USE_WORKTREE /
 # ---------- Main flow ----------
 main() {
   local task="${1:-}"
-  local task_arg task_source_kind task_source_path="" task_resolved_text
+  local task_arg task_source_kind task_source_path="" task_resolved_text prompt scope
   [[ -n "$task" ]] || usage
 
   if [[ "$task" == "print-agents" ]]; then
@@ -1349,15 +1395,25 @@ main() {
   else
     set_spec_roles_from_slot A
     begin_stage "write-spec"
-    work "$SPEC_OWNER_ENGINE" "Write a spec for the following request and save it to $SPEC_DIR/spec.md. The spec must include: feature description, testable acceptance criteria, edge cases, out-of-scope items, and an Assumptions and Open Questions section. In non-interactive mode you cannot ask a human questions, so list every assumption honestly in that section instead of silently guessing. Request:$task"
-    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$SPEC_DIR/spec.md: review requirement completeness, whether acceptance criteria are testable, and whether edge cases are missing. Review the Assumptions and Open Questions section item by item. Treat unreasonable assumptions or missing assumptions as blockers."
+    prompt=$(render_prompt write-spec \
+      "SPEC_FILE=$SPEC_DIR/spec.md" \
+      "TASK=$task")
+    work "$SPEC_OWNER_ENGINE" "$prompt"
+    scope=$(render_prompt review-scope-spec "SPEC_FILE=$SPEC_DIR/spec.md")
+    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
     human_gate_spec
   fi
   commit_work "$SPEC_OWNER_ENGINE" "Spec, approved by review and human gate"
 
   begin_stage "write-implementation-plan"
-  work "$SPEC_OWNER_ENGINE" "Write an implementation plan from $SPEC_DIR/spec.md and save it to $SPEC_DIR/plan.md. Include an implementation task list, one task per line, using the \"- [ ] \" checkbox format. Each task must be independently implementable and verifiable, and each task maps to one commit. Include a test strategy that decides whether unit, integration, or E2E tests are needed, with reasons."
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$SPEC_DIR/plan.md compared with $SPEC_DIR/spec.md: feasibility, test coverage, whether tasks are small and independent, and whether checkbox format is correct."
+  prompt=$(render_prompt write-implementation-plan \
+    "SPEC_FILE=$SPEC_DIR/spec.md" \
+    "PLAN_FILE=$SPEC_DIR/plan.md")
+  work "$SPEC_OWNER_ENGINE" "$prompt"
+  scope=$(render_prompt review-scope-plan \
+    "PLAN_FILE=$SPEC_DIR/plan.md" \
+    "SPEC_FILE=$SPEC_DIR/spec.md")
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
   commit_work "$SPEC_OWNER_ENGINE" "Implementation plan"
 
   # Adversarial TDD: reviewer B writes acceptance tests from the spec, worker A reviews them.
@@ -1365,8 +1421,14 @@ main() {
   begin_stage "write-acceptance-tests"
   local test_base
   test_base=$(git rev-parse HEAD)
-  work "$SPEC_REVIEWER_ENGINE" "Write acceptance tests from the acceptance criteria in $SPEC_DIR/spec.md, using the project's normal test location. The implementation does not exist yet, so tests may fail to compile or be red; this is the TDD red phase. Do not write product code and do not modify files under $SPEC_DIR."
-  review_loop "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" "Acceptance tests, using git diff from $test_base: do they fully cover every acceptance criterion in $SPEC_DIR/spec.md, are the tests correct, and did the change avoid product code?"
+  prompt=$(render_prompt write-acceptance-tests \
+    "SPEC_FILE=$SPEC_DIR/spec.md" \
+    "SPEC_DIR=$SPEC_DIR")
+  work "$SPEC_REVIEWER_ENGINE" "$prompt"
+  scope=$(render_prompt review-scope-acceptance-tests \
+    "TEST_BASE=$test_base" \
+    "SPEC_FILE=$SPEC_DIR/spec.md")
+  review_loop "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" "$scope"
   commit_work "$SPEC_REVIEWER_ENGINE" "Acceptance tests"
   git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
   git rev-parse HEAD > "$WF/protected-base.sha"
@@ -1388,8 +1450,11 @@ main() {
   fi
   for t in "${tasks[@]}"; do
     echo "--- Task $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
-    work "$SPEC_OWNER_ENGINE" "Implement this task from $SPEC_DIR/plan.md:$t
-Use TDD. Run the tests related to this task and confirm they pass. The full acceptance test suite may stay red until all tasks are complete. You may add your own unit tests, but you must not modify protected acceptance test files listed in $WF/protected-tests.txt. When done, change this task in plan.md from \"- [ ]\" to \"- [x]\"."
+    prompt=$(render_prompt implement-plan-task \
+      "PLAN_FILE=$SPEC_DIR/plan.md" \
+      "TASK=$t" \
+      "PROTECTED_TESTS_FILE=$WF/protected-tests.txt")
+    work "$SPEC_OWNER_ENGINE" "$prompt"
     gate_loop "$SPEC_OWNER_ENGINE" "$BUILD_GATE_CMD"
     commit_work "$SPEC_OWNER_ENGINE" "Task \"$t\""
     i=$(( i + 1 ))
@@ -1397,13 +1462,18 @@ Use TDD. Run the tests related to this task and confirm they pass. The full acce
 
   echo "--- All tasks complete; running full quality gate. Acceptance tests must pass. ---" | tee -a "$LOG"
   gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "Current code changes on this branch, using git diff and git log: code quality, conformance with $SPEC_DIR/spec.md, actual test execution, and protected acceptance-test integrity using $WF/protected-tests.txt. Confirm tests were not weakened or bypassed." "$GATE_CMD"
+  scope=$(render_prompt review-scope-branch \
+    "SPEC_FILE=$SPEC_DIR/spec.md" \
+    "PROTECTED_TESTS_FILE=$WF/protected-tests.txt")
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
   commit_if_dirty "$SPEC_OWNER_ENGINE" "Review fixes"
 
   begin_stage "final-review-and-fixes"
-  work "$SPEC_OWNER_ENGINE" "Do a complete self-review of all changes on this branch: 1) fix any problems you find and add missing tests; 2) if $WF/suggestions.md exists, evaluate every accumulated review suggestion, implementing accepted suggestions and writing a reason under suggestions you reject; 3) run the full test suite and confirm it passes."
+  prompt=$(render_prompt final-self-review "SUGGESTIONS_FILE=$WF/suggestions.md")
+  work "$SPEC_OWNER_ENGINE" "$prompt"
   gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "Final acceptance: compare the full branch against $SPEC_DIR/spec.md item by item, run the full tests, and confirm acceptance tests were not weakened." "$GATE_CMD"
+  scope=$(render_prompt review-scope-final-acceptance "SPEC_FILE=$SPEC_DIR/spec.md")
+  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
   commit_if_dirty "$SPEC_OWNER_ENGINE" "Final fixes"
 
   finish "$task"

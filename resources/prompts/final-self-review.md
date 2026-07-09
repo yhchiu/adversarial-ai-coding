@@ -1,0 +1,1 @@
+Do a complete self-review of all changes on this branch: 1) fix any problems you find and add missing tests; 2) if {{SUGGESTIONS_FILE}} exists, evaluate every accumulated review suggestion, implementing accepted suggestions and writing a reason under suggestions you reject; 3) run the full test suite and confirm it passes.

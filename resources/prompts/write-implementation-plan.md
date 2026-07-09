@@ -1,0 +1,1 @@
+Write an implementation plan from {{SPEC_FILE}} and save it to {{PLAN_FILE}}. Include an implementation task list, one task per line, using the "- [ ] " checkbox format. Each task must be independently implementable and verifiable, and each task maps to one commit. Include a test strategy that decides whether unit, integration, or E2E tests are needed, with reasons.

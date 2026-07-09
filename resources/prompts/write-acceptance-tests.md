@@ -1,0 +1,1 @@
+Write acceptance tests from the acceptance criteria in {{SPEC_FILE}}, using the project's normal test location. The implementation does not exist yet, so tests may fail to compile or be red; this is the TDD red phase. Do not write product code and do not modify files under {{SPEC_DIR}}.

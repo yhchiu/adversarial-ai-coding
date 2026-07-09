@@ -122,6 +122,45 @@ else
   bad "prompt_file_instruction:points engine at prompt file(got [$out])"
 fi
 
+# ---------- workflow prompt templates ----------
+expected_prompts_dir="$(cd "$(dirname "$SCRIPT")" && pwd)/resources/prompts"
+out=$( cd "$(dirname "$SCRIPT")" && source "$SCRIPT" && printf '%s' "$PROMPTS_DIR" )
+assert_eq "prompts:default directory lives under resources" "$expected_prompts_dir" "$out"
+
+d=$(tmpdir)
+mkdir -p "$d/prompts"
+cat > "$d/prompts/sample.md" <<'EOF'
+Hello {{NAME}}.
+Path: {{PATH}}
+Message:
+{{MESSAGE}}
+EOF
+message=$'line one\nline two'
+out=$(
+  cd "$d" \
+    && PROMPTS_DIR="$d/prompts" \
+    && source "$SCRIPT" \
+    && render_prompt sample "NAME=worker" "PATH=specs/run/spec.md" "MESSAGE=$message"
+)
+rc=$?
+assert_rc "prompts:render_prompt succeeds" 0 "$rc"
+assert_eq "prompts:render_prompt replaces placeholders" \
+  $'Hello worker.\nPath: specs/run/spec.md\nMessage:\nline one\nline two' "$out"
+
+d=$(tmpdir)
+err=$(
+  {
+    cd "$d" \
+      && mkdir -p prompts \
+      && PROMPTS_DIR="$d/prompts" \
+      && source "$SCRIPT" \
+      && render_prompt missing >/dev/null
+  } 2>&1
+)
+rc=$?
+assert_nonzero "prompts:missing template fails" "$rc"
+assert_like "prompts:missing template names the file" "*prompt template not found:*missing.md*" "$err"
+
 d=$(tmpdir)
 out=$(
   cd "$d" \

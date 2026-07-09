@@ -1,0 +1,1 @@
+{{SPEC_FILE}} after dual spec selection: review the final selected spec before implementation planning. Check requirement completeness, testable acceptance criteria, edge cases, out-of-scope items, and assumptions.{{MERGE_INSTRUCTION}}

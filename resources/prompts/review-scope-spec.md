@@ -1,0 +1,1 @@
+{{SPEC_FILE}}: review requirement completeness, whether acceptance criteria are testable, and whether edge cases are missing. Review the Assumptions and Open Questions section item by item. Treat unreasonable assumptions or missing assumptions as blockers.
