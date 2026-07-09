@@ -1,6 +1,9 @@
 # adversarial-ai-coding
 
 `adversarial-ai-coding` is a Bash workflow for agentic software development.
+
+## Multi-Agent Adversarial Coding Workflow
+
 One AI agent is the worker, and a second AI agent is the reviewer that reviews
 the work and writes adversarial acceptance tests.
 
@@ -8,8 +11,7 @@ The workflow is designed around spec-first development, deterministic quality
 gates, protected acceptance tests, small commits, and human review before costly
 implementation starts.
 
-The original Traditional Chinese README is available at
-[`README.zh-TW.md`](README.zh-TW.md).
+The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
 ## How It Works
 
