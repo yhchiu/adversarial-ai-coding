@@ -23,6 +23,7 @@ Final spec approval    Reviewer checks the final spec, then human approves it
 Write plan             Worker creates checkbox tasks
 Write acceptance tests Reviewer writes tests, worker reviews them
 Implement tasks        Worker completes one checkbox task per commit
+Full gate + review     Worker runs the full gate if configured, reviewer checks the branch
 Final review           Worker self-reviews, reviewer gives final approval
 Finish                 Script prints push and PR commands
 ```
@@ -38,7 +39,7 @@ failure modes are different.
 
 ```mermaid
 flowchart TD
-  subgraph S1["Stage: Write spec (A writes / B reviews)"]
+  subgraph S1["Stage: Write spec (owner writes / reviewer reviews)"]
     spec["spec.md includes Assumptions and Open Questions<br/>Headless AI cannot ask humans, so assumptions must be explicit."]
   end
 
@@ -46,33 +47,33 @@ flowchart TD
     human{"HUMAN_GATE approval<br/>Review the spec before costly implementation starts."}
   end
 
-  subgraph S3["Stage: Write implementation plan (A writes / B reviews)"]
+  subgraph S3["Stage: Write implementation plan (owner writes / reviewer reviews)"]
     plan["plan.md uses '- [ ]' checkbox tasks<br/>Each task maps to one commit."]
   end
 
-  subgraph S4["Stage: Write acceptance tests (B writes / A reviews)"]
+  subgraph S4["Stage: Write acceptance tests (reviewer writes / owner reviews)"]
     tests["Adversarial TDD separates test author from worker.<br/>Protected acceptance tests may be red at first."]
   end
 
   subgraph S5["Stage: Implement tasks"]
-    tasks["For each checkbox task:<br/>A implements -> lightweight build gate -> protected-test diff check -> commit"]
+    tasks["For each checkbox task:<br/>Owner implements -> lightweight build gate if configured -> protected-test diff check -> commit"]
   end
 
   subgraph S6["Stage: Full quality gate and branch review"]
-    fullgate["Run the full quality gate.<br/>Acceptance tests must pass."]
-    branchreview["B reviews the complete branch diff."]
+    fullgate["Run the full quality gate if configured.<br/>Acceptance tests must pass when the gate runs."]
+    branchreview["Reviewer reviews the complete branch diff."]
     fullgate --> branchreview
   end
 
   subgraph S7["Stage: Final review and fixes"]
-    final["A handles accumulated suggestions and self-review findings.<br/>Run gates, then B performs final acceptance."]
+    final["Owner handles accumulated suggestions and self-review findings.<br/>Run gates if configured, then reviewer performs final acceptance."]
   end
 
   subgraph S8["Stage: Finish"]
     finish["Print git push / gh pr create commands and run metrics.<br/>OPEN_PR=1 runs push and PR creation automatically."]
   end
 
-  spec --> human --> plan --> tests --> tasks --> fullgate --> final --> finish
+  spec --> human --> plan --> tests --> tasks --> fullgate --> branchreview --> final --> finish
 
   style S1 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
   style S2 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
@@ -198,8 +199,8 @@ Add `--json` output to the CLI.
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
-| `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`. |
-| `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. |
+| `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`, npm projects with a `test` script use `npm test`, Cargo projects use `cargo test`, and projects without a detected gate skip deterministic gates unless you set it. |
+| `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. Go projects use `go build ./...`, Cargo projects use `cargo build`, and projects without a detected build gate skip this per-task gate unless you set it. |
 | `AUTO_BRANCH` | `1` | Create an `auto/<timestamp>` branch before running. |
 | `USE_WORKTREE` | `0` | Run in a separate Git worktree. |
 | `OPEN_PR` | `0` | Push and create a GitHub PR at the end. By default, commands are only printed. |
@@ -344,8 +345,9 @@ and use `NOTIFY_CMD` or PR review for human control.
 
 ### The per-task quality gate keeps failing
 
-During task implementation, full acceptance tests may still be red. The script
-uses `BUILD_GATE_CMD` for per-task checks and `GATE_CMD` after all tasks finish.
+During task implementation, full acceptance tests may still be red. When
+configured, the script uses `BUILD_GATE_CMD` for per-task checks and `GATE_CMD`
+after all tasks finish.
 
 ### Reviewer reports corrupted files on Windows
 
