@@ -40,16 +40,33 @@
 set -Eeuo pipefail
 
 # ---------- Settings ----------
-ENGINE_A="${ENGINE_A:-claude}"
-ENGINE_B="${ENGINE_B:-codex}"
+alias_env_or_default() {  # $1: preferred public env  $2: legacy env  $3: default
+  local preferred="$1" legacy="$2" default="$3" preferred_value legacy_value
+  preferred_value="${!preferred-}"
+  legacy_value="${!legacy-}"
+  if [[ -n "$preferred_value" && -n "$legacy_value" && "$preferred_value" != "$legacy_value" ]]; then
+    echo "Conflicting $preferred and $legacy; set only one or use the same value." >&2
+    return 1
+  fi
+  if [[ -n "$preferred_value" ]]; then
+    echo "$preferred_value"
+  elif [[ -n "$legacy_value" ]]; then
+    echo "$legacy_value"
+  else
+    echo "$default"
+  fi
+}
+
+ENGINE_A="$(alias_env_or_default AGENT_A ENGINE_A claude)" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+ENGINE_B="$(alias_env_or_default AGENT_B ENGINE_B codex)" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
 MODEL_A="${MODEL_A:-}"   # Model override for the A slot; empty means use the CLI default.
 MODEL_B="${MODEL_B:-}"   # Model override for the B slot.
 # Extra args for each CLI, split on whitespace. Example: CODEX_ARGS='-c model_reasoning_effort=low'
 CLAUDE_ARGS="${CLAUDE_ARGS:-}"
 CODEX_ARGS="${CODEX_ARGS:-}"
 AGY_ARGS="${AGY_ARGS:-}"
-ENGINE_A_ARGS="${ENGINE_A_ARGS:-}"
-ENGINE_B_ARGS="${ENGINE_B_ARGS:-}"
+ENGINE_A_ARGS="$(alias_env_or_default AGENT_A_ARGS ENGINE_A_ARGS "")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+ENGINE_B_ARGS="$(alias_env_or_default AGENT_B_ARGS ENGINE_B_ARGS "")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
 USE_WORKTREE="${USE_WORKTREE:-0}"

@@ -62,6 +62,15 @@ assert_eq "detect_gate:unknown project -> empty" "" "$out"
 
 # ---------- engine_model ----------
 d=$(tmpdir)
+out=$( cd "$d" && AGENT_A=codex AGENT_B=claude source "$SCRIPT" && engine_for_slot A )
+assert_eq "agent aliases:AGENT_A configures slot A" "codex" "$out"
+out=$( cd "$d" && AGENT_A=custom-agent AGENT_B=codex AGENT_A_ARGS='--model custom --flag' \
+      && source "$SCRIPT" && resolve_model_args custom-agent )
+assert_eq "agent aliases:custom agent uses AGENT_A_ARGS" "--model custom --flag" "$out"
+out=$( cd "$d" && rc=0; AGENT_A=claude ENGINE_A=codex source "$SCRIPT" >/dev/null 2>&1 || rc=$?; printf '%s' "$rc" )
+assert_eq "agent aliases:conflicting AGENT_A and ENGINE_A fail fast" "1" "$out"
+
+d=$(tmpdir)
 out=$( cd "$d" && ENGINE_A=claude ENGINE_B=codex MODEL_A=haiku MODEL_B=mini \
       && source "$SCRIPT" && engine_model claude )
 assert_eq "engine_model:A slot uses MODEL_A" "haiku" "$out"
