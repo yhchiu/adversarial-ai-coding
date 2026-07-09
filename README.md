@@ -193,9 +193,22 @@ the repository as needed, and exit non-zero on execution failure. A custom
 reviewer must write `.workflow/review.md` and `.workflow/verdict.json`; stdout
 JSON verdicts are not parsed. Custom engines do not get automatic session
 resume, and `MODEL_A` / `MODEL_B` are not translated into model flags for them.
-Put model flags in `ENGINE_A_ARGS` / `ENGINE_B_ARGS`, or use a wrapper script
-for CLIs that need stdin, prompt files, quoting-sensitive arguments, or session
-state.
+Put model flags in `ENGINE_A_ARGS` / `ENGINE_B_ARGS`.
+
+If a custom CLI needs session continuity, handle it in a wrapper script. For
+example, give the worker and reviewer separate profiles, session ids, or cache
+directories:
+
+```bash
+# my-agent-worker
+exec my-agent --session aac-worker "$@"
+
+# my-agent-reviewer
+exec my-agent --session aac-reviewer "$@"
+```
+
+Wrappers are also the right place for CLIs that need stdin, prompt files,
+quoting-sensitive arguments, or other stateful setup.
 
 ## Writing Good Tasks
 
