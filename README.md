@@ -101,30 +101,32 @@ flowchart TD
 
 ## Quick Start
 
-Copy the script and agent rules into the project you want to work on:
+Run the installed script from the root of the project you want to work on. Keep
+the `resources/` directory beside the script in the `adversarial-ai-coding`
+checkout; the target project does not need a copied script or template.
 
 ```bash
-cp adversarial-ai-coding.sh AGENTS.template.md /path/to/your-project/
 cd /path/to/your-project
+AAC=/path/to/adversarial-ai-coding/adversarial-ai-coding.sh
 ```
 
 Run a task with the default engines, where Claude is the worker and Codex is the
 reviewer:
 
 ```bash
-./adversarial-ai-coding.sh "Add --json output to the CLI"
+bash "$AAC" "Add --json output to the CLI"
 ```
 
 You can also write the task in a file:
 
 ```bash
-./adversarial-ai-coding.sh task.md
+bash "$AAC" task.md
 ```
 
 Swap the worker and reviewer engines:
 
 ```bash
-ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
+ENGINE_A=codex ENGINE_B=claude bash "$AAC" task.md
 ```
 
 Use custom agent or wrapper commands:
@@ -132,19 +134,19 @@ Use custom agent or wrapper commands:
 ```bash
 ENGINE_A=gemini ENGINE_A_ARGS='--model gemini-2.5-pro --yolo' \
 ENGINE_B=my-review-wrapper ENGINE_B_ARGS='--strict' \
-  ./adversarial-ai-coding.sh task.md
+  bash "$AAC" task.md
 ```
 
 Enable dual spec mode:
 
 ```bash
-DUAL_SPEC=1 ./adversarial-ai-coding.sh task.md
+DUAL_SPEC=1 bash "$AAC" task.md
 ```
 
 Print the agent rules template for manual merging into an existing `AGENTS.md`:
 
 ```bash
-./adversarial-ai-coding.sh print-agents
+bash "$AAC" print-agents
 ```
 
 ## Dual Spec Mode
@@ -255,7 +257,8 @@ Add `--json` output to the CLI.
 | `RETRY_MAX` | `6` | Maximum rate-limit retries per engine call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
-| `AGENTS_TEMPLATE` | script directory | Path to the `AGENTS.md` template. |
+| `AGENTS_TEMPLATE` | `resources/AGENTS.template.md` beside the script | Path to the `AGENTS.md` template. |
+| `PROMPTS_DIR` | `resources/prompts` beside the script | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
 | `RUNS_DIR` | `.workflow/runs` | Directory for archived workflow run artifacts. |
 | `TOOLS` | git/go build/test/vet allowlist | Claude Code `--allowedTools` value. |
@@ -264,7 +267,7 @@ On Windows, if you want Go race tests in the gate, use:
 
 ```bash
 GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...' \
-  ./adversarial-ai-coding.sh task.md
+  bash "$AAC" task.md
 ```
 
 ## Artifacts
@@ -273,8 +276,14 @@ The script writes live workflow state under `.workflow/` and archives each run
 under `.workflow/runs/<RUN_ID>/` by default.
 
 ```text
+adversarial-ai-coding/
+|-- adversarial-ai-coding.sh
+`-- resources/
+    |-- AGENTS.template.md
+    `-- prompts/
+        `-- *.md
+
 your-project/
-|-- AGENTS.template.md
 |-- AGENTS.md
 |-- CLAUDE.md
 |-- specs/<RUN_ID>/
@@ -310,7 +319,6 @@ your-project/
 |       |-- NNN-*-git-diff.patch
 |       |-- metrics.csv
 |       `-- logs/001-run.log
-`-- adversarial-ai-coding.sh
 ```
 
 Each archived artifact has a `.meta.json` sidecar with generator, engine, model,
@@ -401,7 +409,7 @@ after all tasks finish.
 
 Some AI tools may misdecode non-ASCII UTF-8 content on Windows. Keep generated
 specs, plans, and test data ASCII when possible. Represent non-ASCII source
-test data with Unicode escapes, as described in `AGENTS.template.md`.
+test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
 
 ### Rate limit or quota errors
 

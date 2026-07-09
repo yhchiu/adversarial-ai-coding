@@ -59,23 +59,24 @@ done
 ## 快速開始
 
 ```bash
-# script 與 AGENTS.md 範本要一起帶走(bootstrap 從 script 所在目錄讀範本)
-cp adversarial-ai-coding.sh AGENTS.template.md /path/to/your-project/ && cd /path/to/your-project
+# 從目標專案根目錄執行已安裝的 script;resources/ 要留在 script 旁邊
+cd /path/to/your-project
+AAC=/path/to/adversarial-ai-coding/adversarial-ai-coding.sh
 
 # 預設:A = Claude Code,B = Codex
-./adversarial-ai-coding.sh "為 CLI 加上 --json 輸出選項"
+bash "$AAC" "為 CLI 加上 --json 輸出選項"
 
 # 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
-./adversarial-ai-coding.sh task.md
+bash "$AAC" task.md
 
 # 交換角色
-ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
+ENGINE_A=codex ENGINE_B=claude bash "$AAC" task.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
-DUAL_SPEC=1 ./adversarial-ai-coding.sh task.md
+DUAL_SPEC=1 bash "$AAC" task.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
-./adversarial-ai-coding.sh print-agents
+bash "$AAC" print-agents
 ```
 
 ## 雙 spec 模式
@@ -141,7 +142,8 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `RETRY_MAX` | `6` | 每次引擎呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒);解析出的重置時刻若超過 6 小時視為異常、改走指數退避 |
-| `AGENTS_TEMPLATE` | script 同目錄的 `AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
+| `AGENTS_TEMPLATE` | script 旁的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
+| `PROMPTS_DIR` | script 旁的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
 | `RUNS_DIR` | `.workflow/runs` | 每次 run 的 archive 根目錄;相對路徑會在 branch/worktree 準備完成後解析 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導引擎改用內建檔案工具 |
@@ -151,8 +153,14 @@ Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && 
 ## 產物與目錄結構
 
 ```
+adversarial-ai-coding/
+├── adversarial-ai-coding.sh
+└── resources/
+    ├── AGENTS.template.md   # 互審規範範本(簡單英文撰寫,對各家模型最通用)
+    └── prompts/
+        └── *.md             # workflow prompt templates
+
 your-project/
-├── AGENTS.template.md   # 互審規範範本(獨立檔案方便維護;簡單英文撰寫,對各家模型最通用)
 ├── AGENTS.md            # 互審規範(缺檔時由範本產生;既有檔案絕不覆蓋,只提示)
 ├── CLAUDE.md            # 缺檔時補一行指向 AGENTS.md
 ├── specs/<RUN_ID>/
@@ -182,7 +190,6 @@ your-project/
 │       ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
 │       ├── metrics.csv  # stage/角色/引擎/輪次/秒數/費用/model/args/time
 │       └── logs/001-run.log (+ 001-run.log.meta.json)
-└── adversarial-ai-coding.sh
 ```
 
 Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、引擎、模型與模型參數。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude 引擎會回報(`total_cost_usd`)。
@@ -230,7 +237,7 @@ bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker/
 E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關卡,不呼叫任何 AI
 ```
 
-執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 AGENTS 範本(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,引擎與模型可用一般環境變數覆寫。
+執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,引擎與模型可用一般環境變數覆寫。
 
 **定位:改動 script 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
 
