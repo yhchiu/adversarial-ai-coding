@@ -37,6 +37,8 @@
 #   RETRY_MAX        Maximum rate-limit retries per agent call (default: 6)
 #   RETRY_BASE_WAIT  Initial fallback wait in seconds when reset time cannot be parsed (default: 300)
 #   RETRY_MAX_WAIT   Maximum fallback wait in seconds (default: 3600)
+#   RETRY_MAX_RESET_WAIT  Abort instead of waiting when a parsed reset time is
+#                    farther away than this many seconds (default: 21600)
 #   RUNS_DIR         Root archive directory for each run (default: .workflow/runs)
 set -Eeuo pipefail
 
@@ -80,6 +82,7 @@ RETRY_ON_LIMIT="${RETRY_ON_LIMIT:-1}"
 RETRY_MAX="${RETRY_MAX:-6}"
 RETRY_BASE_WAIT="${RETRY_BASE_WAIT:-300}"
 RETRY_MAX_WAIT="${RETRY_MAX_WAIT:-3600}"
+RETRY_MAX_RESET_WAIT="${RETRY_MAX_RESET_WAIT:-21600}"
 # Minimum permissions: allow git and explicit build/test commands.
 # Note that Bash(go *) includes go run, which executes arbitrary code. Do not broaden this casually.
 TOOLS="${TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}"
@@ -466,25 +469,31 @@ is_rate_limited() {  # $1: engine output file; returns 0 for quota/rate-limit er
   grep -qiE '"api_error_status": *429|(hit|reached) your (session|usage|weekly|rate) limit|rate.?limit|too many requests|status.?429' "$1"
 }
 
-parse_reset_wait() {  # $1: output file  $2: now epoch for tests; output wait seconds, or empty on parse failure.
-  local f="$1" now="${2:-$(date +%s)}" t target wait m num unit
-  [[ -f "$f" ]] || return 0
+RESET_SANITY_MAX=2592000   # 30 days; anything beyond this is a parsing artefact, not a real reset time.
 
-  # Format 1, Claude: "resets 10:50am" -> wait until reset time plus a 120 second buffer.
-  t=$(grep -oiE 'resets +[0-9]{1,2}:[0-9]{2} ?[ap]m' "$f" | head -1 | sed -E 's/^[Rr]esets +//; s/ //g' || true)
+parse_reset_wait() {  # $1: output file  $2: now epoch for tests; output wait seconds, or empty on parse failure.
+  # Only parses. The caller decides whether the wait is worth sitting through:
+  # a large value here means "we know exactly when it resets", not "retry soon".
+  local f="$1" now="${2:-$(date +%s)}" norm t target wait m num unit
+  [[ -f "$f" ]] || return 0
+  # Agents wrap their output, so a timestamp can straddle a newline. Flatten before matching.
+  norm=$(tr '\n\r\t' '   ' < "$f" | tr -s ' ')
+
+  # Format 1, Claude: "resets 10:50am" -> next occurrence of that clock time, plus a 120 second buffer.
+  t=$(grep -oiE 'resets +[0-9]{1,2}:[0-9]{2} ?[ap]m' <<<"$norm" | head -1 | sed -E 's/^[Rr]esets +//; s/ //g' || true)
   if [[ -n "$t" ]]; then
     target=$(LC_ALL=C date -d "$t" +%s 2>/dev/null || true)
     if [[ -n "$target" ]]; then
       (( target <= now )) && target=$(( target + 86400 ))
       wait=$(( target - now + 120 ))
-      (( wait > 21600 )) && return 0   # More than 6 hours likely means bad parsing; use exponential backoff.
+      (( wait > RESET_SANITY_MAX )) && return 0
       echo "$wait"
       return 0
     fi
   fi
 
-  # Format 2, OpenAI/Codex: "try again in 20s / 2 minutes / 3 hours" -> wait plus a 30 second buffer.
-  m=$(grep -oiE 'try again in [0-9]+(\.[0-9]+)? ?(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b' "$f" | head -1 || true)
+  # Format 2, OpenAI/Codex: "try again in 20s / 2 minutes / 3 hours" -> that duration plus a 30 second buffer.
+  m=$(grep -oiE 'try again in [0-9]+(\.[0-9]+)? ?(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b' <<<"$norm" | head -1 || true)
   if [[ -n "$m" ]]; then
     num=$(grep -oE '[0-9]+' <<<"$m" | head -1)
     unit=$(grep -oiE '(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)$' <<<"$m")
@@ -496,11 +505,32 @@ parse_reset_wait() {  # $1: output file  $2: now epoch for tests; output wait se
       *) return 0 ;;
     esac
     wait=$(( wait + 30 ))
-    (( wait > 21600 )) && return 0
+    (( wait > RESET_SANITY_MAX )) && return 0
     echo "$wait"
     return 0
   fi
+
+  # Format 3, Codex quota: "try again at Jul 14th, 2026 7:23 PM" -> absolute timestamp plus a 30 second buffer.
+  # GNU date rejects the ordinal suffix, so strip it before parsing.
+  m=$(grep -oiE '(try again at|resets at|resets on) [A-Za-z]{3,9} +[0-9]{1,2}(st|nd|rd|th)?,? +[0-9]{4},? +[0-9]{1,2}:[0-9]{2} *[ap]\.?m' <<<"$norm" | head -1 || true)
+  if [[ -n "$m" ]]; then
+    t=$(sed -E 's/^[^ ]+ [^ ]+ [^ ]+ //; s/([0-9]+)(st|nd|rd|th)/\1/I' <<<"$m")
+    target=$(LC_ALL=C date -d "$t" +%s 2>/dev/null || true)
+    if [[ -n "$target" ]]; then
+      (( target <= now )) && { echo 30; return 0; }   # Already elapsed; retry after a short buffer.
+      wait=$(( target - now + 30 ))
+      (( wait > RESET_SANITY_MAX )) && return 0
+      echo "$wait"
+      return 0
+    fi
+  fi
   return 0
+}
+
+human_duration() {  # $1: seconds -> "3h 12m" / "45m"
+  local s="$1"
+  if (( s >= 3600 )); then echo "$(( s / 3600 ))h $(( (s % 3600) / 60 ))m"
+  else echo "$(( s / 60 ))m"; fi
 }
 
 detect_gate() {  # Detect a full quality gate by project type; output empty if unknown.
@@ -826,8 +856,16 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
       echo "!! Rate limit did not clear after $RETRY_MAX retries; giving up." >&2
       return "$rc"
     fi
-    n=$(( n + 1 ))
     w=$(parse_reset_wait "$ENGINE_OUT")   # Prefer waiting until the parsed reset time.
+    if [[ -n "$w" ]] && (( w > RETRY_MAX_RESET_WAIT )); then
+      # The message told us exactly when the quota returns and it is far away.
+      # Backing off here would burn hours of sleep and still fail, so stop now.
+      eta=$(date -d "+$w seconds" '+%Y-%m-%d %H:%M' 2>/dev/null || true)
+      echo "!! Quota resets in $(human_duration "$w") (about $eta), beyond RETRY_MAX_RESET_WAIT=${RETRY_MAX_RESET_WAIT}s. Not waiting; rerun after the reset." >&2
+      notify "adversarial-ai-coding: quota exhausted until $eta; run aborted"
+      return "$rc"
+    fi
+    n=$(( n + 1 ))
     if [[ -z "$w" ]]; then
       w=$(( RETRY_BASE_WAIT * (1 << (n - 1)) ))
       (( w > RETRY_MAX_WAIT )) && w=$RETRY_MAX_WAIT

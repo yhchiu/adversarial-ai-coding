@@ -591,6 +591,14 @@ assert_rc "rate-limit detection:codex/OpenAI 429 JSON" 0 $?
 printf "You've reached your usage limit.\n" > "$d/reached.txt"
 ( cd "$d" && source "$SCRIPT" && is_rate_limited reached.txt ) >/dev/null 2>&1
 assert_rc "rate-limit detection:reached your usage limit wording" 0 $?
+# Real codex CLI quota message, wrapped across lines exactly as the CLI prints it.
+cat > "$d/codexquota.txt" <<'EOF'
+You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit
+https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jul
+14th, 2026 7:23 PM.
+EOF
+( cd "$d" && source "$SCRIPT" && is_rate_limited codexquota.txt ) >/dev/null 2>&1
+assert_rc "rate-limit detection:real codex quota message" 0 $?
 printf 'strutil_test.go:47:14: undefined: IsPalindrome\n' > "$d/plain.txt"
 ( cd "$d" && source "$SCRIPT" && is_rate_limited plain.txt ) >/dev/null 2>&1
 assert_nonzero "rate-limit detection:ordinary error is not misclassified" $?
@@ -608,8 +616,8 @@ else bad "reset parser:2 hours later (got [$w])"; fi
 past=$(LC_ALL=C date -d "@$(( now - 3600 ))" +%-I:%M%P)
 printf 'resets %s\n' "$past" > "$d/past.txt"
 w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait past.txt "$now" )
-if [[ -z "$w" ]]; then ok "reset parser:past time -> tomorrow is >6h, use backoff"
-else bad "reset parser:past time (got [$w], expected empty)"; fi
+if [[ -n "$w" && "$w" -ge 82000 && "$w" -le 83000 ]]; then ok "reset parser:past clock time rolls to tomorrow"
+else bad "reset parser:past clock time (got [$w], expected about 82920)"; fi
 
 printf 'no reset info here\n' > "$d/none.txt"
 w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait none.txt "$now" )
@@ -625,7 +633,20 @@ w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait hrs.txt "$now" )
 assert_eq "reset parser:try again in 3 hours -> 10830" "10830" "$w"
 printf 'try again in 12 hours\n' > "$d/toolong.txt"
 w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait toolong.txt "$now" )
-assert_eq "reset parser:try again over 6 hours -> empty safety guard" "" "$w"
+assert_eq "reset parser:12 hours parsed as-is; the caller applies policy" "43230" "$w"
+printf 'try again in 900 hours\n' > "$d/absurd.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait absurd.txt "$now" )
+assert_eq "reset parser:beyond 30 days -> empty sanity guard" "" "$w"
+
+# Format 3: absolute quota reset timestamp, wrapped across lines, with an ordinal suffix.
+now_fixed=$(LC_ALL=C date -d "2026-07-08 07:00:00" +%s)
+target=$(LC_ALL=C date -d "Jul 14, 2026 7:23 PM" +%s)
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait codexquota.txt "$now_fixed" )
+assert_eq "reset parser:real codex 'try again at <date>' across a line break" "$(( target - now_fixed + 30 ))" "$w"
+
+printf 'try again at Jan 2nd, 2020 7:23 PM.\n' > "$d/elapsed.txt"
+w=$( cd "$d" && source "$SCRIPT" && parse_reset_wait elapsed.txt "$now" )
+assert_eq "reset parser:absolute date already elapsed -> short retry buffer" "30" "$w"
 
 # ---------- engine_call with stub engine and RETRY_BASE_WAIT=1 for fast tests ----------
 d=$(tmpdir)
@@ -634,6 +655,7 @@ run_engine_call() {  # $1: RETRY_ON_LIMIT  $2: stub output, empty means success
     && RETRY_ON_LIMIT="$1" RETRY_BASE_WAIT=1 RETRY_MAX=2 STUB="$2" \
     && source "$SCRIPT" && WF_RUN=.workflow/runs/test && mkdir -p "$WF_RUN" && ART_SEQ=0 && LOG=.workflow/logs/t.log && touch "$LOG" \
     && CALLS=0 \
+    && sleep() { :; } \
     && fake_engine() {
          CALLS=$(( CALLS + 1 ))
          [[ -z "$STUB" ]] && return 0
@@ -651,6 +673,13 @@ out=$(run_engine_call 1 'ordinary build failure')
 assert_eq "engine_call:non-rate-limit error -> no retry" "rc=1 calls=1" "$out"
 out=$(run_engine_call 1 '')
 assert_eq "engine_call:success passes immediately" "rc=0 calls=1" "$out"
+# A quota that resets days from now must fail fast: backing off would sleep for hours and still fail.
+far=$(LC_ALL=C date -d "+10 days" '+%b %-d, %Y %-I:%M %p')
+out=$(run_engine_call 1 "You've hit your usage limit. try again at $far.")
+assert_eq "engine_call:reset beyond RETRY_MAX_RESET_WAIT -> abort without sleeping" "rc=1 calls=1" "$out"
+near=$(LC_ALL=C date -d "+1 hour" '+%b %-d, %Y %-I:%M %p')
+out=$(run_engine_call 1 "You've hit your usage limit. try again at $near.")
+assert_eq "engine_call:reset within the ceiling -> waits and retries" "rc=1 calls=3" "$out"
 
 d=$(tmpdir)
 ( cd "$d" && mkdir -p .workflow/logs .workflow/runs/test \

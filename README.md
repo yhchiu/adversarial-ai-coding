@@ -258,6 +258,7 @@ Add `--json` output to the CLI.
 | `RETRY_MAX` | `6` | Maximum rate-limit retries per agent call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
+| `RETRY_MAX_RESET_WAIT` | `21600` | When the message states a reset time farther away than this, abort instead of waiting. |
 | `AGENTS_TEMPLATE` | `resources/AGENTS.template.md` beside the script | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | `resources/prompts` beside the script | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
@@ -416,8 +417,23 @@ test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
 
 ### Rate limit or quota errors
 
-By default, the script waits and retries on rate-limit or quota errors. Set
-`RETRY_ON_LIMIT=0` to fail immediately.
+By default, the script waits and retries on rate-limit or quota errors, for every
+agent. When the message states how long to wait, the script waits exactly that
+long instead of guessing. It understands three shapes:
+
+| Message | Agent | Wait |
+| --- | --- | --- |
+| `resets 10:50am` | Claude | Until that clock time, plus 2 minutes |
+| `try again in 90s` | Codex | That duration, plus 30 seconds |
+| `try again at Jul 14th, 2026 7:23 PM` | Codex | Until that timestamp, plus 30 seconds |
+
+Anything else falls back to exponential backoff (`RETRY_BASE_WAIT` doubling up to
+`RETRY_MAX_WAIT`), for at most `RETRY_MAX` retries.
+
+A weekly quota can reset days away. Sleeping through it would waste hours and
+still fail, so when a parsed reset time exceeds `RETRY_MAX_RESET_WAIT` the run
+aborts immediately, reports the reset timestamp, and fires `NOTIFY_CMD`. Rerun
+after the quota returns. Set `RETRY_ON_LIMIT=0` to fail immediately on any limit.
 
 ## Related Reading
 
