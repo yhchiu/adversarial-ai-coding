@@ -181,19 +181,20 @@ and `HUMAN_GATE=1`; unattended runs should leave it disabled.
 
 If `ENGINE_A` or `ENGINE_B` is not `claude`, `codex`, or `agy`, the script
 treats it as a custom agent command. The command is run with the slot-specific
-args followed by the prompt as the final argument:
+args followed by a short prompt-file instruction as the final argument:
 
 ```bash
-$ENGINE_A $ENGINE_A_ARGS "$prompt"
-$ENGINE_B $ENGINE_B_ARGS "$prompt"
+$ENGINE_A $ENGINE_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
+$ENGINE_B $ENGINE_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
 ```
 
-Custom commands must be agentic: they need to read the prompt, inspect and edit
-the repository as needed, and exit non-zero on execution failure. A custom
-reviewer must write `.workflow/review.md` and `.workflow/verdict.json`; stdout
-JSON verdicts are not parsed. Custom engines do not get automatic session
-resume, and `MODEL_A` / `MODEL_B` are not translated into model flags for them.
-Put model flags in `ENGINE_A_ARGS` / `ENGINE_B_ARGS`.
+Custom commands must be agentic: they need to read the referenced prompt file,
+inspect and edit the repository as needed, and exit non-zero on execution
+failure. A custom reviewer must write `.workflow/review.md` and
+`.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom engines
+do not get automatic session resume, and `MODEL_A` / `MODEL_B` are not
+translated into model flags for them. Put model flags in `ENGINE_A_ARGS` /
+`ENGINE_B_ARGS`.
 
 If a custom CLI needs session continuity, handle it in a wrapper script. For
 example, give the worker and reviewer separate profiles, session ids, or cache
@@ -240,7 +241,7 @@ Add `--json` output to the CLI.
 | `MODEL_A` | CLI default | Model override for built-in worker slots. Custom engines should pass model flags through `ENGINE_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom engines should pass model flags through `ENGINE_B_ARGS`. |
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in engines, split on whitespace and appended to engine calls. |
-| `ENGINE_A_ARGS` / `ENGINE_B_ARGS` | empty | Extra CLI arguments for custom engine commands, split on whitespace and appended before the prompt argument. |
+| `ENGINE_A_ARGS` / `ENGINE_B_ARGS` | empty | Extra CLI arguments for custom engine commands, split on whitespace and appended before the prompt-file instruction argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |

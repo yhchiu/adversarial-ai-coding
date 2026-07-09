@@ -256,6 +256,10 @@ archive_text() {  # $1: archive name  $2: text  $3: role  $4: engine  $5: stage 
   echo "$dst"
 }
 
+prompt_file_instruction() {  # $1: prompt artifact path; output the short prompt sent to CLIs.
+  printf 'Read the full workflow prompt from this repository file and follow it exactly: %s\n' "$1"
+}
+
 archive_task() {  # $1: arg  $2: kind  $3: source path  $4: resolved text
   local task_arg="$1" kind="$2" source_path="$3" resolved="$4" src_art task_art
   src_art=$(art_path "task-source.md")
@@ -758,9 +762,10 @@ archive_engine_attempt() {  # $1: role  $2: engine  $3: slug  $4: attempt  $5: r
   write_meta "$dst" "$role" "$engine" "$model" "$model_args" "$CUR_STAGE" "$CUR_ROUND"
 }
 
-engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: prompt
-  local role="$1" engine="$2" slug="$3" fn="$4" prompt="$5"
+engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: prompt file
+  local role="$1" engine="$2" slug="$3" fn="$4" prompt_file="$5" prompt
   local n=0 attempt=1 rc w eta
+  prompt=$(prompt_file_instruction "$prompt_file")
   while true; do
     rc=0
     "$fn" "$prompt" || rc=$?
@@ -794,12 +799,12 @@ work() {  # $1: engine  $2: work instruction
   log_section "AI call" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> Worker($1) is running..."
   slug="worker-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
-  archive_text "${slug}-prompt.md" "$2" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  prompt_art=$(archive_text "${slug}-prompt.md" "$2" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND")
   output_art=$(art_path "${slug}-output.txt")
   fn=$(worker_fn_for_engine "$1")
   # Use process substitution instead of a pipeline so engine functions stay in the current shell.
   # Otherwise WORKER_SESSION updates would be lost in a subshell.
-  engine_call "worker" "$1" "$slug" "$fn" "$2" > >(tee -a "$LOG" | tee "$output_art")
+  engine_call "worker" "$1" "$slug" "$fn" "$prompt_art" > >(tee -a "$LOG" | tee "$output_art")
   write_meta "$output_art" "worker" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   archive_git_state "worker" "$1" "$slug"
@@ -938,21 +943,21 @@ show_blockers() {
 }
 
 run_review() {  # $1: engine  $2: review scope; returns 0 when approved.
-  local t0=$SECONDS prompt output_art slug fn
+  local t0=$SECONDS prompt prompt_art output_art slug fn
   LAST_COST=""
   CURRENT_ENGINE="$1"
   log_section "review" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> Reviewer($1) is reviewing..."
   slug="reviewer-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
   prompt="$(compose_review_prompt "$1" "$2")"
-  archive_text "${slug}-prompt.md" "$prompt" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+  prompt_art=$(archive_text "${slug}-prompt.md" "$prompt" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND")
   output_art=$(art_path "${slug}-output.txt")
   fn=$(reviewer_fn_for_engine "$1")
   # Prewrite a failed sentinel instead of deleting the file:
   # if the reviewer does not write a verdict, the run stays failed.
   # This also avoids apply_patch failures against a missing file.
   printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
-  engine_call "reviewer" "$1" "$slug" "$fn" "$prompt" > >(tee -a "$LOG" | tee "$output_art") || echo "(warning: reviewer execution failed)" >&2
+  engine_call "reviewer" "$1" "$slug" "$fn" "$prompt_art" > >(tee -a "$LOG" | tee "$output_art") || echo "(warning: reviewer execution failed)" >&2
   write_meta "$output_art" "reviewer" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"

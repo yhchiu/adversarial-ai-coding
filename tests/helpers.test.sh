@@ -113,6 +113,94 @@ out=$(
 assert_eq "generic:w_generic passes args and prompt as final arg" \
   $'argc=3\narg1=--flag\narg2=value\narg3=hello prompt\n---\ncustom engine ran' "$out"
 
+# ---------- prompt file handoff ----------
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && prompt_file_instruction .workflow/runs/test/001-worker-prompt.md )
+if [[ "$out" == *"Read the full workflow prompt"* && "$out" == *".workflow/runs/test/001-worker-prompt.md"* ]]; then
+  ok "prompt_file_instruction:points engine at prompt file"
+else
+  bad "prompt_file_instruction:points engine at prompt file(got [$out])"
+fi
+
+d=$(tmpdir)
+out=$(
+  cd "$d" \
+    && mkdir -p .workflow/runs/test .workflow/logs \
+    && source "$SCRIPT" \
+    && WF_RUN=.workflow/runs/test && ART_SEQ=0 && LOG=.workflow/logs/t.log && ENGINE_OUT=.workflow/engine-out.txt \
+    && write_meta() { :; } \
+    && printf 'FULL_PROMPT_SENTINEL\n' > .workflow/runs/test/001-worker-prompt.md \
+    && fake_engine() { printf '%s\n' "$1" > captured-prompt.txt; printf 'ok\n' > "$ENGINE_OUT"; } \
+    && engine_call worker custom worker-stage-r1 fake_engine .workflow/runs/test/001-worker-prompt.md >/dev/null \
+    && cat captured-prompt.txt
+)
+if [[ "$out" == *"Read the full workflow prompt"* && "$out" == *".workflow/runs/test/001-worker-prompt.md"* && "$out" != *"FULL_PROMPT_SENTINEL"* ]]; then
+  ok "engine_call:passes short prompt-file instruction"
+else
+  bad "engine_call:passes short prompt-file instruction(got [$out])"
+fi
+
+d=$(tmpdir)
+cat > "$d/fake-agent" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${@: -1}" > captured-prompt.txt
+printf 'custom engine ran\n'
+EOF
+chmod +x "$d/fake-agent"
+(
+  cd "$d" \
+    && mkdir -p .workflow/runs/test .workflow/logs \
+    && ENGINE_A="$d/fake-agent" ENGINE_B=codex \
+    && source "$SCRIPT" \
+    && WF=.workflow && WF_RUN=.workflow/runs/test && ART_SEQ=0 && LOG=.workflow/logs/t.log \
+    && ENGINE_OUT=.workflow/engine-out.txt && METRICS=.workflow/runs/test/metrics.csv \
+    && CUR_STAGE=stage && CUR_ROUND=1 && RETRY_ON_LIMIT=0 \
+    && write_meta() { :; } \
+    && archive_git_state() { :; } \
+    && metric() { :; } \
+    && work "$ENGINE_A" "FULL_PROMPT_SENTINEL for worker" >/dev/null
+)
+worker_prompt=$(cat "$d/captured-prompt.txt")
+worker_art=$(ls "$d/.workflow/runs/test/"*-worker-stage-r1-prompt.md 2>/dev/null | head -1 || true)
+if [[ "$worker_prompt" == *"Read the full workflow prompt"* && "$worker_prompt" == *"worker-stage-r1-prompt.md"* && "$worker_prompt" != *"FULL_PROMPT_SENTINEL"* && -n "$worker_art" ]] \
+  && grep -q 'FULL_PROMPT_SENTINEL for worker' "$worker_art"; then
+  ok "work:archives full prompt and sends file reference"
+else
+  bad "work:archives full prompt and sends file reference(prompt [$worker_prompt], artifact [$worker_art])"
+fi
+
+d=$(tmpdir)
+cat > "$d/fake-reviewer" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${@: -1}" > captured-review-prompt.txt
+mkdir -p .workflow
+printf 'approved\n' > .workflow/review.md
+printf '{"approved":true,"blockers":[],"suggestions":[]}\n' > .workflow/verdict.json
+printf 'custom reviewer ran\n'
+EOF
+chmod +x "$d/fake-reviewer"
+(
+  cd "$d" \
+    && mkdir -p .workflow/runs/test .workflow/logs \
+    && ENGINE_A=claude ENGINE_B="$d/fake-reviewer" \
+    && source "$SCRIPT" \
+    && WF=.workflow && WF_RUN=.workflow/runs/test && ART_SEQ=0 && LOG=.workflow/logs/t.log \
+    && ENGINE_OUT=.workflow/engine-out.txt && METRICS=.workflow/runs/test/metrics.csv \
+    && CUR_STAGE=review && CUR_ROUND=2 && RETRY_ON_LIMIT=0 && COLLECT_REVIEW_SUGGESTIONS=0 \
+    && write_meta() { :; } \
+    && metric() { :; } \
+    && verdict_approved() { return 0; } \
+    && run_review "$ENGINE_B" "FULL_PROMPT_SENTINEL review scope" >/dev/null
+)
+reviewer_prompt=$(cat "$d/captured-review-prompt.txt")
+reviewer_art=$(ls "$d/.workflow/runs/test/"*-reviewer-review-r2-prompt.md 2>/dev/null | head -1 || true)
+if [[ "$reviewer_prompt" == *"Read the full workflow prompt"* && "$reviewer_prompt" == *"reviewer-review-r2-prompt.md"* && "$reviewer_prompt" != *"FULL_PROMPT_SENTINEL"* && -n "$reviewer_art" ]] \
+  && grep -q 'FULL_PROMPT_SENTINEL review scope' "$reviewer_art"; then
+  ok "run_review:archives full prompt and sends file reference"
+else
+  bad "run_review:archives full prompt and sends file reference(prompt [$reviewer_prompt], artifact [$reviewer_art])"
+fi
+
 # ---------- plan_tasks ----------
 d=$(tmpdir)
 printf -- '# plan\n\n- [ ] task one\n- [x] finished task\n- [ ] task two\nplain text\n' > "$d/plan.md"
