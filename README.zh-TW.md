@@ -11,7 +11,7 @@ for work in "訂規格" "規劃實作計畫" "撰寫程式碼" "整體review" "�
 done
 ```
 
-其中 A(工作者)與 B(審查者)可以是 **Claude Code CLI**、**Codex CLI** 或 **Antigravity CLI**,透過各家的 headless(非互動)模式驅動。
+其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI** 或 **Antigravity CLI**,透過各家的 headless(非互動)模式驅動。
 
 ## 流程
 
@@ -69,8 +69,8 @@ bash "$AAC" "為 CLI 加上 --json 輸出選項"
 # 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
 bash "$AAC" task.md
 
-# 交換角色
-ENGINE_A=codex ENGINE_B=claude bash "$AAC" task.md
+# 交換 agent
+AGENT_A=codex AGENT_B=claude bash "$AAC" task.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
 DUAL_SPEC=1 bash "$AAC" task.md
@@ -124,11 +124,12 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `ENGINE_A` | `claude` | 工作者引擎:`claude` \| `codex` \| `agy` |
-| `ENGINE_B` | `codex` | 審查者引擎(驗收測試 stage 兩者角色互換) |
-| `MODEL_A` | (CLI 預設) | A 槽引擎的模型,例 `haiku`、`gpt-5.1-codex-mini`;便宜任務/試跑時控制成本用 |
-| `MODEL_B` | (CLI 預設) | B 槽引擎的模型;A、B 同為 claude 時以 `MODEL_A` 為準 |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各 CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
+| `AGENT_A` (`ENGINE_A`) | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令。`ENGINE_A` 是舊 alias |
+| `AGENT_B` (`ENGINE_B`) | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換)。`ENGINE_B` 是舊 alias |
+| `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型,例 `haiku`、`gpt-5.1-codex-mini`;便宜任務/試跑時控制成本用。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
+| `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;A、B 同為 claude 時以 `MODEL_A` 為準。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` (`ENGINE_A_ARGS` / `ENGINE_B_ARGS`) | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前。`ENGINE_*_ARGS` 是舊 alias |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
@@ -138,15 +139,15 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
-| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三引擎通用。能解析等待時間就精準等(claude 的 `resets HH:MMam` +2 分緩衝;OpenAI 的 `try again in 20s/2 minutes` +30 秒緩衝),否則指數退避;`0` = 直接失敗 |
-| `RETRY_MAX` | `6` | 每次引擎呼叫的限額重試上限 |
+| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三個內建 agent 通用。能解析等待時間就精準等(claude 的 `resets HH:MMam` +2 分緩衝;OpenAI 的 `try again in 20s/2 minutes` +30 秒緩衝),否則指數退避;`0` = 直接失敗 |
+| `RETRY_MAX` | `6` | 每次 agent 呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒);解析出的重置時刻若超過 6 小時視為異常、改走指數退避 |
 | `AGENTS_TEMPLATE` | script 旁的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | script 旁的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
 | `RUNS_DIR` | `.workflow/runs` | 每次 run 的 archive 根目錄;相對路徑會在 branch/worktree 準備完成後解析 |
-| `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導引擎改用內建檔案工具 |
+| `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導 agent 改用內建檔案工具 |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
 
@@ -188,13 +189,13 @@ your-project/
 │       ├── NNN-*-prompt.md / NNN-*-output.txt / NNN-*-attempt-*-rc*.raw
 │       ├── NNN-review-*.md / NNN-verdict-*.json
 │       ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
-│       ├── metrics.csv  # stage/角色/引擎/輪次/秒數/費用/model/args/time
+│       ├── metrics.csv  # stage/角色/engine欄位/輪次/秒數/費用/model/args/time
 │       └── logs/001-run.log (+ 001-run.log.meta.json)
 ```
 
-Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、引擎、模型與模型參數。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude 引擎會回報(`total_cost_usd`)。
+Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、`engine`、模型與模型參數。`engine` 是為了相容既有 archive schema 而保留的穩定欄位,記錄該次呼叫實際解析出的 agent command/runtime。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude agent 會回報(`total_cost_usd`)。
 
-## 引擎差異與限制
+## Agent CLI 差異與限制
 
 | | claude | codex | agy |
 |---|---|---|---|
@@ -214,7 +215,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 安全性注意事項
 
-- **agy 引擎使用 `--dangerously-skip-permissions`**(該 CLI 無細粒度白名單),只建議搭配 `USE_WORKTREE=1` 或容器使用。
+- **agy agent 使用 `--dangerously-skip-permissions`**(該 CLI 無細粒度白名單),只建議搭配 `USE_WORKTREE=1` 或容器使用。
 - claude / codex 都以最小權限運作;真正的完整隔離是容器(devcontainer),branch/worktree 只隔離 git 狀態,不隔離檔案系統與網路。
 - 兩個 AI 互審**很燒 token**:`MAX_ROUNDS`、分級裁決、`commit_if_dirty`(無變更就跳過 commit 呼叫)都是止損機制。中止時已通過的 stage 均已 commit,可從斷點人工接手。
 - 雙 spec 模式會多花第二份候選、互審與比較表的 AI 呼叫;只有在規格決策值得額外成本時再開。
@@ -222,7 +223,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 自訂 stage
 
-Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 session)、`work <引擎> <指示>`、`review_loop <審查者> <工作者> <範圍> [關卡指令]`、`gate_loop <引擎> <關卡指令>`、`commit_work` / `commit_if_dirty`。照現有 stage 的樣式增刪即可。
+Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 session)、`work <agent> <指示>`、`review_loop <審查者> <工作者> <範圍> [關卡指令]`、`gate_loop <agent> <關卡指令>`、`commit_work` / `commit_if_dirty`。照現有 stage 的樣式增刪即可。
 
 ## 測試
 
@@ -237,18 +238,18 @@ bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker/
 E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關卡,不呼叫任何 AI
 ```
 
-執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,引擎與模型可用一般環境變數覆寫。
+執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。
 
 **定位:改動 script 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
 
 ## 疑難排解
 
-- **`(B 未產出 verdict.json,視為未通過)`**:審查者引擎失敗或沒照規範寫檔,看 `.workflow/logs/`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
+- **`(B 未產出 verdict.json,視為未通過)`**:審查者 agent 失敗或沒照規範寫檔,看 `.workflow/logs/`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
 - **卡在權限詢問**:headless 下沒人能按「允許」。Claude Code 需要的指令加進 `TOOLS`;codex 確認 sandbox 模式;agy 確認旗標。
 - **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty;在 CI 等無人環境設 `HUMAN_GATE=0`,並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
 - **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
-- **撞到訂閱用量限額**(`You've hit your session limit`、429):預設會自動等待重試——能從訊息解析出重置時刻就精準等待,否則指數退避;重試會發 `NOTIFY_CMD` 通知並記錄在 log,`RETRY_ON_LIMIT=0` 可關閉。非限額的引擎失敗不會重試,原始輸出攤印在 log 結尾供診斷。
+- **撞到訂閱用量限額**(`You've hit your session limit`、429):預設會自動等待重試——能從訊息解析出重置時刻就精準等待,否則指數退避;重試會發 `NOTIFY_CMD` 通知並記錄在 log,`RETRY_ON_LIMIT=0` 可關閉。非限額的 agent 失敗不會重試,原始輸出攤印在 log 結尾供診斷。
 - **換行問題**:script 必須是 LF;repo 已用 `.gitattributes` 強制 `*.sh eol=lf`。
 
 ## 延伸方向

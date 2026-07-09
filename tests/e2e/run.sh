@@ -2,7 +2,7 @@
 #
 # tests/e2e/run.sh - manual E2E test for adversarial-ai-coding
 #
-# Calls real AI engines and consumes tokens/quota, roughly $2-5 equivalent and 20-40 minutes with defaults.
+# Calls real AI agents and consumes tokens/quota, roughly $2-5 equivalent and 20-40 minutes with defaults.
 # Run manually after core workflow changes. Do not put the full E2E in CI or the unit test entrypoint.
 #
 # Flow: create a fixture git repo in a temp dir -> verify baseline gates locally -> run full workflow
@@ -15,8 +15,8 @@
 #   E2E_DIR         Work directory; defaults to mktemp. Kept after success and failure.
 #   E2E_SETUP_ONLY  1=create fixture repo and verify baseline only, without calling AI (default: 0)
 #   Other adversarial-ai-coding variables pass through. E2E defaults:
-#     HUMAN_GATE=0  ENGINE_A=claude  MODEL_A=sonnet  CLAUDE_ARGS='--effort=low'
-#     ENGINE_B=codex  MODEL_B=gpt-5.5  CODEX_ARGS='-c model_reasoning_effort=low'
+#     HUMAN_GATE=0  AGENT_A=claude  MODEL_A=sonnet  CLAUDE_ARGS='--effort=low'
+#     AGENT_B=codex  MODEL_B=gpt-5.5  CODEX_ARGS='-c model_reasoning_effort=low'
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,10 +26,10 @@ FIXTURE="$HERE/fixture"
 
 # E2E defaults from real-run lessons: worker should be at least sonnet class; lower codex effort to save quota.
 export HUMAN_GATE="${HUMAN_GATE:-0}"
-export ENGINE_A="${ENGINE_A:-claude}"
+export AGENT_A="${AGENT_A:-${ENGINE_A:-claude}}"
 export MODEL_A="${MODEL_A:-sonnet}"
 export CLAUDE_ARGS="${CLAUDE_ARGS:---effort=low}"
-export ENGINE_B="${ENGINE_B:-codex}"
+export AGENT_B="${AGENT_B:-${ENGINE_B:-codex}}"
 export MODEL_B="${MODEL_B:-gpt-5.5}"
 export CODEX_ARGS="${CODEX_ARGS:--c model_reasoning_effort=low}"
 
@@ -69,8 +69,8 @@ if [[ "${E2E_SETUP_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
-echo "== Running workflow (A=$ENGINE_A/${MODEL_A:-default}  B=$ENGINE_B/${MODEL_B:-default})"
-echo "   Engine args:CLAUDE_ARGS='$CLAUDE_ARGS'  CODEX_ARGS='$CODEX_ARGS'"
+echo "== Running workflow (A=$AGENT_A/${MODEL_A:-default}  B=$AGENT_B/${MODEL_B:-default})"
+echo "   Agent args:CLAUDE_ARGS='$CLAUDE_ARGS'  CODEX_ARGS='$CODEX_ARGS'"
 rc=0
 "$SCRIPT" task.md 2>&1 | tee "$RUN_LOG" || rc=$?
 if (( rc != 0 )); then

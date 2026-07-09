@@ -13,12 +13,13 @@
 #   ./adversarial-ai-coding.sh print-agents   # Print the AGENTS.md rule template and exit
 #
 # Environment variables, all optional:
-#   ENGINE_A     Worker engine: claude | codex | agy, or a custom agent command (default: claude)
-#   ENGINE_B     Reviewer engine: claude | codex | agy, or a custom agent command (default: codex)
+#   AGENT_A      Worker agent command: claude | codex | agy, or a custom command (default: claude)
+#   AGENT_B      Reviewer agent command: claude | codex | agy, or a custom command (default: codex)
 #   MODEL_A      Model override for the A slot, for example haiku
 #   MODEL_B      Model override for the B slot; MODEL_A wins when A and B are both claude
 #   CLAUDE_ARGS / CODEX_ARGS / AGY_ARGS  Extra CLI args, split on whitespace
-#   ENGINE_A_ARGS / ENGINE_B_ARGS  Extra args for custom agent commands, split on whitespace
+#   AGENT_A_ARGS / AGENT_B_ARGS  Extra args for custom agent commands, split on whitespace
+#   ENGINE_A / ENGINE_B and ENGINE_A_ARGS / ENGINE_B_ARGS are legacy aliases
 #   MAX_ROUNDS   Maximum review or gate repair rounds per stage (default: 3)
 #   AUTO_BRANCH  1=create a new branch; 0=use current branch (default: 1)
 #   USE_WORKTREE 1=run in a separate git worktree (default: 0)
@@ -33,7 +34,7 @@
 #   AGENTS_TEMPLATE  Path to AGENTS.md template (default: resources/AGENTS.template.md beside this script)
 #   PROMPTS_DIR  Directory for workflow prompt templates (default: resources/prompts beside this script)
 #   RETRY_ON_LIMIT   1=wait and retry on quota/rate-limit errors (default: 1; 0=fail fast)
-#   RETRY_MAX        Maximum rate-limit retries per engine call (default: 6)
+#   RETRY_MAX        Maximum rate-limit retries per agent call (default: 6)
 #   RETRY_BASE_WAIT  Initial fallback wait in seconds when reset time cannot be parsed (default: 300)
 #   RETRY_MAX_WAIT   Maximum fallback wait in seconds (default: 3600)
 #   RUNS_DIR         Root archive directory for each run (default: .workflow/runs)

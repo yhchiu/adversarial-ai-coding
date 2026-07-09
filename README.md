@@ -28,14 +28,14 @@ Final review           Worker self-reviews, reviewer gives final approval
 Finish                 Script prints push and PR commands
 ```
 
-The worker and reviewer can be different engines:
+The worker and reviewer can be different agents:
 
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
 - `agy` for Antigravity CLI
 - A custom agent CLI or wrapper command
 
-Using different engines for worker and reviewer is recommended because their
+Using different agent commands for worker and reviewer is recommended because their
 failure modes are different.
 
 ```mermaid
@@ -95,8 +95,9 @@ flowchart TD
   - `claude`
   - `codex`
   - `agy` is optional
-- Any custom agent or wrapper commands you configure through `ENGINE_A` or
-  `ENGINE_B`, available on `PATH`.
+- Any custom agent or wrapper commands you configure through `AGENT_A` or
+  `AGENT_B`, available on `PATH`. Legacy `ENGINE_A` / `ENGINE_B` variables are
+  still accepted.
 - Run the script from the root of the target Git repository.
 
 ## Quick Start
@@ -110,7 +111,7 @@ cd /path/to/your-project
 AAC=/path/to/adversarial-ai-coding/adversarial-ai-coding.sh
 ```
 
-Run a task with the default engines, where Claude is the worker and Codex is the
+Run a task with the default agents, where Claude is the worker and Codex is the
 reviewer:
 
 ```bash
@@ -123,17 +124,17 @@ You can also write the task in a file:
 bash "$AAC" task.md
 ```
 
-Swap the worker and reviewer engines:
+Swap the worker and reviewer agents:
 
 ```bash
-ENGINE_A=codex ENGINE_B=claude bash "$AAC" task.md
+AGENT_A=codex AGENT_B=claude bash "$AAC" task.md
 ```
 
 Use custom agent or wrapper commands:
 
 ```bash
-ENGINE_A=gemini ENGINE_A_ARGS='--model gemini-2.5-pro --yolo' \
-ENGINE_B=my-review-wrapper ENGINE_B_ARGS='--strict' \
+AGENT_A=gemini AGENT_A_ARGS='--model gemini-2.5-pro --yolo' \
+AGENT_B=my-review-wrapper AGENT_B_ARGS='--strict' \
   bash "$AAC" task.md
 ```
 
@@ -179,24 +180,24 @@ implementation, and self-review. The other slot becomes the reviewer and writes
 the protected acceptance tests. Dual spec mode requires an interactive terminal
 and `HUMAN_GATE=1`; unattended runs should leave it disabled.
 
-## Custom Engine Commands
+## Custom Agent Commands
 
-If `ENGINE_A` or `ENGINE_B` is not `claude`, `codex`, or `agy`, the script
+If `AGENT_A` or `AGENT_B` is not `claude`, `codex`, or `agy`, the script
 treats it as a custom agent command. The command is run with the slot-specific
 args followed by a short prompt-file instruction as the final argument:
 
 ```bash
-$ENGINE_A $ENGINE_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
-$ENGINE_B $ENGINE_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
+$AGENT_A $AGENT_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
+$AGENT_B $AGENT_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
 ```
 
 Custom commands must be agentic: they need to read the referenced prompt file,
 inspect and edit the repository as needed, and exit non-zero on execution
 failure. A custom reviewer must write `.workflow/review.md` and
-`.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom engines
+`.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom agents
 do not get automatic session resume, and `MODEL_A` / `MODEL_B` are not
-translated into model flags for them. Put model flags in `ENGINE_A_ARGS` /
-`ENGINE_B_ARGS`.
+translated into model flags for them. Put model flags in `AGENT_A_ARGS` /
+`AGENT_B_ARGS`.
 
 If a custom CLI needs session continuity, handle it in a wrapper script. For
 example, give the worker and reviewer separate profiles, session ids, or cache
@@ -238,12 +239,12 @@ Add `--json` output to the CLI.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `ENGINE_A` | `claude` | Worker engine: `claude`, `codex`, `agy`, or a custom agent command. |
-| `ENGINE_B` | `codex` | Reviewer engine. In the acceptance-test stage, the roles are swapped. |
-| `MODEL_A` | CLI default | Model override for built-in worker slots. Custom engines should pass model flags through `ENGINE_A_ARGS`. |
-| `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom engines should pass model flags through `ENGINE_B_ARGS`. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in engines, split on whitespace and appended to engine calls. |
-| `ENGINE_A_ARGS` / `ENGINE_B_ARGS` | empty | Extra CLI arguments for custom engine commands, split on whitespace and appended before the prompt-file instruction argument. |
+| `AGENT_A` (`ENGINE_A`) | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. `ENGINE_A` is a legacy alias. |
+| `AGENT_B` (`ENGINE_B`) | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. `ENGINE_B` is a legacy alias. |
+| `MODEL_A` | CLI default | Model override for built-in worker slots. Custom agents should pass model flags through `AGENT_A_ARGS`. |
+| `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom agents should pass model flags through `AGENT_B_ARGS`. |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in agent commands, split on whitespace and appended to agent calls. |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` (`ENGINE_A_ARGS` / `ENGINE_B_ARGS`) | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. The `ENGINE_*_ARGS` names are legacy aliases. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
@@ -254,7 +255,7 @@ Add `--json` output to the CLI.
 | `OPEN_PR` | `0` | Push and create a GitHub PR at the end. By default, commands are only printed. |
 | `NOTIFY_CMD` | empty | Notification command. The message is passed as the first argument. |
 | `RETRY_ON_LIMIT` | `1` | Wait and retry on rate-limit or quota errors. |
-| `RETRY_MAX` | `6` | Maximum rate-limit retries per engine call. |
+| `RETRY_MAX` | `6` | Maximum rate-limit retries per agent call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
 | `AGENTS_TEMPLATE` | `resources/AGENTS.template.md` beside the script | Path to the `AGENTS.md` template. |
@@ -321,8 +322,10 @@ your-project/
 |       `-- logs/001-run.log
 ```
 
-Each archived artifact has a `.meta.json` sidecar with generator, engine, model,
-stage, round, run id, and timestamp data.
+Each archived artifact has a `.meta.json` sidecar with generator, `engine`,
+model, stage, round, run id, and timestamp data. The archive schema keeps the
+stable `engine` field name for backward compatibility; it records the resolved
+agent command/runtime used for the call.
 
 ## Protected Acceptance Tests
 
@@ -348,13 +351,13 @@ test and update `.workflow/protected-base.sha`, or remove the file from
   worth the extra cost.
 - `DUAL_SPEC=1` intentionally refuses `HUMAN_GATE=0` and non-interactive
   terminals because the workflow requires a human owner decision.
-- `codex`, `agy`, and identical custom engine commands cannot be used as both
+- `codex`, `agy`, and identical custom agent commands cannot be used as both
   worker and reviewer at the same time. Use distinct wrapper command names when
   both slots share the same underlying custom CLI.
 
 ## Testing This Repository
 
-Run helper tests. These do not call any AI engine:
+Run helper tests. These do not call any AI agent:
 
 ```bash
 bash tests/helpers.test.sh
@@ -367,7 +370,7 @@ E2E_SETUP_ONLY=1 bash tests/e2e/run.sh
 ```
 
 Run the full E2E only when changing core workflow behavior. It calls real AI
-engines and consumes quota:
+agents and consumes quota:
 
 ```bash
 bash tests/e2e/run.sh
