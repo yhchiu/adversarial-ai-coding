@@ -13,11 +13,12 @@
 #   ./adversarial-ai-coding.sh print-agents   # Print the AGENTS.md rule template and exit
 #
 # Environment variables, all optional:
-#   ENGINE_A     Worker engine: claude | codex | agy   (default: claude)
-#   ENGINE_B     Reviewer engine: claude | codex | agy (default: codex)
+#   ENGINE_A     Worker engine: claude | codex | agy, or a custom agent command (default: claude)
+#   ENGINE_B     Reviewer engine: claude | codex | agy, or a custom agent command (default: codex)
 #   MODEL_A      Model override for the A slot, for example haiku
 #   MODEL_B      Model override for the B slot; MODEL_A wins when A and B are both claude
 #   CLAUDE_ARGS / CODEX_ARGS / AGY_ARGS  Extra CLI args, split on whitespace
+#   ENGINE_A_ARGS / ENGINE_B_ARGS  Extra args for custom agent commands, split on whitespace
 #   MAX_ROUNDS   Maximum review or gate repair rounds per stage (default: 3)
 #   AUTO_BRANCH  1=create a new branch; 0=use current branch (default: 1)
 #   USE_WORKTREE 1=run in a separate git worktree (default: 0)
@@ -46,6 +47,8 @@ MODEL_B="${MODEL_B:-}"   # Model override for the B slot.
 CLAUDE_ARGS="${CLAUDE_ARGS:-}"
 CODEX_ARGS="${CODEX_ARGS:-}"
 AGY_ARGS="${AGY_ARGS:-}"
+ENGINE_A_ARGS="${ENGINE_A_ARGS:-}"
+ENGINE_B_ARGS="${ENGINE_B_ARGS:-}"
 MAX_ROUNDS="${MAX_ROUNDS:-3}"
 AUTO_BRANCH="${AUTO_BRANCH:-1}"
 USE_WORKTREE="${USE_WORKTREE:-0}"
@@ -89,6 +92,24 @@ usage() {
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required command:$1" >&2; exit 1; }; }
 
+validate_engines() {
+  local e
+  for e in "$ENGINE_A" "$ENGINE_B"; do
+    need "$e"
+  done
+
+  # codex and agy resume the most recent session.
+  # Custom engines may have the same limitation, so v1 requires distinct command names.
+  if [[ "$ENGINE_A" == "$ENGINE_B" && "$ENGINE_A" != "claude" ]]; then
+    if is_builtin_engine "$ENGINE_A"; then
+      echo "A and B cannot both use $ENGINE_A because session resume would interfere. Use different engines." >&2
+    else
+      echo "A and B cannot both use custom engine command $ENGINE_A. Use separate wrapper command names for worker and reviewer." >&2
+    fi
+    return 1
+  fi
+}
+
 notify() {  # $1: message; NOTIFY_CMD receives it as the first argument.
   [[ -z "$NOTIFY_CMD" ]] && return 0
   $NOTIFY_CMD "$1" || echo "(notification command failed:$NOTIFY_CMD)" >&2
@@ -128,12 +149,27 @@ safe_slug() {
   printf '%s' "$s"
 }
 
+is_builtin_engine() {
+  case "$1" in
+    claude|codex|agy) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_model_args() {
   case "$1" in
     claude) echo "$CLAUDE_ARGS" ;;
     codex) echo "$CODEX_ARGS" ;;
     agy) echo "$AGY_ARGS" ;;
-    *) echo "" ;;
+    *)
+      if [[ "$1" == "$ENGINE_A" ]]; then
+        echo "$ENGINE_A_ARGS"
+      elif [[ "$1" == "$ENGINE_B" ]]; then
+        echo "$ENGINE_B_ARGS"
+      else
+        echo ""
+      fi
+      ;;
   esac
 }
 
@@ -364,6 +400,7 @@ init_live_state() {
 }
 
 engine_model() {  # $1: engine; output its slot's model override, or empty if unset.
+  is_builtin_engine "$1" || return 0
   if [[ "$1" == "$ENGINE_A" && -n "$MODEL_A" ]]; then
     echo "$MODEL_A"
   elif [[ "$1" == "$ENGINE_B" && -n "$MODEL_B" ]]; then
@@ -627,6 +664,7 @@ bootstrap_agents_md() {  # Create missing files only; never overwrite existing u
 
 # ---------- Worker engines; same stage resumes session, new stage resets it ----------
 WORKER_SESSION=""
+CURRENT_ENGINE=""
 LAST_COST=""   # Claude reports total_cost_usd; other engines leave this empty.
 
 w_claude() {
@@ -679,6 +717,33 @@ w_agy() {
   WORKER_SESSION="continue"
 }
 
+generic_engine_args() {  # $1: custom engine command; output slot args for metadata/execution.
+  if [[ "$1" == "$ENGINE_A" ]]; then
+    echo "$ENGINE_A_ARGS"
+  elif [[ "$1" == "$ENGINE_B" ]]; then
+    echo "$ENGINE_B_ARGS"
+  fi
+}
+
+run_generic_engine() {  # $1: custom engine command  $2: prompt
+  local engine="$1" prompt="$2" args=()
+  # shellcheck disable=SC2206  # Custom args intentionally follow existing whitespace-split behavior.
+  args+=($(generic_engine_args "$engine"))
+  "$engine" "${args[@]}" "$prompt" 2>&1 | tee "$ENGINE_OUT"
+}
+
+w_generic() {
+  run_generic_engine "$CURRENT_ENGINE" "$1"
+}
+
+worker_fn_for_engine() {  # $1: engine; output worker function name.
+  if is_builtin_engine "$1"; then
+    echo "w_$1"
+  else
+    echo "w_generic"
+  fi
+}
+
 # ---------- Rate-limit retry ----------
 archive_engine_attempt() {  # $1: role  $2: engine  $3: slug  $4: attempt  $5: rc
   local role="$1" engine="$2" slug="$3" attempt="$4" rc="$5" dst model model_args
@@ -723,16 +788,18 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
 }
 
 work() {  # $1: engine  $2: work instruction
-  local t0=$SECONDS prompt_art output_art slug
+  local t0=$SECONDS prompt_art output_art slug fn
   LAST_COST=""
+  CURRENT_ENGINE="$1"
   log_section "AI call" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> Worker($1) is running..."
   slug="worker-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
   archive_text "${slug}-prompt.md" "$2" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   output_art=$(art_path "${slug}-output.txt")
+  fn=$(worker_fn_for_engine "$1")
   # Use process substitution instead of a pipeline so engine functions stay in the current shell.
   # Otherwise WORKER_SESSION updates would be lost in a subshell.
-  engine_call "worker" "$1" "$slug" "w_$1" "$2" > >(tee -a "$LOG" | tee "$output_art")
+  engine_call "worker" "$1" "$slug" "$fn" "$2" > >(tee -a "$LOG" | tee "$output_art")
   write_meta "$output_art" "worker" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "worker" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   archive_git_state "worker" "$1" "$slug"
@@ -796,8 +863,7 @@ compose_review_prompt() {  # $1: engine  $2: review scope for this round
   prompt="$(review_prompt "$scope")"
   case "$engine" in
     claude) printf '%s\n' "$prompt" ;;
-    codex|agy) printf '%s\n%s\n' "$prompt" "$(verdict_file_instr)" ;;
-    *) printf '%s\n' "$prompt" ;;
+    *) printf '%s\n%s\n' "$prompt" "$(verdict_file_instr)" ;;
   esac
 }
 
@@ -841,6 +907,18 @@ r_agy() {
   agy --print "$1" --print-timeout 30m --dangerously-skip-permissions "${margs[@]}" 2>&1 | tee "$ENGINE_OUT"
 }
 
+r_generic() {
+  run_generic_engine "$CURRENT_ENGINE" "$1"
+}
+
+reviewer_fn_for_engine() {  # $1: engine; output reviewer function name.
+  if is_builtin_engine "$1"; then
+    echo "r_$1"
+  else
+    echo "r_generic"
+  fi
+}
+
 collect_suggestions() {  # Accumulate this round's suggestions for final evaluation.
   [[ -f "$WF/verdict.json" ]] || return 0
   local s
@@ -860,19 +938,21 @@ show_blockers() {
 }
 
 run_review() {  # $1: engine  $2: review scope; returns 0 when approved.
-  local t0=$SECONDS prompt output_art slug
+  local t0=$SECONDS prompt output_art slug fn
   LAST_COST=""
+  CURRENT_ENGINE="$1"
   log_section "review" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND"
   echo ">>> Reviewer($1) is reviewing..."
   slug="reviewer-$(safe_slug "${CUR_STAGE:-startup}")-r${CUR_ROUND}"
   prompt="$(compose_review_prompt "$1" "$2")"
   archive_text "${slug}-prompt.md" "$prompt" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   output_art=$(art_path "${slug}-output.txt")
+  fn=$(reviewer_fn_for_engine "$1")
   # Prewrite a failed sentinel instead of deleting the file:
   # if the reviewer does not write a verdict, the run stays failed.
   # This also avoids apply_patch failures against a missing file.
   printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
-  engine_call "reviewer" "$1" "$slug" "r_$1" "$prompt" > >(tee -a "$LOG" | tee "$output_art") || echo "(warning: reviewer execution failed)" >&2
+  engine_call "reviewer" "$1" "$slug" "$fn" "$prompt" > >(tee -a "$LOG" | tee "$output_art") || echo "(warning: reviewer execution failed)" >&2
   write_meta "$output_art" "reviewer" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
@@ -1226,23 +1306,11 @@ main() {
   fi
 
   need git; need jq
-  local e
-  for e in "$ENGINE_A" "$ENGINE_B"; do
-    case "$e" in
-      claude|codex|agy) need "$e" ;;
-      *) echo "Unsupported engine:$e (available: claude | codex | agy)" >&2; exit 1 ;;
-    esac
-  done
+  validate_engines || exit 1
 
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || { echo "Run this script from the root of the target git repository." >&2; exit 1; }
 
-  # codex and agy resume the most recent session.
-  # If A and B both use one of them, the review session can become the worker's next resumed session.
-  if [[ "$ENGINE_A" == "$ENGINE_B" && "$ENGINE_A" != "claude" ]]; then
-    echo "A and B cannot both use $ENGINE_A because session resume would interfere. Use different engines." >&2
-    exit 1
-  fi
   dual_spec_preflight || exit 1
 
   echo "Workflow settings:A=$ENGINE_A  B=$ENGINE_B  DUAL_SPEC=$DUAL_SPEC  MAX_ROUNDS=$MAX_ROUNDS  SPEC_DIR=$SPEC_DIR"

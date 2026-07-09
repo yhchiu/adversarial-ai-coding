@@ -33,6 +33,7 @@ The worker and reviewer can be different engines:
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
 - `agy` for Antigravity CLI
+- A custom agent CLI or wrapper command
 
 Using different engines for worker and reviewer is recommended because their
 failure modes are different.
@@ -94,6 +95,8 @@ flowchart TD
   - `claude`
   - `codex`
   - `agy` is optional
+- Any custom agent or wrapper commands you configure through `ENGINE_A` or
+  `ENGINE_B`, available on `PATH`.
 - Run the script from the root of the target Git repository.
 
 ## Quick Start
@@ -122,6 +125,14 @@ Swap the worker and reviewer engines:
 
 ```bash
 ENGINE_A=codex ENGINE_B=claude ./adversarial-ai-coding.sh task.md
+```
+
+Use custom agent or wrapper commands:
+
+```bash
+ENGINE_A=gemini ENGINE_A_ARGS='--model gemini-2.5-pro --yolo' \
+ENGINE_B=my-review-wrapper ENGINE_B_ARGS='--strict' \
+  ./adversarial-ai-coding.sh task.md
 ```
 
 Enable dual spec mode:
@@ -166,6 +177,26 @@ implementation, and self-review. The other slot becomes the reviewer and writes
 the protected acceptance tests. Dual spec mode requires an interactive terminal
 and `HUMAN_GATE=1`; unattended runs should leave it disabled.
 
+## Custom Engine Commands
+
+If `ENGINE_A` or `ENGINE_B` is not `claude`, `codex`, or `agy`, the script
+treats it as a custom agent command. The command is run with the slot-specific
+args followed by the prompt as the final argument:
+
+```bash
+$ENGINE_A $ENGINE_A_ARGS "$prompt"
+$ENGINE_B $ENGINE_B_ARGS "$prompt"
+```
+
+Custom commands must be agentic: they need to read the prompt, inspect and edit
+the repository as needed, and exit non-zero on execution failure. A custom
+reviewer must write `.workflow/review.md` and `.workflow/verdict.json`; stdout
+JSON verdicts are not parsed. Custom engines do not get automatic session
+resume, and `MODEL_A` / `MODEL_B` are not translated into model flags for them.
+Put model flags in `ENGINE_A_ARGS` / `ENGINE_B_ARGS`, or use a wrapper script
+for CLIs that need stdin, prompt files, quoting-sensitive arguments, or session
+state.
+
 ## Writing Good Tasks
 
 The result depends heavily on how clear the task is. Prefer a task file with a
@@ -191,11 +222,12 @@ Add `--json` output to the CLI.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `ENGINE_A` | `claude` | Worker engine: `claude`, `codex`, or `agy`. |
+| `ENGINE_A` | `claude` | Worker engine: `claude`, `codex`, `agy`, or a custom agent command. |
 | `ENGINE_B` | `codex` | Reviewer engine. In the acceptance-test stage, the roles are swapped. |
-| `MODEL_A` | CLI default | Model override for the worker slot. |
-| `MODEL_B` | CLI default | Model override for the reviewer slot. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments, split on whitespace and appended to engine calls. |
+| `MODEL_A` | CLI default | Model override for built-in worker slots. Custom engines should pass model flags through `ENGINE_A_ARGS`. |
+| `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom engines should pass model flags through `ENGINE_B_ARGS`. |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in engines, split on whitespace and appended to engine calls. |
+| `ENGINE_A_ARGS` / `ENGINE_B_ARGS` | empty | Extra CLI arguments for custom engine commands, split on whitespace and appended before the prompt argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
@@ -294,8 +326,9 @@ test and update `.workflow/protected-base.sha`, or remove the file from
   worth the extra cost.
 - `DUAL_SPEC=1` intentionally refuses `HUMAN_GATE=0` and non-interactive
   terminals because the workflow requires a human owner decision.
-- `codex` and `agy` cannot be used as both worker and reviewer at the same time
-  because both resume the most recent session.
+- `codex`, `agy`, and identical custom engine commands cannot be used as both
+  worker and reviewer at the same time. Use distinct wrapper command names when
+  both slots share the same underlying custom CLI.
 
 ## Testing This Repository
 
@@ -329,8 +362,9 @@ export GOCACHE=/tmp/go-build-aac
 
 ### Reviewer did not write `verdict.json`
 
-The reviewer failed or did not follow the rules. Check `.workflow/logs/` or the
-run archive under `.workflow/runs/<RUN_ID>/`.
+The reviewer failed or did not follow the rules. For custom reviewers, verify
+that the command can write `.workflow/review.md` and `.workflow/verdict.json`.
+Check `.workflow/logs/` or the run archive under `.workflow/runs/<RUN_ID>/`.
 
 ### The run is stuck on a permission prompt
 

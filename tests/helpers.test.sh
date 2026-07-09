@@ -71,6 +71,47 @@ assert_eq "engine_model:B slot uses MODEL_B" "mini" "$out"
 out=$( cd "$d" && ENGINE_A=claude ENGINE_B=codex \
       && source "$SCRIPT" && engine_model claude )
 assert_eq "engine_model:unset -> empty for CLI default" "" "$out"
+out=$( cd "$d" && ENGINE_A=custom-agent ENGINE_B=codex MODEL_A=ignored ENGINE_A_ARGS='--model custom' \
+      && source "$SCRIPT" && engine_model custom-agent )
+assert_eq "engine_model:custom engine ignores MODEL_A" "" "$out"
+out=$( cd "$d" && ENGINE_A=custom-agent ENGINE_B=codex ENGINE_A_ARGS='--model custom --flag' \
+      && source "$SCRIPT" && resolve_model_args custom-agent )
+assert_eq "resolve_model_args:custom engine uses ENGINE_A_ARGS" "--model custom --flag" "$out"
+
+# ---------- generic engine helpers ----------
+d=$(tmpdir)
+out=$( cd "$d" && source "$SCRIPT" && is_builtin_engine claude; printf '%s' "$?" )
+assert_eq "generic:is_builtin_engine detects built-in" "0" "$out"
+out=$( cd "$d" && source "$SCRIPT" && if is_builtin_engine custom-agent; then printf '0'; else printf '1'; fi )
+assert_eq "generic:is_builtin_engine rejects custom" "1" "$out"
+
+d=$(tmpdir)
+cat > "$d/fake-agent" <<'EOF'
+#!/usr/bin/env bash
+{
+  printf 'argc=%s\n' "$#"
+  i=1
+  for arg in "$@"; do
+    printf 'arg%s=%s\n' "$i" "$arg"
+    i=$((i + 1))
+  done
+} > generic-capture.txt
+printf 'custom engine ran\n'
+EOF
+chmod +x "$d/fake-agent"
+out=$(
+  cd "$d" \
+    && mkdir -p .workflow \
+    && ENGINE_A="$d/fake-agent" ENGINE_A_ARGS='--flag value' ENGINE_OUT="$d/engine-out.txt" \
+    && source "$SCRIPT" \
+    && CURRENT_ENGINE="$ENGINE_A" \
+    && w_generic "hello prompt" >/dev/null \
+    && cat generic-capture.txt \
+    && printf -- '---\n' \
+    && cat "$ENGINE_OUT"
+)
+assert_eq "generic:w_generic passes args and prompt as final arg" \
+  $'argc=3\narg1=--flag\narg2=value\narg3=hello prompt\n---\ncustom engine ran' "$out"
 
 # ---------- plan_tasks ----------
 d=$(tmpdir)
@@ -192,6 +233,9 @@ else bad "compose_review_prompt:claude omits verdict_file_instr"; fi
 out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt codex scope )
 if [[ "$out" == *"Finally write the verdict"* ]]; then ok "compose_review_prompt:codex includes verdict_file_instr"
 else bad "compose_review_prompt:codex includes verdict_file_instr"; fi
+out=$( cd "$d" && source "$SCRIPT" && compose_review_prompt custom-agent scope )
+if [[ "$out" == *"Finally write the verdict"* ]]; then ok "compose_review_prompt:custom includes verdict_file_instr"
+else bad "compose_review_prompt:custom includes verdict_file_instr"; fi
 
 # ---------- dual spec helpers ----------
 d=$(tmpdir)
@@ -376,6 +420,15 @@ d=$(new_repo)
 ( cd "$d" && ENGINE_A=codex ENGINE_B=codex "$SCRIPT" "task" ) >/dev/null 2>&1
 assert_rc "preflight:codex+codex -> blocked" 1 $?
 assert_eq "preflight:block leaves no branch side effect" "main" "$(git -C "$d" branch --show-current)"
+
+d=$(new_repo)
+( cd "$d" && ENGINE_A=sh ENGINE_B=sh "$SCRIPT" "task" ) >/dev/null 2>&1
+assert_rc "preflight:custom same command -> blocked" 1 $?
+assert_eq "preflight:custom block leaves no branch side effect" "main" "$(git -C "$d" branch --show-current)"
+
+d=$(tmpdir)
+( cd "$d" && ENGINE_A=sh && ENGINE_B=pwd && source "$SCRIPT" && validate_engines ) >/dev/null 2>&1
+assert_rc "preflight:custom commands can be validated" 0 $?
 
 "$SCRIPT" print-agents 2>/dev/null | grep -qF '<!-- adversarial-ai-coding:begin -->'
 assert_rc "print-agents:prints rule template" 0 $?
