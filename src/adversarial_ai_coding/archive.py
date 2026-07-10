@@ -30,6 +30,8 @@ def safe_slug(s: str) -> str:
 
 
 def csv_row(fields: Sequence[object]) -> str:
+    if isinstance(fields, (str, bytes)):
+        raise TypeError("csv_row expects a sequence of fields, not a bare string")
     quoted = ('"' + str(f).replace('"', '""') + '"' for f in fields)
     return ",".join(quoted) + "\n"
 

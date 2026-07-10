@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from adversarial_ai_coding.archive import (
     METRICS_HEADER,
     csv_row,
@@ -69,3 +71,8 @@ def test_metrics_summary_empty_cost_counts_as_zero(tmp_path):
 
 def test_metrics_summary_missing_file_is_empty(tmp_path):
     assert metrics_summary(tmp_path / "absent.csv") == ""
+
+
+def test_csv_row_rejects_bare_string():
+    with pytest.raises(TypeError):
+        csv_row("abc")
