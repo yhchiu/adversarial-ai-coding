@@ -101,13 +101,13 @@ class Settings:
             dual_spec=persisted("DUAL_SPEC", "0") == "1",
             open_pr=persisted("OPEN_PR", "0") == "1",
             # Deliberately never from the snapshot (bash line 307): provide per attempt.
-            notify_cmd=env.get("NOTIFY_CMD", ""),
-            retry_on_limit=env.get("RETRY_ON_LIMIT", "1") == "1",
-            retry_max=_to_int("RETRY_MAX", env.get("RETRY_MAX", "6")),
-            retry_base_wait=_to_int("RETRY_BASE_WAIT", env.get("RETRY_BASE_WAIT", "300")),
-            retry_max_wait=_to_int("RETRY_MAX_WAIT", env.get("RETRY_MAX_WAIT", "3600")),
+            notify_cmd=env.get("NOTIFY_CMD") or "",
+            retry_on_limit=(env.get("RETRY_ON_LIMIT") or "1") == "1",
+            retry_max=_to_int("RETRY_MAX", env.get("RETRY_MAX") or "6"),
+            retry_base_wait=_to_int("RETRY_BASE_WAIT", env.get("RETRY_BASE_WAIT") or "300"),
+            retry_max_wait=_to_int("RETRY_MAX_WAIT", env.get("RETRY_MAX_WAIT") or "3600"),
             retry_max_reset_wait=_to_int(
-                "RETRY_MAX_RESET_WAIT", env.get("RETRY_MAX_RESET_WAIT", "21600")
+                "RETRY_MAX_RESET_WAIT", env.get("RETRY_MAX_RESET_WAIT") or "21600"
             ),
             tools=persisted("TOOLS", DEFAULT_TOOLS),
             spec_dir=persisted("SPEC_DIR", f"specs/{run_id}"),

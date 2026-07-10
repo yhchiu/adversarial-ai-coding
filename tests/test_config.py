@@ -92,6 +92,15 @@ def test_non_integer_max_rounds_raises():
         make({"MAX_ROUNDS": "three"})
 
 
+def test_empty_env_values_fall_back_like_bash():
+    # bash ${VAR:-default} treats exported-but-empty as unset.
+    s = make({"RETRY_MAX": "", "RETRY_ON_LIMIT": "", "MAX_ROUNDS": "", "AUTO_BRANCH": ""})
+    assert s.retry_max == 6
+    assert s.retry_on_limit is True
+    assert s.max_rounds == 3
+    assert s.auto_branch is True
+
+
 def test_alias_env_or_default_direct():
     assert alias_env_or_default({}, "A", "B", "d") == "d"
     assert alias_env_or_default({"B": "legacy"}, "A", "B", "d") == "legacy"
