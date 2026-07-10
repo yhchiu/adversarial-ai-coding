@@ -62,19 +62,24 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
     norm = re.sub(r"[ \t\r\n]+", " ", text)
 
     # Format 1, Claude: "resets 10:50am" -> next occurrence, plus 120s buffer.
+    # bash uses `date -d "$t" 2>/dev/null || true`: unparseable clocks fail
+    # silently and the parser keeps scanning the other formats.
     m = _CLOCK.search(norm)
-    if m:
-        base = datetime.fromtimestamp(now)
-        target = base.replace(
-            hour=_hour24(int(m.group(1)), m.group(3)),
-            minute=int(m.group(2)),
-            second=0,
-            microsecond=0,
-        )
-        if int(target.timestamp()) <= now:
-            target += timedelta(days=1)
-        wait = int(target.timestamp()) - now + 120
-        return wait if wait <= RESET_SANITY_MAX else None
+    if m and int(m.group(1)) <= 12:  # GNU date rejects "19:30pm".
+        try:
+            base = datetime.fromtimestamp(now)
+            target = base.replace(
+                hour=_hour24(int(m.group(1)), m.group(3)),
+                minute=int(m.group(2)),
+                second=0,
+                microsecond=0,
+            )
+            if int(target.timestamp()) <= now:
+                target += timedelta(days=1)
+            wait = int(target.timestamp()) - now + 120
+            return wait if wait <= RESET_SANITY_MAX else None
+        except ValueError:
+            pass  # e.g. "5:99am": fall through to Formats 2 and 3.
 
     # Format 2, OpenAI/Codex: "try again in 20s / 2 minutes / 3 hours" + 30s buffer.
     m = _RELATIVE.search(norm)
@@ -94,16 +99,18 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
 
     # Format 3, Codex quota: "try again at Jul 14th, 2026 7:23 PM" + 30s buffer.
     m = _ABSOLUTE.search(norm)
-    if m:
+    if m and int(m.group(4)) <= 12:  # GNU date rejects hours above 12 with pm.
         month, day, year = m.group(1), int(m.group(2)), int(m.group(3))
         try:
             parsed_month = datetime.strptime(month[:3].title(), "%b").month
+            target = datetime(
+                year, parsed_month, day,
+                _hour24(int(m.group(4)), m.group(6)), int(m.group(5)),
+            )
         except ValueError:
+            # e.g. "Feb 30th": bash date -d fails silently; nothing left to
+            # try, so fall through to the final None.
             return None
-        target = datetime(
-            year, parsed_month, day,
-            _hour24(int(m.group(4)), m.group(6)), int(m.group(5)),
-        )
         target_epoch = int(target.timestamp())
         if target_epoch <= now:
             return 30  # Already elapsed; retry after a short buffer.

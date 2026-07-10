@@ -119,6 +119,25 @@ def test_absolute_date_already_elapsed_short_buffer(tmp_path):
     assert parse_reset_wait(p, NOW) == 30
 
 
+def test_malformed_clock_minute_falls_through(tmp_path):
+    # bash: date -d "5:99am" fails silently and the parser keeps scanning.
+    assert parse_reset_wait(out_file(tmp_path, "resets 5:99am\n"), NOW) is None
+
+
+def test_malformed_clock_still_finds_relative_duration(tmp_path):
+    p = out_file(tmp_path, "resets 5:99am, please try again in 90s\n")
+    assert parse_reset_wait(p, NOW) == 120
+
+
+def test_out_of_range_hour_falls_through(tmp_path):
+    assert parse_reset_wait(out_file(tmp_path, "resets 19:30pm\n"), NOW) is None
+
+
+def test_impossible_absolute_date_returns_none(tmp_path):
+    p = out_file(tmp_path, "try again at Feb 30th, 2026 7:23 PM.\n")
+    assert parse_reset_wait(p, NOW) is None
+
+
 def test_human_duration():
     assert human_duration(11520) == "3h 12m"
     assert human_duration(2700) == "45m"
