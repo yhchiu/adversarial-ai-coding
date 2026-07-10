@@ -138,6 +138,21 @@ def test_impossible_absolute_date_returns_none(tmp_path):
     assert parse_reset_wait(p, NOW) is None
 
 
+def test_resets_at_absolute_date_parses(tmp_path):
+    # Deliberate divergence from bash, where "resets at/on" are dead branches.
+    now_fixed = int(datetime(2026, 7, 8, 7, 0, 0).timestamp())
+    target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
+    p = out_file(tmp_path, "resets at Jul 14th, 2026 7:23 PM\n")
+    assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
+
+
+def test_resets_on_absolute_date_parses(tmp_path):
+    now_fixed = int(datetime(2026, 7, 8, 7, 0, 0).timestamp())
+    target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
+    p = out_file(tmp_path, "resets on Jul 14th, 2026 7:23 PM\n")
+    assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
+
+
 def test_human_duration():
     assert human_duration(11520) == "3h 12m"
     assert human_duration(2700) == "45m"

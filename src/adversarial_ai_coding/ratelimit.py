@@ -28,6 +28,9 @@ _RELATIVE = re.compile(
     r"(ms|milliseconds?|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b",
     re.IGNORECASE,
 )
+# Deliberate divergence: bash strips a 3-word prefix before date parsing, so
+# its "resets at"/"resets on" alternates never actually parse (dead branches).
+# The Python port resurrects them; tests pin this.
 _ABSOLUTE = re.compile(
     r"(?:try again at|resets at|resets on) +([A-Za-z]{3,9}) +(\d{1,2})"
     r"(?:st|nd|rd|th)?,? +(\d{4}),? +(\d{1,2}):(\d{2}) *([ap])\.?m",
@@ -75,6 +78,8 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
                 microsecond=0,
             )
             if int(target.timestamp()) <= now:
+                # bash adds exactly 86400s; timedelta(days=1) on a naive local datetime can
+                # differ by 1h across a DST edge. Wall-clock rollover is the intended meaning.
                 target += timedelta(days=1)
             wait = int(target.timestamp()) - now + 120
             return wait if wait <= RESET_SANITY_MAX else None
