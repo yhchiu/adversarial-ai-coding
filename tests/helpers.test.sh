@@ -665,10 +665,11 @@ run_engine_call() {  # $1: RETRY_ON_LIMIT  $2: stub output, empty means success
     && rc=0 && engine_call worker claude worker-stage-r1 fake_engine prompt >/dev/null 2>&1 || rc=$? \
     ;  echo "rc=$rc calls=$CALLS" )
 }
+# Quota/rate-limit give-ups return the typed QUOTA_ABORT_RC (75) so the run aborts as resumable.
 out=$(run_engine_call 1 'api_error_status":429 hit your session limit')
-assert_eq "engine_call:default retries to limit (1 call + 2 retries)" "rc=1 calls=3" "$out"
+assert_eq "engine_call:default retries to limit (1 call + 2 retries)" "rc=75 calls=3" "$out"
 out=$(run_engine_call 0 'api_error_status":429 hit your session limit')
-assert_eq "engine_call:RETRY_ON_LIMIT=0 -> no retry" "rc=1 calls=1" "$out"
+assert_eq "engine_call:RETRY_ON_LIMIT=0 -> no retry, typed quota abort" "rc=75 calls=1" "$out"
 out=$(run_engine_call 1 'ordinary build failure')
 assert_eq "engine_call:non-rate-limit error -> no retry" "rc=1 calls=1" "$out"
 out=$(run_engine_call 1 '')
@@ -676,10 +677,10 @@ assert_eq "engine_call:success passes immediately" "rc=0 calls=1" "$out"
 # A quota that resets days from now must fail fast: backing off would sleep for hours and still fail.
 far=$(LC_ALL=C date -d "+10 days" '+%b %-d, %Y %-I:%M %p')
 out=$(run_engine_call 1 "You've hit your usage limit. try again at $far.")
-assert_eq "engine_call:reset beyond RETRY_MAX_RESET_WAIT -> abort without sleeping" "rc=1 calls=1" "$out"
+assert_eq "engine_call:reset beyond RETRY_MAX_RESET_WAIT -> abort without sleeping" "rc=75 calls=1" "$out"
 near=$(LC_ALL=C date -d "+1 hour" '+%b %-d, %Y %-I:%M %p')
 out=$(run_engine_call 1 "You've hit your usage limit. try again at $near.")
-assert_eq "engine_call:reset within the ceiling -> waits and retries" "rc=1 calls=3" "$out"
+assert_eq "engine_call:reset within the ceiling -> waits and retries" "rc=75 calls=3" "$out"
 
 d=$(tmpdir)
 ( cd "$d" && mkdir -p .workflow/logs .workflow/runs/test \
@@ -998,6 +999,89 @@ printf -- '- [ ] task one\n- [ ] task one extra\nplain line\n' > "$d/plan.md"
 ( cd "$d" && source "$SCRIPT" && mark_plan_task_done plan.md "task one" && mark_plan_task_done plan.md "task one" )
 assert_eq "plan checkbox:exact line is ticked once, prefix matches untouched" \
   $'- [x] task one\n- [ ] task one extra\nplain line' "$(cat "$d/plan.md")"
+
+# ---------- resume state: abort reporting and idempotent finish ----------
+d=$(new_repo)
+out=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_ID=myrun \
+    && print_resume_hint 2>&1 \
+    && print_resume_hint 2>&1 \
+    && echo "end"
+)
+assert_like "resume hint:contains RESUME_RUN=<id>" "*RESUME_RUN=myrun*" "$out"
+assert_eq "resume hint:deduplicated to a single print" "1" "$(grep -c 'RESUME_RUN=' <<<"$out")"
+
+out=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_ID=myrun && USE_WORKTREE=1 \
+    && print_resume_hint 2>&1
+)
+assert_like "resume hint:worktree variant includes a cd command" "*cd *RESUME_RUN=myrun*" "$out"
+
+( cd "$d" && bash -c "source '$SCRIPT'; install_run_traps; exit 7" ) >/dev/null 2>&1
+assert_rc "traps:EXIT trap preserves the original exit code" 7 $?
+
+mkdir -p "$d/.workflow/state/hintrun"
+err=$( cd "$d" && bash -c "source '$SCRIPT'; RUN_STATE_DIR=.workflow/state/hintrun; RUN_ID=hintrun; install_run_traps; exit 9" 2>&1 ); rc=$?
+assert_rc "traps:failing run keeps its exit code" 9 "$rc"
+assert_like "traps:failing run prints the resume hint" "*RESUME_RUN=hintrun*" "$err"
+
+touch "$d/.workflow/state/hintrun/completed"
+err=$( cd "$d" && bash -c "source '$SCRIPT'; RUN_STATE_DIR=.workflow/state/hintrun; RUN_ID=hintrun; install_run_traps; exit 9" 2>&1 ); rc=$?
+assert_rc "traps:completed run still keeps its exit code" 9 "$rc"
+if [[ "$err" != *"RESUME_RUN=hintrun"* ]]; then
+  ok "traps:completed run does not advertise a resume"
+else
+  bad "traps:completed run does not advertise a resume(got [$err])"
+fi
+
+( cd "$d" && bash -c "source '$SCRIPT'; install_run_traps; kill -INT \$\$; sleep 1" ) >/dev/null 2>&1
+assert_rc "traps:SIGINT exits 130 through the EXIT trap" 130 $?
+
+d=$(tmpdir)
+( cd "$d" && mkdir -p .workflow/runs/test .workflow/logs && source "$SCRIPT" \
+    && WF=.workflow && WF_RUN=.workflow/runs/test && ART_SEQ=0 && LOG=.workflow/logs/t.log \
+    && CUR_STAGE=review && CUR_ROUND=1 && COLLECT_REVIEW_SUGGESTIONS=0 \
+    && write_meta() { :; } && metric() { :; } && log_section() { :; } \
+    && engine_call() { return 75; } \
+    && run_review codex scope ) >/dev/null 2>&1
+assert_rc "run_review:quota abort exits 75 instead of starting repair rounds" 75 $?
+
+d=$(new_repo)
+bare=$(tmpdir)
+git init -q --bare "$bare"
+git -C "$d" remote add origin "$bare"
+mkdir -p "$d/bin" "$d/.workflow"
+cat > "$d/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "pr view" ]]; then
+  if [[ -n "${GH_HAS_PR:-}" ]]; then echo "https://example.com/pr/1"; exit 0; fi
+  exit 1
+fi
+if [[ "$1 $2" == "pr create" ]]; then echo "CREATE-CALLED"; exit 0; fi
+exit 1
+EOF
+chmod +x "$d/bin/gh"
+out=$(
+  cd "$d" && PATH="$d/bin:$PATH" && GH_HAS_PR=1 && export GH_HAS_PR && source "$SCRIPT" \
+    && WF=.workflow && OPEN_PR=1 && SPEC_DIR=specs && LOG=/dev/null && METRICS= \
+    && log_section() { :; } && archive_snapshot() { :; } && notify() { :; } \
+    && finish "task title"
+)
+assert_like "finish:existing PR is reported instead of re-created" "*PR already exists: https://example.com/pr/1*" "$out"
+if [[ "$out" != *CREATE-CALLED* ]]; then
+  ok "finish:gh pr create is skipped when the PR exists"
+else
+  bad "finish:gh pr create is skipped when the PR exists(got [$out])"
+fi
+out=$(
+  cd "$d" && PATH="$d/bin:$PATH" && source "$SCRIPT" \
+    && WF=.workflow && OPEN_PR=1 && SPEC_DIR=specs && LOG=/dev/null && METRICS= \
+    && log_section() { :; } && archive_snapshot() { :; } && notify() { :; } \
+    && finish "task title"
+)
+assert_like "finish:missing PR still runs gh pr create" "*CREATE-CALLED*" "$out"
 
 # ---------- summary ----------
 echo ""

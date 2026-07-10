@@ -88,14 +88,38 @@ release_run_lock() {
   return 0
 }
 
-on_workflow_exit() {
+print_resume_hint() {  # Print a paste-ready resume command, once per abort.
+  [[ -n "$RESUME_HINT_PRINTED" ]] && return 0
+  RESUME_HINT_PRINTED=1
+  local script_path="${BASH_SOURCE[0]}"
+  if command -v realpath >/dev/null 2>&1; then
+    script_path=$(realpath "$script_path" 2>/dev/null || printf '%s' "$script_path")
+  fi
+  # The task argument is not needed: the run's task snapshot supplies it.
+  if [[ "${USE_WORKTREE:-0}" == "1" ]]; then
+    printf 'To resume this run:\n  cd %q && RESUME_RUN=%q %q\n' "$(pwd -P)" "$RUN_ID" "$script_path" >&2
+  else
+    printf 'To resume this run:\n  RESUME_RUN=%q %q\n' "$RUN_ID" "$script_path" >&2
+  fi
+}
+
+on_workflow_exit() {  # Single abort path: every non-zero exit of an unfinished run prints the hint.
   local rc=$?
+  if (( rc != 0 )) && [[ -n "$RUN_STATE_DIR" && -d "$RUN_STATE_DIR" && ! -f "$RUN_STATE_DIR/completed" ]]; then
+    echo "!! Workflow interrupted (exit=$rc). Full run log: ${LOG:-}" >&2
+    print_resume_hint
+  fi
   release_run_lock
   exit "$rc"
 }
 
 install_run_traps() {
   trap on_workflow_exit EXIT
+  # Route signals through the EXIT trap with their conventional exit codes,
+  # so Ctrl-C and kill also print the resume hint and release the lock.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
 }
 
 acquire_run_lock() {  # $1: run state dir; mkdir is the atomic lock primitive.
@@ -1113,11 +1137,13 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
     "$fn" "$prompt" || rc=$?
     archive_engine_attempt "$role" "$engine" "$slug" "$attempt" "$rc"
     (( rc == 0 )) && return 0
-    [[ "$RETRY_ON_LIMIT" == "1" ]] || return "$rc"
     is_rate_limited "$ENGINE_OUT" || return "$rc"
+    # Every quota/rate-limit give-up returns the typed QUOTA_ABORT_RC so callers can
+    # abort the run as resumable instead of treating it like a quality failure.
+    [[ "$RETRY_ON_LIMIT" == "1" ]] || return "$QUOTA_ABORT_RC"
     if (( n >= RETRY_MAX )); then
       echo "!! Rate limit did not clear after $RETRY_MAX retries; giving up." >&2
-      return "$rc"
+      return "$QUOTA_ABORT_RC"
     fi
     w=$(parse_reset_wait "$ENGINE_OUT")   # Prefer waiting until the parsed reset time.
     if [[ -n "$w" ]] && (( w > RETRY_MAX_RESET_WAIT )); then
@@ -1126,7 +1152,7 @@ engine_call() {  # $1: role  $2: engine  $3: artifact slug  $4: engine fn  $5: p
       eta=$(date -d "+$w seconds" '+%Y-%m-%d %H:%M' 2>/dev/null || true)
       echo "!! Quota resets in $(human_duration "$w") (about $eta), beyond RETRY_MAX_RESET_WAIT=${RETRY_MAX_RESET_WAIT}s. Not waiting; rerun after the reset." >&2
       notify "adversarial-ai-coding: quota exhausted until $eta; run aborted"
-      return "$rc"
+      return "$QUOTA_ABORT_RC"
     fi
     n=$(( n + 1 ))
     if [[ -z "$w" ]]; then
@@ -1299,7 +1325,16 @@ run_review() {  # $1: engine  $2: review scope; returns 0 when approved.
   # if the reviewer does not write a verdict, the run stays failed.
   # This also avoids apply_patch failures against a missing file.
   printf '{"approved": false, "blockers": ["reviewer did not write a verdict"], "suggestions": []}\n' > "$WF/verdict.json"
-  engine_call "reviewer" "$1" "$slug" "$fn" "$prompt_art" > >(tee -a "$LOG" | tee "$output_art") || echo "(warning: reviewer execution failed)" >&2
+  local engine_rc=0
+  engine_call "reviewer" "$1" "$slug" "$fn" "$prompt_art" > >(tee -a "$LOG" | tee "$output_art") || engine_rc=$?
+  if (( engine_rc == QUOTA_ABORT_RC )); then
+    # A quota give-up must not masquerade as "reviewer did not write a verdict":
+    # that would burn worker repair rounds on a problem no code change can fix.
+    echo "!! Reviewer gave up on a quota/rate limit; aborting the run as resumable." >&2
+    exit "$QUOTA_ABORT_RC"
+  elif (( engine_rc != 0 )); then
+    echo "(warning: reviewer execution failed)" >&2
+  fi
   write_meta "$output_art" "reviewer" "$1" "$(engine_model "$1")" "$(resolve_model_args "$1")" "$CUR_STAGE" "$CUR_ROUND"
   archive_snapshot "$ENGINE_OUT" "${slug}-final.raw" "reviewer" "$1" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   metric reviewer "$1" "$CUR_ROUND" "$(( SECONDS - t0 ))" "$LAST_COST"
@@ -1664,7 +1699,7 @@ run_dual_spec_spec_stage() {  # $1: task text
 # ---------- Finish: hand off to a human ----------
 # The endpoint is a PR ready for human merge, not a silent exit. OPEN_PR=1 executes push/PR creation.
 finish() {  # $1: task description
-  local branch title
+  local branch title pr_url
   log_section "finish" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
   branch=$(git rev-parse --abbrev-ref HEAD)
   title=$(head -1 <<<"$1")
@@ -1695,7 +1730,13 @@ EOF
   archive_snapshot "$WF/suggestions.md" "suggestions.md" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
   if [[ "$OPEN_PR" == "1" ]] && command -v gh >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
     git push -u origin "$branch"
-    gh pr create --title "$title" --body-file "$WF/pr-body.md"
+    # Idempotent on resume: a PR may already exist from an attempt that was
+    # interrupted after creation, and a second create would fail the run forever.
+    if pr_url=$(gh pr view --json url --jq .url 2>/dev/null); then
+      echo "PR already exists: $pr_url (skipping gh pr create)"
+    else
+      gh pr create --title "$title" --body-file "$WF/pr-body.md"
+    fi
   else
     echo ""
     echo "Next steps, run manually:"
@@ -1839,8 +1880,6 @@ main() {
   printf '%s\n' "$WF_RUN" > "$WF/latest-run.txt"
   log_section "startup settings" "workflow" "workflow" "startup" "0"
 
-  trap 'echo "!! Workflow interrupted (exit=$?). Full run log: '"$LOG"'" >&2' ERR
-
   bootstrap_agents_md
 
   GATE_CMD="${GATE_CMD:-${RESUMED_GATE_CMD:-$(detect_gate)}}"
@@ -1957,6 +1996,11 @@ main() {
   fi
 
   finish "$task"
+
+  # Mark the run complete: RESUME_RUN then refuses it and RESUME_RUN=last skips it.
+  if [[ -n "$RUN_STATE_DIR" ]]; then
+    : > "$RUN_STATE_DIR/completed"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
