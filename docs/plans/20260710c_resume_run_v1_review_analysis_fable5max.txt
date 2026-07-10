@@ -1,0 +1,110 @@
+總判定
+
+Review 的事實查核幾乎全部屬實——所有行號引用我逐一核對，無一錯引。其中 C3、C4、C5 是計畫裡貨真價實的
+bug，照原計畫實作一定會出事；H4、H5 也直接命中你「Ctrl-C 後能 resume」的需求缺口。但 review
+的架構性要求約有一半是超規格：它用分散式系統等級的標準（fsync 語義、防竄改權威
+state、完整交易狀態機、reconciliation、receipts、schema
+migration）來審一個單人本機工具，而這個工具的既有信任模型本來就不支撐那種等級。「Request
+changes」的結論對一半：不能照原計畫直接寫，但修法遠不需要 review 開出的那套架構。
+
+屬實且必修（計畫的真 bug）
+
+C3 — init_live_state 會刪掉 resume 需要的狀態：完全正確，是最實質的發現。
+init_live_state（adversarial-ai-coding.sh:441）確實無條件刪除
+protected-tests.txt、protected-base.sha、suggestions.md、spec-merge-request.md，而 main
+每次啟動都呼叫它（:1429），既有測試還明文要求刪除行為（helpers.test.sh:495-508）。原計畫宣稱「protected
+檔案續跑時仍在原地、check_protected 照常運作」（計畫 :71-72）與現行程式碼直接矛盾——resume 一啟動這些檔案就沒了，而
+check_protected 對缺檔是靜默 return 0（:912），等於驗收測試保護被無聲關閉。這是「resume
+之後整個工具的招牌保護機制失效」級別的問題。
+
+C4 — acceptance-test 的 crash window：正確。 test_base 只是 local 變數（:1478），流程是先 commit
+測試（:1488）、之後才算 protected list（:1489-1490）。commit 後中斷再 resume，重跑會拿新 HEAD 當 base，diff 為空 →
+protected list 為空 → 只印警告就繼續（:1493-1497）。修法其實很便宜：stage 開始時把 test_base 持久化到
+state，重試沿用同一值。
+
+C5 — dual-spec decision 還原時機錯誤：正確，而且後果比 review 寫的更硬。 finalize-spec 在 run_dual_spec_spec_stage
+內部執行（:1329-1330），早於計畫安排的還原點（main 的 commit-spec 前）。decision 是 local（:1275），只在
+select-spec 區塊內賦值（:1327）。skip select-spec 後 apply_dual_spec_decision "" 會讓 dual_spec_owner_slot "" 回傳
+1，在 set -e 下整個腳本直接 crash——好消息是 fail-closed 而非靜默錯誤，壞消息是 dual-spec 的 resume
+在這個斷點根本跑不起來。另外 merge 模式需要的 spec-merge-request.md 又被 C3 刪掉，雙重命中。
+
+H4 — 中止路徑覆蓋不全：正確，且直接牴觸你的需求。 你明列的四種中斷裡有兩種計畫沒接住：
+- Ctrl-C：腳本只有 ERR trap（:1437），沒有 INT/TERM handler；SIGINT 不觸發 ERR trap，所以你按 Ctrl-C
+什麼提示都不會印。
+- reviewer 端的 rate-limit：run_review 把 engine_call 失敗吞掉成警告（:1039），quota 中止會被當成「reviewer 沒寫
+verdict」的普通 review 失敗，接著還會叫 worker 做一輪無意義的 repair（燒錢），而不是乾淨地中止並印 hint。bash
+語義的細節 review 也說對了：exit 1 不觸發 ERR trap，所以 protected-test 中止（:918）、human
+gate（:1150、:1155）、merge abort（:1261、:1264）都在計畫的覆蓋之外。改用單一去重的 EXIT trap + INT/TERM handler
+是正解。
+
+H5 — resume.env 欄位命名矛盾：正確。 計畫 :21-23 寫入原名（SPEC_DIR、ENGINE_A…），:28 的讀取公式卻期待
+RESUMED_VAR，兩者兜不起來。若照原名 source，會蓋掉使用者顯式 export 的值（宣告的優先序失效）；更具體的：source
+出來的 ENGINE_A 撞上使用者在 resume 時設的 AGENT_A，會直接觸發 alias_env_or_default 的 Conflicting
+錯誤（:50-52）而不是覆寫。清單也確實漏了 ENGINE_A_ARGS/ENGINE_B_ARGS（custom agent
+沒它跑不動）、TOOLS、HUMAN_GATE、OPEN_PR 等。
+
+C2 的 fallback 分支 — 正確。 全部任務已 [x] 但 write-code 未 end_stage 時中斷，resume 後 plan_tasks 回傳 0
+筆，會落入 whole-plan fallback（:1503-1506）。必須區分「plan 沒有任務清單」和「任務全部完成」，這是兩三行的修正。
+
+屬實但輕量方案即可
+
+- C2 主體（checkbox 由 worker 打勾）：prompt 確實要求 worker 自己改 [x]（implement-plan-task.md:2），順序也確實是
+work→gate→commit（:1513-1515）。但「跳過未驗證 task」的實際風險有兜底：任務級 build gate 之後還有全量
+GATE_CMD（含驗收測試）與 branch review，漏掉的功能會在終局被抓到——前提是驗收測試存在，這就是為什麼 C4
+必須先修。輕量修法是讓 script 在 commit 成功後自己打勾（worker 打勾只當 UI），不需要 review 要的 task 狀態機 +
+stable ID + commit_oid 全家桶。
+- C6（run identity）：task 檔案每次重讀（:1404-1409）確實會讓改過的檔案配上舊 ledger；存 resolved task text 進
+state（archive_task :311-331 已示範做法）即可。SPEC_DIR/DUAL_SPEC 改成「resume 時驗證相等、不可覆寫」合理；repo
+identity、Git common dir、逐 checkpoint OID 驗證則過重，記一個 expected HEAD 不符時警告即可。
+- H3（last 與 finish 冪等）：state 加一個 status=completed 標記、last 跳過已完成 run、gh pr create 前先 gh pr view
+檢查——三個小改就消掉主要風險。預設 OPEN_PR=0 下 finish 本來就無外部副作用。
+- H2（鎖）：同秒碰撞對手動啟動的 CLI 機率極低，但 atomic mkdir 鎖只要幾行，Windows Git Bash 也可用（flock
+確實沒有），值得加；PID/stale takeover 免了。
+- H6（測試）：這是 review 最有價值的建議之一——腳本本來就支援 custom engine（w_generic，:811-828），用兩個 fake
+agent script 跑完整 main() 的 interrupt→resume 整合測試完全可行、不花配額，而且是唯一能抓到 end_stage 放錯位置、C5
+順序錯誤這類接線問題的手段。原計畫只有 helper 單測 + 把真實 E2E 押在 2026-07-14 配額重置，確實太薄。但 review
+的全矩陣（每個邊界注入 SIGKILL、symlink、unicode 路徑、並發 resume…）砍到 4-6 個關鍵 failpoint 就夠。
+
+超規格，建議明列「不做」
+
+C1 的核心主張（權威 state 必須放在 agent
+不可寫的位置或加完整性驗證、交易狀態機、fsync、needs_reconciliation、schema migration、跨 attempt budget
+持久化、PREPARING intent、dirty fingerprint 對帳）與這個工具的既有信任模型不成比例：
+
+- worker 今天就能刪掉 .workflow/protected-tests.txt 靜默解除保護（check_protected :912 對缺檔直接過）——「agent
+可竄改 .workflow 狀態」不是 resume 新引入的風險類別。
+- gate 會執行 worker 剛寫的 go test（:1064 bash -c），TOOLS 註解自己承認 go run 是任意程式碼執行（:87），agy 更是
+--dangerously-skip-permissions（:793）。worker 在每次 run 都已擁有任意程式碼執行能力，signed state
+防不了也不必防。
+- 單機工具的 torn write 後果是「多重跑幾個 stage、多花點 AI 錢」，方向是 fail-safe，不是資料毀損。README
+誠實寫明「斷電屬 best-effort」即可，review 自己也接受這個寫法。
+
+不過 C1 有一個點必須採納：source resume.env 會是全腳本第一處「把 workspace 檔案內容當 shell
+執行」的地方（現有所有檔案都只當資料讀），這是質變。改成 data-only 的 KEY=VALUE 解析（允許清單 + 不 eval），加一行
+RUN_ID 格式驗證（[A-Za-z0-9-]+）防 path traversal，成本極低，該做。
+
+Review 本身的不精確處
+
+- H1「state 截斷時會錯誤 skip」——方向說反了。 append-only
+台帳截斷只會「丟行」，丟行的後果是重跑（fail-safe），截斷不可能憑空多出已完成記錄。錯誤 skip
+的真正來源是它列的另外兩項（branch 被 reset、artifact 遺失），屬 C6 範疇，與寫入原子性無關。
+- C2「反而重做整份 plan」——誇大。 該情境下程式碼全部已 commit，worker 收到 whole-plan prompt
+後大概率確認即返回；真實代價是 1-2 次多餘 AI call 加上模型自作主張重構的小風險，不是全額重付。
+- 跨 attempt budget「繞過 RETRY_MAX/MAX_ROUNDS」——非問題。 resume 是人手動貼指令觸發的，重跑預算歸零正是使用者按下
+resume 時的意思表示，對互動式個人工具不需要 durable 累積。
+
+對照你的原始目標
+
+四種中斷裡，原計畫實際只接住了 worker 端 rate-limit 和一部分網路錯誤；Ctrl-C（無 signal handler）和 reviewer 端
+quota（被吞成 review round）是計畫的真空區，這兩點 review 抓得準、必須進 v2。當機/斷電則接受 best-effort 並寫進
+README 即可。
+
+建議
+
+計畫骨架（同 RUN_ID、ledger、if begin_stage; then ...; end_stage; fi、attempt archive <id>-2）review
+自己也承認正確，可以保留。v2 需要吸收的是：C3（init 拆 fresh/resume）、C4（持久化 test_base）、C5（decision 在
+finalize-spec 前還原）、H4（EXIT+INT/TERM trap、reviewer quota 中止不被吞）、H5（統一 RESUMED_*
+命名、補齊欄位清單）、C2 fallback 區分、C1 縮水版（不 source、驗 run id）、H3 三小改、mkdir 鎖，加一個 fake-agent
+的 resume 整合測試。其餘（簽章 state、狀態機、fsync、receipts、schema migration、budget
+持久化）明列進「不做」節並寫明理由。
+
