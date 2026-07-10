@@ -28,10 +28,13 @@ jobs:
           sudo apt-get install -y jq
 
       - name: Check shell syntax
-        run: bash -n adversarial-ai-coding.sh tests/helpers.test.sh tests/e2e/run.sh
+        run: bash -n adversarial-ai-coding.sh tests/helpers.test.sh tests/resume.test.sh tests/e2e/run.sh
 
       - name: Run helper tests
         run: bash tests/helpers.test.sh
+
+      - name: Run resume suite
+        run: bash tests/resume.test.sh
 
       - name: Run setup-only E2E fixture
         env:
@@ -40,3 +43,28 @@ jobs:
         run: |
           mkdir -p "$GOCACHE"
           bash tests/e2e/run.sh
+
+  test-windows:
+    name: Tests (Windows)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # Keep LF endings: the runner's default autocrlf would break shell scripts.
+      - name: Force LF checkout
+        run: git config --global core.autocrlf input
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check shell syntax
+        run: bash -n adversarial-ai-coding.sh tests/helpers.test.sh tests/resume.test.sh tests/e2e/run.sh
+
+      - name: Run helper tests
+        run: bash tests/helpers.test.sh
+
+      - name: Run resume suite
+        run: bash tests/resume.test.sh
