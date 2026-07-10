@@ -788,6 +788,114 @@ d=$(new_repo)
 ( cd "$d" && source "$SCRIPT" && RUN_ID=xdup && mkdir -p .workflow/state/xdup && init_run_state task ) >/dev/null 2>&1
 assert_nonzero "fresh state:same-second run id collision fails clearly" $?
 
+# ---------- resume state: stage ledger ----------
+d=$(new_repo)
+out=$(
+  cd "$d" && mkdir -p .workflow/state/run .workflow/logs && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/run && STAGE_LEDGER=.workflow/state/run/completed-stages \
+    && : > "$STAGE_LEDGER" && LOG=.workflow/logs/t.log \
+    && log_section() { :; } \
+    && begin_stage stage-one >/dev/null \
+    && end_stage \
+    && stage_done stage-one && echo recorded \
+    && if ! stage_done stage-two; then echo unrecorded-still-runs; fi \
+    && [[ -f .workflow/state/run/last-head ]] && echo head-checkpoint
+)
+assert_eq "ledger:end_stage records the stage and a HEAD checkpoint" \
+  $'recorded\nunrecorded-still-runs\nhead-checkpoint' "$out"
+
+out=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/run && STAGE_LEDGER=.workflow/state/run/completed-stages \
+    && LOG=.workflow/logs/t.log \
+    && rc=0 && begin_stage stage-one || rc=$? ; echo "rc=$rc"
+)
+assert_like "ledger:completed stage is skipped and returns 1" "*== skip ?stage-one? (already completed in run *rc=1*" "$out"
+
+out=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/run && STAGE_LEDGER=.workflow/state/run/completed-stages \
+    && LOG=.workflow/logs/t.log \
+    && touch artifact.md \
+    && rc=0 && begin_stage stage-one artifact.md || rc=$? ; echo "rc=$rc"
+)
+assert_like "ledger:skip verifies required artifacts first" "*== skip ?stage-one?*rc=1*" "$out"
+
+rc=0
+err=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/run && STAGE_LEDGER=.workflow/state/run/completed-stages \
+    && LOG=.workflow/logs/t.log \
+    && begin_stage stage-one missing-artifact.md 2>&1 >/dev/null
+) || rc=$?
+assert_nonzero "ledger:missing artifact fails closed" "$rc"
+assert_like "ledger:missing artifact points at the run archive" "*run archive*" "$err"
+
+d=$(tmpdir)
+out=$(
+  cd "$d" && mkdir -p .workflow/logs && source "$SCRIPT" && LOG=.workflow/logs/t.log \
+    && log_section() { :; } \
+    && begin_stage some-stage >/dev/null \
+    && end_stage \
+    && echo "cur=$CUR_STAGE" \
+    && [[ ! -e .workflow/state ]] && echo no-state-written
+)
+assert_eq "ledger:without claimed run state begin/end behave as before" $'cur=some-stage\nno-state-written' "$out"
+
+# ---------- resume state: init_live_state resume mode ----------
+d=$(tmpdir)
+mkdir -p "$d/.workflow"
+for f in suggestions.md protected-tests.txt protected-base.sha spec-merge-request.md review.md verdict.json last-engine-output.txt pr-body.md; do
+  printf 'x\n' > "$d/.workflow/$f"
+done
+( cd "$d" && source "$SCRIPT" && init_live_state resume )
+[[ -f "$d/.workflow/suggestions.md" && -f "$d/.workflow/protected-tests.txt" && -f "$d/.workflow/protected-base.sha" && -f "$d/.workflow/spec-merge-request.md" ]] \
+  && ok "init_live_state:resume keeps durable cross-stage files" || bad "init_live_state:resume keeps durable cross-stage files"
+[[ ! -e "$d/.workflow/review.md" && ! -e "$d/.workflow/verdict.json" && ! -e "$d/.workflow/last-engine-output.txt" && ! -e "$d/.workflow/pr-body.md" ]] \
+  && ok "init_live_state:resume clears self-healing transients" || bad "init_live_state:resume clears self-healing transients"
+
+# ---------- resume state: last-head checkpoint and workspace ----------
+d=$(new_repo)
+( cd "$d" && git commit --allow-empty -qm second )
+first=$(git -C "$d" rev-parse HEAD~1)
+mkdir -p "$d/.workflow/state/r"
+printf '%s\n' "$first" > "$d/.workflow/state/r/last-head"
+rc=0
+err=$( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && verify_last_head 2>&1 ) || rc=$?
+assert_rc "last-head:ancestor checkpoint only warns" 0 "$rc"
+assert_like "last-head:ancestor warning mentions new commits" "*new commits*" "$err"
+
+printf '0123456789abcdef0123456789abcdef01234567\n' > "$d/.workflow/state/r/last-head"
+( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && verify_last_head ) >/dev/null 2>&1
+assert_nonzero "last-head:unreachable checkpoint fails closed" $?
+
+rm "$d/.workflow/state/r/last-head"
+printf 'write-spec\n' > "$d/.workflow/state/r/completed-stages"
+( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && STAGE_LEDGER=.workflow/state/r/completed-stages && verify_last_head ) >/dev/null 2>&1
+assert_nonzero "last-head:ledger without checkpoint fails closed" $?
+
+d=$(new_repo)
+git -C "$d" branch auto-r
+mkdir -p "$d/.workflow/state/r"
+out=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/r && RESUMED_BRANCH=auto-r \
+    && resume_workspace >/dev/null 2>&1 \
+    && git branch --show-current
+)
+assert_eq "resume workspace:switches back to the recorded branch" "auto-r" "$out"
+
+( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && RESUMED_BRANCH=gone-branch && resume_workspace ) >/dev/null 2>&1
+assert_nonzero "resume workspace:missing branch fails with a clear error" $?
+
+printf 'dirty change\n' >> "$d/base.txt"
+err=$(
+  cd "$d" && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/r && RESUMED_BRANCH=$(git branch --show-current) \
+    && resume_workspace 2>&1 >/dev/null
+)
+assert_like "resume workspace:dirty tree warns about auto-commit absorption" "*absorbed into the next automatic commit*" "$err"
+
 # ---------- summary ----------
 echo ""
 echo "Passed $PASS, failed $FAIL"

@@ -640,17 +640,26 @@ log_section() {  # $1: title  $2: role  $3: engine  $4: stage  $5: round
   } | tee -a "$LOG"
 }
 
-init_live_state() {
+init_live_state() {  # $1: optional "resume"
   mkdir -p "$WF"
-  rm -f \
-    "$WF/suggestions.md" \
-    "$WF/protected-tests.txt" \
-    "$WF/protected-base.sha" \
-    "$WF/review.md" \
-    "$WF/verdict.json" \
-    "$WF/last-engine-output.txt" \
-    "$WF/spec-merge-request.md" \
+  # Self-healing transients are always cleared; a resume must keep the durable
+  # files later stages depend on (check_protected, apply_dual_spec_decision,
+  # final-self-review), otherwise resuming deletes its own inputs (C3).
+  local files=(
+    "$WF/review.md"
+    "$WF/verdict.json"
+    "$WF/last-engine-output.txt"
     "$WF/pr-body.md"
+  )
+  if [[ "${1:-}" != "resume" ]]; then
+    files+=(
+      "$WF/suggestions.md"
+      "$WF/protected-tests.txt"
+      "$WF/protected-base.sha"
+      "$WF/spec-merge-request.md"
+    )
+  fi
+  rm -f "${files[@]}"
 }
 
 engine_model() {  # $1: engine; output its slot's model override, or empty if unset.
@@ -1287,12 +1296,38 @@ gate_loop() {  # $1: worker engine  $2: gate command, empty to skip; failures ar
 CUR_STAGE=""
 CUR_ROUND=1
 
-begin_stage() {  # $1: name; worker session resumes within a stage and resets across stages.
-  CUR_STAGE="$1"
-  WORKER_SESSION=""
+stage_done() {  # $1: stage name; true when the run ledger records it. Always false before a run claims state.
+  [[ -n "$STAGE_LEDGER" && -f "$STAGE_LEDGER" ]] && grep -Fxq "$1" "$STAGE_LEDGER"
+}
+
+begin_stage() {  # $1: name  $2...: artifacts the stage must have left behind to be skippable.
+  # Returns 1 when the ledger already records the stage, so callers guard with:
+  #   if begin_stage "name" artifacts...; then ...; end_stage; fi
+  local name="$1" artifact
+  shift
+  if stage_done "$name"; then
+    for artifact in "$@"; do
+      if [[ ! -e "$artifact" ]]; then
+        echo "!! Stage $name is recorded complete but its artifact $artifact is missing." >&2
+        echo "   Restore it from the run archive under $RUNS_DIR, or delete $RUN_STATE_DIR to start over." >&2
+        exit 1
+      fi
+    done
+    echo "== skip [$name] (already completed in run $RUN_ID)" | tee -a "$LOG"
+    return 1
+  fi
+  CUR_STAGE="$name"
+  WORKER_SESSION=""   # Worker session resumes within a stage and resets across stages.
   CUR_ROUND=1
   log_section "stage begin" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND"
-  printf '\n================ [%s] ================\n' "$1" | tee -a "$LOG"
+  printf '\n================ [%s] ================\n' "$name" | tee -a "$LOG"
+}
+
+end_stage() {  # Record stage completion and the checkpoint HEAD. No-op before a run claims state.
+  [[ -n "$STAGE_LEDGER" ]] || return 0
+  printf '%s\n' "$CUR_STAGE" >> "$STAGE_LEDGER"
+  git rev-parse HEAD > "$RUN_STATE_DIR/last-head.tmp.$$"
+  mv "$RUN_STATE_DIR/last-head.tmp.$$" "$RUN_STATE_DIR/last-head"
 }
 
 review_loop() {  # $1: reviewer engine  $2: worker engine  $3: review scope  $4: optional gate command for repair rounds
@@ -1477,59 +1512,76 @@ run_dual_spec_spec_stage() {  # $1: task text
   local task="$1" decision prompt scope
   mkdir -p "$SPEC_DIR"
 
-  begin_stage "write-spec-a"
-  prompt=$(render_prompt dual-spec-write-candidate \
-    "SPEC_FILE=$SPEC_DIR/spec-a.md" \
-    "OTHER_SPEC_FILE=$SPEC_DIR/spec-b.md" \
-    "TASK=$task")
-  work "$ENGINE_A" "$prompt"
+  if begin_stage "write-spec-a" "$SPEC_DIR/spec-a.md"; then
+    prompt=$(render_prompt dual-spec-write-candidate \
+      "SPEC_FILE=$SPEC_DIR/spec-a.md" \
+      "OTHER_SPEC_FILE=$SPEC_DIR/spec-b.md" \
+      "TASK=$task")
+    work "$ENGINE_A" "$prompt"
+    end_stage
+  fi
 
-  begin_stage "write-spec-b"
-  prompt=$(render_prompt dual-spec-write-candidate \
-    "SPEC_FILE=$SPEC_DIR/spec-b.md" \
-    "OTHER_SPEC_FILE=$SPEC_DIR/spec-a.md" \
-    "TASK=$task")
-  work "$ENGINE_B" "$prompt"
+  if begin_stage "write-spec-b" "$SPEC_DIR/spec-b.md"; then
+    prompt=$(render_prompt dual-spec-write-candidate \
+      "SPEC_FILE=$SPEC_DIR/spec-b.md" \
+      "OTHER_SPEC_FILE=$SPEC_DIR/spec-a.md" \
+      "TASK=$task")
+    work "$ENGINE_B" "$prompt"
+    end_stage
+  fi
 
-  begin_stage "review-spec-a"
-  scope=$(render_prompt review-scope-candidate-spec \
-    "SPEC_FILE=$SPEC_DIR/spec-a.md" \
-    "CANDIDATE=A" \
-    "OTHER_CANDIDATE=B")
-  run_candidate_spec_review "$ENGINE_B" "$scope" "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"
+  if begin_stage "review-spec-a" "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"; then
+    scope=$(render_prompt review-scope-candidate-spec \
+      "SPEC_FILE=$SPEC_DIR/spec-a.md" \
+      "CANDIDATE=A" \
+      "OTHER_CANDIDATE=B")
+    run_candidate_spec_review "$ENGINE_B" "$scope" "$SPEC_DIR/spec-a.review-by-b.md" "$SPEC_DIR/spec-a.verdict-by-b.json"
+    end_stage
+  fi
 
-  begin_stage "review-spec-b"
-  scope=$(render_prompt review-scope-candidate-spec \
-    "SPEC_FILE=$SPEC_DIR/spec-b.md" \
-    "CANDIDATE=B" \
-    "OTHER_CANDIDATE=A")
-  run_candidate_spec_review "$ENGINE_A" "$scope" "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"
+  if begin_stage "review-spec-b" "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"; then
+    scope=$(render_prompt review-scope-candidate-spec \
+      "SPEC_FILE=$SPEC_DIR/spec-b.md" \
+      "CANDIDATE=B" \
+      "OTHER_CANDIDATE=A")
+    run_candidate_spec_review "$ENGINE_A" "$scope" "$SPEC_DIR/spec-b.review-by-a.md" "$SPEC_DIR/spec-b.verdict-by-a.json"
+    end_stage
+  fi
 
-  begin_stage "compare-specs-a"
-  prompt=$(render_prompt dual-spec-compare \
-    "OUTPUT_FILE=$SPEC_DIR/spec-comparison-a.md" \
-    "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
-    "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
-    "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
-    "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
-  work "$ENGINE_A" "$prompt"
+  if begin_stage "compare-specs-a" "$SPEC_DIR/spec-comparison-a.md"; then
+    prompt=$(render_prompt dual-spec-compare \
+      "OUTPUT_FILE=$SPEC_DIR/spec-comparison-a.md" \
+      "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
+      "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
+      "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
+      "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
+    work "$ENGINE_A" "$prompt"
+    end_stage
+  fi
 
-  begin_stage "compare-specs-b"
-  prompt=$(render_prompt dual-spec-compare \
-    "OUTPUT_FILE=$SPEC_DIR/spec-comparison-b.md" \
-    "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
-    "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
-    "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
-    "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
-  work "$ENGINE_B" "$prompt"
+  if begin_stage "compare-specs-b" "$SPEC_DIR/spec-comparison-b.md"; then
+    prompt=$(render_prompt dual-spec-compare \
+      "OUTPUT_FILE=$SPEC_DIR/spec-comparison-b.md" \
+      "SPEC_A_FILE=$SPEC_DIR/spec-a.md" \
+      "SPEC_B_FILE=$SPEC_DIR/spec-b.md" \
+      "SPEC_A_REVIEW_FILE=$SPEC_DIR/spec-a.review-by-b.md" \
+      "SPEC_B_REVIEW_FILE=$SPEC_DIR/spec-b.review-by-a.md")
+    work "$ENGINE_B" "$prompt"
+    end_stage
+  fi
+  # Kept outside the stage guards: idempotent pure file write, no AI cost.
   write_spec_comparison_index
 
-  begin_stage "select-spec"
-  human_gate_dual_spec_decision
+  if begin_stage "select-spec" "$SPEC_DIR/spec-decision.md"; then
+    human_gate_dual_spec_decision
+    end_stage
+  fi
   decision="$DUAL_SPEC_DECISION"
 
-  begin_stage "finalize-spec"
-  apply_dual_spec_decision "$decision" "$task"
+  if begin_stage "finalize-spec" "$SPEC_DIR/spec.md"; then
+    apply_dual_spec_decision "$decision" "$task"
+    end_stage
+  fi
 }
 
 # ---------- Finish: hand off to a human ----------
@@ -1577,7 +1629,54 @@ EOF
   notify "adversarial-ai-coding: all stages complete ($branch)"
 }
 
+verify_last_head() {  # Fail closed when the recorded checkpoint is not reachable from HEAD (C6 light).
+  local lh_file="$RUN_STATE_DIR/last-head" lh head
+  if [[ ! -f "$lh_file" ]]; then
+    if [[ -n "$STAGE_LEDGER" && -s "$STAGE_LEDGER" ]]; then
+      echo "!! Run $RUN_ID has completed stages but no last-head checkpoint; the state is damaged." >&2
+      echo "   Start a fresh run, or delete $RUN_STATE_DIR if you no longer need it." >&2
+      exit 1
+    fi
+    return 0
+  fi
+  lh=$(cat "$lh_file")
+  head=$(git rev-parse HEAD)
+  [[ "$head" == "$lh" ]] && return 0
+  if git merge-base --is-ancestor "$lh" HEAD 2>/dev/null; then
+    echo "(warning: new commits exist after the resume checkpoint $lh; continuing)" >&2
+    return 0
+  fi
+  echo "!! The resume checkpoint $lh is not reachable from HEAD (branch reset/rebase, or the wrong repository)." >&2
+  echo "   Fix the branch first, or delete $lh_file to force the resume." >&2
+  exit 1
+}
+
+resume_workspace() {  # Reattach to the resumed run's branch; never create branches or worktrees here.
+  local current
+  current=$(git rev-parse --abbrev-ref HEAD)
+  if [[ -z "${RESUMED_BRANCH:-}" ]]; then
+    echo "(warning: the resume snapshot has no branch record; staying on $current)" >&2
+  elif [[ "$current" != "$RESUMED_BRANCH" ]]; then
+    if git show-ref --verify --quiet "refs/heads/$RESUMED_BRANCH"; then
+      git switch "$RESUMED_BRANCH"
+    else
+      echo "!! The resumed run's branch $RESUMED_BRANCH no longer exists in this repository." >&2
+      echo "   If the run used USE_WORKTREE=1, cd into its worktree and resume there." >&2
+      exit 1
+    fi
+  fi
+  verify_last_head
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "!! The working tree is dirty. These changes will be absorbed into the next automatic commit (git add -A):" >&2
+    git status --short >&2
+  fi
+}
+
 setup_workspace() {  # Prepare an isolated workspace according to USE_WORKTREE / AUTO_BRANCH.
+  if [[ -n "$RESUME_RUN" ]]; then
+    resume_workspace
+    return 0
+  fi
   if [[ "$USE_WORKTREE" == "1" ]]; then
     local root name wt
     root=$(git rev-parse --show-toplevel)
@@ -1650,8 +1749,12 @@ main() {
   setup_workspace   # May cd into a worktree; relative paths after this point use that workspace.
 
   establish_run_archive
-  [[ -n "$RESUME_RUN" ]] || init_run_state "$task_resolved_text"
-  init_live_state
+  if [[ -n "$RESUME_RUN" ]]; then
+    init_live_state resume
+  else
+    init_run_state "$task_resolved_text"
+    init_live_state
+  fi
   echo '*' > "$WF/.gitignore"   # Keep the whole .workflow/ directory out of version control.
   write_run_metadata
   write_log_metadata
@@ -1678,87 +1781,100 @@ main() {
     run_dual_spec_spec_stage "$task"
   else
     set_spec_roles_from_slot A
-    begin_stage "write-spec"
-    prompt=$(render_prompt write-spec \
-      "SPEC_FILE=$SPEC_DIR/spec.md" \
-      "TASK=$task")
-    work "$SPEC_OWNER_ENGINE" "$prompt"
-    scope=$(render_prompt review-scope-spec "SPEC_FILE=$SPEC_DIR/spec.md")
-    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
-    human_gate_spec
+    if begin_stage "write-spec" "$SPEC_DIR/spec.md"; then
+      prompt=$(render_prompt write-spec \
+        "SPEC_FILE=$SPEC_DIR/spec.md" \
+        "TASK=$task")
+      work "$SPEC_OWNER_ENGINE" "$prompt"
+      scope=$(render_prompt review-scope-spec "SPEC_FILE=$SPEC_DIR/spec.md")
+      review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
+      human_gate_spec
+      end_stage
+    fi
   fi
-  commit_work "$SPEC_OWNER_ENGINE" "Spec, approved by review and human gate"
+  if begin_stage "commit-spec"; then
+    commit_work "$SPEC_OWNER_ENGINE" "Spec, approved by review and human gate"
+    end_stage
+  fi
 
-  begin_stage "write-implementation-plan"
-  prompt=$(render_prompt write-implementation-plan \
-    "SPEC_FILE=$SPEC_DIR/spec.md" \
-    "PLAN_FILE=$SPEC_DIR/plan.md")
-  work "$SPEC_OWNER_ENGINE" "$prompt"
-  scope=$(render_prompt review-scope-plan \
-    "PLAN_FILE=$SPEC_DIR/plan.md" \
-    "SPEC_FILE=$SPEC_DIR/spec.md")
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
-  commit_work "$SPEC_OWNER_ENGINE" "Implementation plan"
+  if begin_stage "write-implementation-plan" "$SPEC_DIR/plan.md"; then
+    prompt=$(render_prompt write-implementation-plan \
+      "SPEC_FILE=$SPEC_DIR/spec.md" \
+      "PLAN_FILE=$SPEC_DIR/plan.md")
+    work "$SPEC_OWNER_ENGINE" "$prompt"
+    scope=$(render_prompt review-scope-plan \
+      "PLAN_FILE=$SPEC_DIR/plan.md" \
+      "SPEC_FILE=$SPEC_DIR/spec.md")
+    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope"
+    commit_work "$SPEC_OWNER_ENGINE" "Implementation plan"
+    end_stage
+  fi
 
   # Adversarial TDD: reviewer B writes acceptance tests from the spec, worker A reviews them.
   # The test author and implementer are separated, and A cannot edit these tests during implementation.
-  begin_stage "write-acceptance-tests"
-  local test_base
-  test_base=$(git rev-parse HEAD)
-  prompt=$(render_prompt write-acceptance-tests \
-    "SPEC_FILE=$SPEC_DIR/spec.md" \
-    "SPEC_DIR=$SPEC_DIR")
-  work "$SPEC_REVIEWER_ENGINE" "$prompt"
-  scope=$(render_prompt review-scope-acceptance-tests \
-    "TEST_BASE=$test_base" \
-    "SPEC_FILE=$SPEC_DIR/spec.md")
-  review_loop "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" "$scope"
-  commit_work "$SPEC_REVIEWER_ENGINE" "Acceptance tests"
-  git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
-  git rev-parse HEAD > "$WF/protected-base.sha"
-  archive_snapshot "$WF/protected-tests.txt" "protected-tests.txt" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
-  archive_snapshot "$WF/protected-base.sha" "protected-base.sha" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
-  if [[ -s "$WF/protected-tests.txt" ]]; then
-    { echo "Protected acceptance test files:"; sed 's/^/  - /' "$WF/protected-tests.txt"; } | tee -a "$LOG"
-  else
-    echo "(warning: acceptance-test stage produced no files; test protection is disabled)" >&2
+  if begin_stage "write-acceptance-tests" "$WF/protected-tests.txt" "$WF/protected-base.sha"; then
+    local test_base
+    test_base=$(git rev-parse HEAD)
+    prompt=$(render_prompt write-acceptance-tests \
+      "SPEC_FILE=$SPEC_DIR/spec.md" \
+      "SPEC_DIR=$SPEC_DIR")
+    work "$SPEC_REVIEWER_ENGINE" "$prompt"
+    scope=$(render_prompt review-scope-acceptance-tests \
+      "TEST_BASE=$test_base" \
+      "SPEC_FILE=$SPEC_DIR/spec.md")
+    review_loop "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE" "$scope"
+    commit_work "$SPEC_REVIEWER_ENGINE" "Acceptance tests"
+    git diff --name-only "$test_base" HEAD | grep -v "^$SPEC_DIR/" > "$WF/protected-tests.txt" || true
+    git rev-parse HEAD > "$WF/protected-base.sha"
+    archive_snapshot "$WF/protected-tests.txt" "protected-tests.txt" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+    archive_snapshot "$WF/protected-base.sha" "protected-base.sha" "workflow" "workflow" "$CUR_STAGE" "$CUR_ROUND" >/dev/null
+    if [[ -s "$WF/protected-tests.txt" ]]; then
+      { echo "Protected acceptance test files:"; sed 's/^/  - /' "$WF/protected-tests.txt"; } | tee -a "$LOG"
+    else
+      echo "(warning: acceptance-test stage produced no files; test protection is disabled)" >&2
+    fi
+    end_stage
   fi
 
   # Small batches: one task per commit makes review and rollback easier.
-  begin_stage "write-code"
-  local tasks=() t i=1
-  mapfile -t tasks < <(plan_tasks "$SPEC_DIR/plan.md")
-  if (( ${#tasks[@]} == 0 )); then
-    echo "(warning: plan.md has no \"- [ ] \" task list; falling back to one whole-plan implementation task)" >&2
-    tasks=("Complete the full implementation described in $SPEC_DIR/plan.md")
-  fi
-  for t in "${tasks[@]}"; do
-    echo "--- Task $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
-    prompt=$(render_prompt implement-plan-task \
-      "PLAN_FILE=$SPEC_DIR/plan.md" \
-      "TASK=$t" \
+  if begin_stage "write-code"; then
+    local tasks=() t i=1
+    mapfile -t tasks < <(plan_tasks "$SPEC_DIR/plan.md")
+    if (( ${#tasks[@]} == 0 )); then
+      echo "(warning: plan.md has no \"- [ ] \" task list; falling back to one whole-plan implementation task)" >&2
+      tasks=("Complete the full implementation described in $SPEC_DIR/plan.md")
+    fi
+    for t in "${tasks[@]}"; do
+      echo "--- Task $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
+      prompt=$(render_prompt implement-plan-task \
+        "PLAN_FILE=$SPEC_DIR/plan.md" \
+        "TASK=$t" \
+        "PROTECTED_TESTS_FILE=$WF/protected-tests.txt")
+      work "$SPEC_OWNER_ENGINE" "$prompt"
+      gate_loop "$SPEC_OWNER_ENGINE" "$BUILD_GATE_CMD"
+      commit_work "$SPEC_OWNER_ENGINE" "Task \"$t\""
+      i=$(( i + 1 ))
+    done
+
+    echo "--- All tasks complete; running full quality gate. Acceptance tests must pass. ---" | tee -a "$LOG"
+    gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
+    scope=$(render_prompt review-scope-branch \
+      "SPEC_FILE=$SPEC_DIR/spec.md" \
       "PROTECTED_TESTS_FILE=$WF/protected-tests.txt")
+    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
+    commit_if_dirty "$SPEC_OWNER_ENGINE" "Review fixes"
+    end_stage
+  fi
+
+  if begin_stage "final-review-and-fixes"; then
+    prompt=$(render_prompt final-self-review "SUGGESTIONS_FILE=$WF/suggestions.md")
     work "$SPEC_OWNER_ENGINE" "$prompt"
-    gate_loop "$SPEC_OWNER_ENGINE" "$BUILD_GATE_CMD"
-    commit_work "$SPEC_OWNER_ENGINE" "Task \"$t\""
-    i=$(( i + 1 ))
-  done
-
-  echo "--- All tasks complete; running full quality gate. Acceptance tests must pass. ---" | tee -a "$LOG"
-  gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
-  scope=$(render_prompt review-scope-branch \
-    "SPEC_FILE=$SPEC_DIR/spec.md" \
-    "PROTECTED_TESTS_FILE=$WF/protected-tests.txt")
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
-  commit_if_dirty "$SPEC_OWNER_ENGINE" "Review fixes"
-
-  begin_stage "final-review-and-fixes"
-  prompt=$(render_prompt final-self-review "SUGGESTIONS_FILE=$WF/suggestions.md")
-  work "$SPEC_OWNER_ENGINE" "$prompt"
-  gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
-  scope=$(render_prompt review-scope-final-acceptance "SPEC_FILE=$SPEC_DIR/spec.md")
-  review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
-  commit_if_dirty "$SPEC_OWNER_ENGINE" "Final fixes"
+    gate_loop "$SPEC_OWNER_ENGINE" "$GATE_CMD"
+    scope=$(render_prompt review-scope-final-acceptance "SPEC_FILE=$SPEC_DIR/spec.md")
+    review_loop "$SPEC_REVIEWER_ENGINE" "$SPEC_OWNER_ENGINE" "$scope" "$GATE_CMD"
+    commit_if_dirty "$SPEC_OWNER_ENGINE" "Final fixes"
+    end_stage
+  fi
 
   finish "$task"
 }
