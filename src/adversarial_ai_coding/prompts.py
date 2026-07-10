@@ -42,11 +42,13 @@ def read_prompt_template(prompts_dir: Path, name: str) -> str:
 def render_prompt(
     prompts_dir: Path, name: str, replacements: Mapping[str, str]
 ) -> str:
-    text = read_prompt_template(prompts_dir, name)
+    # bash: command substitution strips the template's trailing newlines BEFORE
+    # substitution; printf '%s\n' appends exactly one afterwards. Values keep
+    # their own trailing newlines.
+    text = read_prompt_template(prompts_dir, name).rstrip("\n")
     for key, value in replacements.items():
         text = text.replace("{{" + key + "}}", value)
-    # bash: command substitution strips trailing newlines, printf '%s\n' adds one.
-    return text.rstrip("\n") + "\n"
+    return text + "\n"
 
 
 def prompt_file_instruction(artifact_path: str) -> str:

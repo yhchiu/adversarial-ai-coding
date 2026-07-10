@@ -55,3 +55,11 @@ def test_real_repo_templates_render():
     assert "review" in names
     for name in names:
         assert render_prompt(prompts_dir, name, {})
+
+
+def test_value_trailing_newlines_survive_at_template_end(tmp_path):
+    # bash strips the template before substitution, so a value's own trailing
+    # newlines are preserved: printf adds exactly one more after them.
+    (tmp_path / "t.md").write_text("Message:\n{{MESSAGE}}\n", encoding="utf-8")
+    out = render_prompt(tmp_path, "t", {"MESSAGE": "x\n\n"})
+    assert out == "Message:\nx\n\n\n"
