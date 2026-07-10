@@ -261,6 +261,7 @@ Add `--json` output to the CLI.
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
 | `RETRY_MAX_RESET_WAIT` | `21600` | When the message states a reset time farther away than this, abort instead of waiting. |
+| `RESUME_RUN` | empty | Resume an interrupted run: a run id from `.workflow/state/`, or `last` for the newest unfinished run. Completed stages are skipped. See "Resuming an Interrupted Run". |
 | `AGENTS_TEMPLATE` | `resources/AGENTS.template.md` beside the script | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | `resources/prompts` beside the script | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
@@ -273,6 +274,53 @@ On Windows, if you want Go race tests in the gate, use:
 GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...' \
   bash "$AAC" task.md
 ```
+
+## Resuming an Interrupted Run
+
+Every run records its progress under `.workflow/state/<run-id>/`: the resolved
+task, the effective settings, a stage completion ledger, and the remaining
+implementation tasks. When a run aborts, it prints a paste-ready command:
+
+```bash
+RESUME_RUN=20260710-153012 ./adversarial-ai-coding.sh
+```
+
+The resumed run skips every completed stage (no AI cost is paid again),
+restores cross-stage state (the dual-spec decision, the acceptance-test base,
+the write-code task queue), and continues from the interruption point.
+`RESUME_RUN=last` picks the newest unfinished run. Do not pass the task
+argument again: the run's task snapshot is used, and a conflicting argument
+is refused.
+
+Engines, models, and most settings may be overridden per attempt. The main
+use case is swapping an agent whose quota ran out:
+
+```bash
+AGENT_B=agy RESUME_RUN=last ./adversarial-ai-coding.sh
+```
+
+`SPEC_DIR`, `DUAL_SPEC`, `AUTO_BRANCH`, and `USE_WORKTREE` are immutable
+across resume: they decide the stage graph and artifact locations, so a
+conflicting override is refused. `NOTIFY_CMD` is deliberately not persisted;
+provide it again on each attempt.
+
+What is guaranteed:
+
+| Interruption | Behavior |
+|---|---|
+| Catchable aborts: agent failure, quota exhaustion (exit code 75), exhausted review or gate rounds, human abort, protected-test stop, Ctrl-C / SIGTERM / SIGHUP | The resume command is printed once and the original exit code is preserved. Resuming continues after the last completed stage. |
+| SIGKILL, power loss, OS crash | Best effort. State is append-only and fails safe: at worst one or two stages run again (a little extra AI cost); finished work is never skipped incorrectly. |
+| Deleted state directory or worktree, rewritten branch history | Fails closed with an explicit message. There is no transparent recovery. |
+
+Notes:
+
+- `USE_WORKTREE=1` runs keep their state inside the worktree's `.workflow/`.
+  Resume from inside the worktree; the printed hint includes the `cd` command.
+- A crashed attempt can leave a stale lock. The error message shows the exact
+  `rm` command to clear `.workflow/state/<run-id>/lock` once you confirmed the
+  previous attempt is dead.
+- A completed run refuses to resume, and `RESUME_RUN=last` skips completed
+  runs.
 
 ## Artifacts
 
@@ -310,6 +358,7 @@ your-project/
 |   |-- protected-base.sha
 |   |-- pr-body.md
 |   |-- latest-run.txt
+|   |-- state/<RUN_ID>/               # resume state: settings snapshot, stage ledger, task queue
 |   `-- runs/<RUN_ID>/
 |       |-- 001-run-metadata.json
 |       |-- 002-task-source.md

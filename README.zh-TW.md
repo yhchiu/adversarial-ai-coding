@@ -144,6 +144,7 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒) |
 | `RETRY_MAX_RESET_WAIT` | `21600` | 訊息中的重置時刻若比這個秒數還遠(如週配額要等好幾天),立即放棄而不空等 |
+| `RESUME_RUN` | (空) | 續跑中斷的 run:填 `.workflow/state/` 下的 run id,或 `last` 取最新未完成的 run。已完成 stage 直接跳過。詳見「中斷後續跑」 |
 | `AGENTS_TEMPLATE` | script 旁的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | script 旁的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
@@ -151,6 +152,38 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導 agent 改用內建檔案工具 |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
+
+## 中斷後續跑
+
+每次 run 會把進度記錄在 `.workflow/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
+
+```bash
+RESUME_RUN=20260710-153012 ./adversarial-ai-coding.sh
+```
+
+續跑會跳過所有已完成的 stage(不重付 AI 費用),還原跨 stage 狀態(dual-spec 裁決、驗收測試基準、剩餘實作任務),從中斷點繼續。`RESUME_RUN=last` 自動選最新未完成的 run。續跑不必再帶 task 參數:以 run 的 task 快照為準,帶了且內容不同會直接拒絕。
+
+引擎、模型等多數設定每次 attempt 都可覆寫。最主要的用例是換掉配額耗盡的 agent:
+
+```bash
+AGENT_B=agy RESUME_RUN=last ./adversarial-ai-coding.sh
+```
+
+`SPEC_DIR`、`DUAL_SPEC`、`AUTO_BRANCH`、`USE_WORKTREE` 跨續跑不可變:它們決定 stage 圖與產物位置,衝突的覆寫會被拒絕。`NOTIFY_CMD` 刻意不持久化,每次 attempt 重新提供。
+
+保證範圍:
+
+| 中斷類型 | 行為 |
+|---|---|
+| 可捕捉中止:agent 失敗、配額耗盡(exit code 75)、審查/關卡輪次用盡、人工中止、受保護測試中止、Ctrl-C / SIGTERM / SIGHUP | 印一次續跑指令並保留原 exit code;續跑從最後完成的 stage 之後繼續 |
+| SIGKILL、斷電、OS 當機 | Best effort。狀態為 append-only、失敗方向 fail-safe:最壞情況是多重跑一兩個 stage(多付一點 AI 費用),不會錯誤跳過未完成的工作 |
+| state 目錄或 worktree 被刪、branch 歷史被 rewrite | Fail closed 並給出明確訊息,不做透明恢復 |
+
+注意事項:
+
+- `USE_WORKTREE=1` 的 run,state 在 worktree 的 `.workflow/` 內;必須 cd 進該 worktree 執行續跑(印出的提示已含 `cd` 指令)。
+- attempt 異常死亡可能留下 stale lock;錯誤訊息會給出確認前次已死後手動清除 `.workflow/state/<run-id>/lock` 的指令。
+- 已完成的 run 拒絕續跑;`RESUME_RUN=last` 會自動略過已完成的 run。
 
 ## 產物與目錄結構
 
@@ -184,6 +217,7 @@ your-project/
 │   ├── protected-tests.txt / protected-base.sha   # 受保護測試檔清單與基準 commit
 │   ├── pr-body.md       # 收尾產生的 PR 內文
 │   ├── latest-run.txt   # 指向最近一次 run archive 目錄
+│   ├── state/<RUN_ID>/  # 續跑狀態:設定快照、stage 台帳、任務佇列(RESUME_RUN 用)
 │   └── runs/<RUN_ID>/   # 每次 run 的完整中間資料 archive
 │       ├── 001-run-metadata.json
 │       ├── 002-task-source.md / 003-task.txt
