@@ -40,6 +40,9 @@
 #   RETRY_MAX_RESET_WAIT  Abort instead of waiting when a parsed reset time is
 #                    farther away than this many seconds (default: 21600)
 #   RUNS_DIR         Root archive directory for each run (default: .workflow/runs)
+#   RESUME_RUN       Resume an interrupted run: a run id, or "last" for the newest
+#                    unfinished run. Completed stages are skipped; the task and
+#                    immutable settings come from the run's saved snapshot.
 set -Eeuo pipefail
 
 # ---------- Settings ----------
@@ -60,23 +63,224 @@ alias_env_or_default() {  # $1: preferred public env  $2: legacy env  $3: defaul
   fi
 }
 
-ENGINE_A="$(alias_env_or_default AGENT_A ENGINE_A claude)" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
-ENGINE_B="$(alias_env_or_default AGENT_B ENGINE_B codex)" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
-MODEL_A="${MODEL_A:-}"   # Model override for the A slot; empty means use the CLI default.
-MODEL_B="${MODEL_B:-}"   # Model override for the B slot.
+# ---------- Resume state (RESUME_RUN) ----------
+# Per-run state lives in $WF/state/<run-id>/. resume.conf is parsed as data only:
+# it is never sourced and never eval'd, and keys must match the allowlist below.
+# That keeps "resume a run" from becoming "execute workspace file contents".
+WF=".workflow"
+RUN_STATE_ROOT="$WF/state"
+QUOTA_ABORT_RC=75   # EX_TEMPFAIL: an agent call gave up on quota/rate limit; the run is resumable.
+RUN_STATE_DIR=""
+STAGE_LEDGER=""     # Empty until a run claims its state dir; stage_done is always false then.
+RUN_LOCK_DIR=""
+RESUME_HINT_PRINTED=""
+RUN_TASK_ARG=""
+RUN_TASK_SOURCE_KIND=""
+RUN_TASK_SOURCE_PATH=""
+
+list_run_state_ids() {  # Print known run ids, newest first, for error messages.
+  [[ -d "$RUN_STATE_ROOT" ]] || return 0
+  ls -1 "$RUN_STATE_ROOT" 2>/dev/null | sort -r
+}
+
+release_run_lock() {
+  [[ -n "$RUN_LOCK_DIR" && -d "$RUN_LOCK_DIR" ]] && rmdir "$RUN_LOCK_DIR" 2>/dev/null
+  return 0
+}
+
+on_workflow_exit() {
+  local rc=$?
+  release_run_lock
+  exit "$rc"
+}
+
+install_run_traps() {
+  trap on_workflow_exit EXIT
+}
+
+acquire_run_lock() {  # $1: run state dir; mkdir is the atomic lock primitive.
+  if ! mkdir "$1/lock" 2>/dev/null; then
+    echo "!! Run state $1 is locked; another attempt may still be running." >&2
+    echo "   If you are sure the previous attempt is dead, remove the lock: rm -r $1/lock" >&2
+    return 1
+  fi
+  RUN_LOCK_DIR="$1/lock"
+  install_run_traps
+}
+
+parse_resume_conf() {  # $1: resume.conf path; sets RESUMED_* variables. Data-only: never source, never eval.
+  local f="$1" line key value lineno=0
+  [[ -f "$f" ]] || { echo "!! Missing resume settings snapshot: $f" >&2; return 1; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$(( lineno + 1 ))
+    if (( lineno == 1 )); then
+      [[ "$line" == "schema=1" ]] || { echo "!! $f: first line must be schema=1 (got [$line]); refusing to resume." >&2; return 1; }
+      continue
+    fi
+    [[ -z "$line" ]] && continue
+    [[ "$line" == *=* ]] || { echo "!! $f: malformed line [$line]; the state may be truncated. Refusing to resume." >&2; return 1; }
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      spec_dir)         RESUMED_SPEC_DIR="$value" ;;
+      dual_spec)        RESUMED_DUAL_SPEC="$value" ;;
+      auto_branch)      RESUMED_AUTO_BRANCH="$value" ;;
+      use_worktree)     RESUMED_USE_WORKTREE="$value" ;;
+      branch)           RESUMED_BRANCH="$value" ;;
+      engine_a)         RESUMED_ENGINE_A="$value" ;;
+      engine_b)         RESUMED_ENGINE_B="$value" ;;
+      engine_a_args)    RESUMED_ENGINE_A_ARGS="$value" ;;
+      engine_b_args)    RESUMED_ENGINE_B_ARGS="$value" ;;
+      model_a)          RESUMED_MODEL_A="$value" ;;
+      model_b)          RESUMED_MODEL_B="$value" ;;
+      claude_args)      RESUMED_CLAUDE_ARGS="$value" ;;
+      codex_args)       RESUMED_CODEX_ARGS="$value" ;;
+      agy_args)         RESUMED_AGY_ARGS="$value" ;;
+      max_rounds)       RESUMED_MAX_ROUNDS="$value" ;;
+      human_gate)       RESUMED_HUMAN_GATE="$value" ;;
+      open_pr)          RESUMED_OPEN_PR="$value" ;;
+      tools)            RESUMED_TOOLS="$value" ;;
+      gate_cmd)         RESUMED_GATE_CMD="$value" ;;
+      build_gate_cmd)   RESUMED_BUILD_GATE_CMD="$value" ;;
+      task_arg)         RESUMED_TASK_ARG="$value" ;;
+      task_source_kind) RESUMED_TASK_SOURCE_KIND="$value" ;;
+      task_source_path) RESUMED_TASK_SOURCE_PATH="$value" ;;
+      *) echo "!! $f: unknown key [$key]; the state may be truncated or written by a newer version. Refusing to resume." >&2; return 1 ;;
+    esac
+  done < "$f"
+  (( lineno >= 1 )) || { echo "!! $f is empty; refusing to resume." >&2; return 1; }
+}
+
+write_resume_conf() {  # Rewrite the effective settings snapshot atomically (temp file + mv).
+  [[ -n "$RUN_STATE_DIR" ]] || return 0
+  local f="$RUN_STATE_DIR/resume.conf" tmp branch kv content="schema=1"
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  # task_arg is informational only; keep its first line so multi-line literal tasks stay persistable.
+  local task_arg_line="${RUN_TASK_ARG%%$'\n'*}"
+  for kv in \
+    "spec_dir=$SPEC_DIR" \
+    "dual_spec=$DUAL_SPEC" \
+    "auto_branch=$AUTO_BRANCH" \
+    "use_worktree=$USE_WORKTREE" \
+    "branch=$branch" \
+    "engine_a=$ENGINE_A" \
+    "engine_b=$ENGINE_B" \
+    "engine_a_args=$ENGINE_A_ARGS" \
+    "engine_b_args=$ENGINE_B_ARGS" \
+    "model_a=$MODEL_A" \
+    "model_b=$MODEL_B" \
+    "claude_args=$CLAUDE_ARGS" \
+    "codex_args=$CODEX_ARGS" \
+    "agy_args=$AGY_ARGS" \
+    "max_rounds=$MAX_ROUNDS" \
+    "human_gate=$HUMAN_GATE" \
+    "open_pr=$OPEN_PR" \
+    "tools=$TOOLS" \
+    "gate_cmd=${GATE_CMD-}" \
+    "build_gate_cmd=${BUILD_GATE_CMD-}" \
+    "task_arg=$task_arg_line" \
+    "task_source_kind=$RUN_TASK_SOURCE_KIND" \
+    "task_source_path=$RUN_TASK_SOURCE_PATH"
+  do
+    case "$kv" in
+      *$'\n'*)
+        echo "!! Cannot persist resume settings: [${kv%%=*}] contains a newline." >&2
+        return 1
+        ;;
+    esac
+    content+=$'\n'"$kv"
+  done
+  tmp="$f.tmp.$$"
+  printf '%s\n' "$content" > "$tmp"
+  mv "$tmp" "$f"
+}
+
+resume_check_immutable() {  # $1: env var name  $2: snapshot value
+  local current="${!1-}"
+  [[ -z "$current" || "$current" == "$2" ]] && return 0
+  echo "!! $1=$current conflicts with the resumed run's snapshot ($1=$2)." >&2
+  echo "   SPEC_DIR/DUAL_SPEC/AUTO_BRANCH/USE_WORKTREE decide the stage graph and cannot change across resume." >&2
+  echo "   Unset $1 to keep the snapshot value, or start a fresh run." >&2
+  return 1
+}
+
+resume_load() {  # Resolve and validate RESUME_RUN, load the snapshot, and take the run lock.
+  local id="$RESUME_RUN" d
+  if [[ "$id" == "last" ]]; then
+    id=""
+    for d in $(list_run_state_ids); do
+      [[ -f "$RUN_STATE_ROOT/$d/completed" ]] && continue
+      id="$d"
+      break
+    done
+    if [[ -z "$id" ]]; then
+      echo "!! RESUME_RUN=last: no unfinished run found under $RUN_STATE_ROOT." >&2
+      echo "   Known run ids: $(list_run_state_ids | tr '\n' ' ')" >&2
+      return 1
+    fi
+  fi
+  if [[ ! "$id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "!! Invalid RESUME_RUN [$id]: only letters, digits, - and _ are allowed." >&2
+    return 1
+  fi
+  RUN_STATE_DIR="$RUN_STATE_ROOT/$id"
+  if [[ ! -d "$RUN_STATE_DIR" ]]; then
+    echo "!! No run state at $RUN_STATE_DIR." >&2
+    echo "   Known run ids: $(list_run_state_ids | tr '\n' ' ')" >&2
+    echo "   If that run used USE_WORKTREE=1, cd into its worktree first; the state lives there." >&2
+    return 1
+  fi
+  if [[ -f "$RUN_STATE_DIR/completed" ]]; then
+    echo "!! Run $id already completed; nothing to resume." >&2
+    return 1
+  fi
+  parse_resume_conf "$RUN_STATE_DIR/resume.conf" || return 1
+  resume_check_immutable SPEC_DIR "${RESUMED_SPEC_DIR-}" || return 1
+  resume_check_immutable DUAL_SPEC "${RESUMED_DUAL_SPEC-}" || return 1
+  resume_check_immutable AUTO_BRANCH "${RESUMED_AUTO_BRANCH-}" || return 1
+  resume_check_immutable USE_WORKTREE "${RESUMED_USE_WORKTREE-}" || return 1
+  acquire_run_lock "$RUN_STATE_DIR" || return 1
+  STAGE_LEDGER="$RUN_STATE_DIR/completed-stages"
+  RESUME_RUN="$id"
+  echo "Resuming run $id (state: $RUN_STATE_DIR)" >&2
+}
+
+init_run_state() {  # $1: resolved task text; claim a fresh run's state dir atomically.
+  mkdir -p "$RUN_STATE_ROOT"
+  RUN_STATE_DIR="$RUN_STATE_ROOT/$RUN_ID"
+  if ! mkdir "$RUN_STATE_DIR" 2>/dev/null; then
+    echo "!! Run state $RUN_STATE_DIR already exists (same-second run id collision?). Rerun for a fresh id." >&2
+    exit 1
+  fi
+  acquire_run_lock "$RUN_STATE_DIR" || exit 1
+  STAGE_LEDGER="$RUN_STATE_DIR/completed-stages"
+  : > "$STAGE_LEDGER"
+  printf '%s\n' "$1" > "$RUN_STATE_DIR/task.txt"
+}
+
+RESUME_RUN="${RESUME_RUN:-}"
+if [[ -n "$RESUME_RUN" ]]; then
+  resume_load || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+fi
+RUN_ID="${RESUME_RUN:-$(date +%Y%m%d-%H%M%S)}"
+
+ENGINE_A="$(alias_env_or_default AGENT_A ENGINE_A "${RESUMED_ENGINE_A:-claude}")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+ENGINE_B="$(alias_env_or_default AGENT_B ENGINE_B "${RESUMED_ENGINE_B:-codex}")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+MODEL_A="${MODEL_A:-${RESUMED_MODEL_A:-}}"   # Model override for the A slot; empty means use the CLI default.
+MODEL_B="${MODEL_B:-${RESUMED_MODEL_B:-}}"   # Model override for the B slot.
 # Extra args for each CLI, split on whitespace. Example: CODEX_ARGS='-c model_reasoning_effort=low'
-CLAUDE_ARGS="${CLAUDE_ARGS:-}"
-CODEX_ARGS="${CODEX_ARGS:-}"
-AGY_ARGS="${AGY_ARGS:-}"
-ENGINE_A_ARGS="$(alias_env_or_default AGENT_A_ARGS ENGINE_A_ARGS "")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
-ENGINE_B_ARGS="$(alias_env_or_default AGENT_B_ARGS ENGINE_B_ARGS "")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
-MAX_ROUNDS="${MAX_ROUNDS:-3}"
-AUTO_BRANCH="${AUTO_BRANCH:-1}"
-USE_WORKTREE="${USE_WORKTREE:-0}"
-HUMAN_GATE="${HUMAN_GATE:-1}"
-DUAL_SPEC="${DUAL_SPEC:-0}"
-OPEN_PR="${OPEN_PR:-0}"
-NOTIFY_CMD="${NOTIFY_CMD:-}"
+CLAUDE_ARGS="${CLAUDE_ARGS:-${RESUMED_CLAUDE_ARGS:-}}"
+CODEX_ARGS="${CODEX_ARGS:-${RESUMED_CODEX_ARGS:-}}"
+AGY_ARGS="${AGY_ARGS:-${RESUMED_AGY_ARGS:-}}"
+ENGINE_A_ARGS="$(alias_env_or_default AGENT_A_ARGS ENGINE_A_ARGS "${RESUMED_ENGINE_A_ARGS:-}")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+ENGINE_B_ARGS="$(alias_env_or_default AGENT_B_ARGS ENGINE_B_ARGS "${RESUMED_ENGINE_B_ARGS:-}")" || { rc=$?; return "$rc" 2>/dev/null || exit "$rc"; }
+MAX_ROUNDS="${MAX_ROUNDS:-${RESUMED_MAX_ROUNDS:-3}}"
+AUTO_BRANCH="${AUTO_BRANCH:-${RESUMED_AUTO_BRANCH:-1}}"
+USE_WORKTREE="${USE_WORKTREE:-${RESUMED_USE_WORKTREE:-0}}"
+HUMAN_GATE="${HUMAN_GATE:-${RESUMED_HUMAN_GATE:-1}}"
+DUAL_SPEC="${DUAL_SPEC:-${RESUMED_DUAL_SPEC:-0}}"
+OPEN_PR="${OPEN_PR:-${RESUMED_OPEN_PR:-0}}"
+NOTIFY_CMD="${NOTIFY_CMD:-}"   # Deliberately not persisted for resume; provide it again per attempt.
 # Rate-limit retry: quota windows are not quality failures, so wait instead of burning review rounds.
 RETRY_ON_LIMIT="${RETRY_ON_LIMIT:-1}"
 RETRY_MAX="${RETRY_MAX:-6}"
@@ -85,11 +289,9 @@ RETRY_MAX_WAIT="${RETRY_MAX_WAIT:-3600}"
 RETRY_MAX_RESET_WAIT="${RETRY_MAX_RESET_WAIT:-21600}"
 # Minimum permissions: allow git and explicit build/test commands.
 # Note that Bash(go *) includes go run, which executes arbitrary code. Do not broaden this casually.
-TOOLS="${TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}"
+TOOLS="${TOOLS:-${RESUMED_TOOLS:-Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)}}"
 
-RUN_ID="$(date +%Y%m%d-%H%M%S)"
-SPEC_DIR="${SPEC_DIR:-specs/$RUN_ID}"
-WF=".workflow"
+SPEC_DIR="${SPEC_DIR:-${RESUMED_SPEC_DIR:-specs/$RUN_ID}}"
 RUNS_DIR="${RUNS_DIR:-$WF/runs}"
 WF_RUN="${WF_RUN:-}"
 LOGS="${LOGS:-$WF/logs}"
@@ -1394,14 +1596,14 @@ setup_workspace() {  # Prepare an isolated workspace according to USE_WORKTREE /
 main() {
   local task="${1:-}"
   local task_arg task_source_kind task_source_path="" task_resolved_text prompt scope
-  [[ -n "$task" ]] || usage
+  [[ -n "$task" || -n "$RESUME_RUN" ]] || usage
 
   if [[ "$task" == "print-agents" ]]; then
     write_agents_section
     return 0
   fi
   task_arg="$task"
-  if [[ -f "$task" ]]; then
+  if [[ -n "$task" && -f "$task" ]]; then
     task_source_kind="file"
     task_source_path=$(abs_path "$task")
     echo "Reading task description from file:$task"
@@ -1411,6 +1613,28 @@ main() {
     task_source_kind="literal"
     task_resolved_text="$task"
   fi
+
+  if [[ -n "$RESUME_RUN" ]]; then
+    # The snapshot is the single source of truth for the task (C6): resuming must not
+    # silently re-read a file that may have changed since the original run started.
+    local task_snapshot
+    task_snapshot=$(cat "$RUN_STATE_DIR/task.txt" 2>/dev/null) \
+      || { echo "!! Missing $RUN_STATE_DIR/task.txt; the run state is damaged. Start a fresh run." >&2; exit 1; }
+    if [[ -n "$task" && "$task_resolved_text" != "$task_snapshot" ]]; then
+      echo "!! The task argument resolves to different text than the resumed run's task snapshot." >&2
+      echo "   Resume without a task argument (the snapshot is used), or start a fresh run." >&2
+      exit 1
+    fi
+    task="$task_snapshot"
+    task_resolved_text="$task_snapshot"
+    task_arg="${RESUMED_TASK_ARG:-}"
+    task_source_kind="${RESUMED_TASK_SOURCE_KIND:-literal}"
+    task_source_path="${RESUMED_TASK_SOURCE_PATH:-}"
+    echo "Resumed task from snapshot (original source: $task_source_kind${task_source_path:+ $task_source_path})"
+  fi
+  RUN_TASK_ARG="$task_arg"
+  RUN_TASK_SOURCE_KIND="$task_source_kind"
+  RUN_TASK_SOURCE_PATH="$task_source_path"
 
   need git; need jq
   validate_engines || exit 1
@@ -1426,6 +1650,7 @@ main() {
   setup_workspace   # May cd into a worktree; relative paths after this point use that workspace.
 
   establish_run_archive
+  [[ -n "$RESUME_RUN" ]] || init_run_state "$task_resolved_text"
   init_live_state
   echo '*' > "$WF/.gitignore"   # Keep the whole .workflow/ directory out of version control.
   write_run_metadata
@@ -1438,13 +1663,16 @@ main() {
 
   bootstrap_agents_md
 
-  GATE_CMD="${GATE_CMD:-$(detect_gate)}"
-  BUILD_GATE_CMD="${BUILD_GATE_CMD:-$(detect_build_gate)}"
+  GATE_CMD="${GATE_CMD:-${RESUMED_GATE_CMD:-$(detect_gate)}}"
+  BUILD_GATE_CMD="${BUILD_GATE_CMD:-${RESUMED_BUILD_GATE_CMD:-$(detect_build_gate)}}"
   if [[ -n "$GATE_CMD" ]]; then
     echo "Quality gate:$GATE_CMD"
   else
     echo "(warning: no quality gate command detected; deterministic gates are disabled. Set GATE_CMD to enable one.)" >&2
   fi
+  # Snapshot the effective settings before the first AI call. Rewritten every attempt,
+  # so explicit overrides given on a resume carry over to the next resume.
+  write_resume_conf
 
   if [[ "$DUAL_SPEC" == "1" ]]; then
     run_dual_spec_spec_stage "$task"

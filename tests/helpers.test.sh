@@ -692,6 +692,102 @@ d=$(tmpdir)
 jq -e '.generator_role=="worker" and .engine=="claude"' "$d/.workflow/runs/test/001-worker-stage-r1-attempt-1-rc1.raw.meta.json" >/dev/null
 assert_rc "engine_call:attempt metadata includes role/engine" 0 $?
 
+# ---------- resume state: conf parser and writer ----------
+d=$(new_repo)
+out=$(
+  cd "$d" && mkdir -p .workflow/state/rt && source "$SCRIPT" \
+    && RUN_STATE_DIR=.workflow/state/rt \
+    && SPEC_DIR='specs/x y' && CODEX_ARGS='-c model="x,y" --flag "quoted value"' && GATE_CMD='go test ./...' \
+    && RUN_TASK_ARG='task.md' && RUN_TASK_SOURCE_KIND=file && RUN_TASK_SOURCE_PATH='/tmp/task dir/task.md' \
+    && write_resume_conf \
+    && parse_resume_conf .workflow/state/rt/resume.conf \
+    && printf '%s|%s|%s|%s\n' "$RESUMED_SPEC_DIR" "$RESUMED_CODEX_ARGS" "$RESUMED_GATE_CMD" "$RESUMED_TASK_SOURCE_PATH"
+)
+assert_eq "resume conf:write/parse roundtrip keeps spaces and quotes" \
+  'specs/x y|-c model="x,y" --flag "quoted value"|go test ./...|/tmp/task dir/task.md' "$out"
+
+d=$(tmpdir); mkdir -p "$d/st"
+printf 'schema=1\nevil_key=x\n' > "$d/st/resume.conf"
+( cd "$d" && source "$SCRIPT" && parse_resume_conf st/resume.conf ) >/dev/null 2>&1
+assert_nonzero "resume conf:unknown key is rejected" $?
+printf 'spec_dir=specs/x\n' > "$d/st/resume.conf"
+( cd "$d" && source "$SCRIPT" && parse_resume_conf st/resume.conf ) >/dev/null 2>&1
+assert_nonzero "resume conf:missing schema line is rejected" $?
+printf 'schema=2\nspec_dir=specs/x\n' > "$d/st/resume.conf"
+( cd "$d" && source "$SCRIPT" && parse_resume_conf st/resume.conf ) >/dev/null 2>&1
+assert_nonzero "resume conf:schema=2 is rejected" $?
+: > "$d/st/resume.conf"
+( cd "$d" && source "$SCRIPT" && parse_resume_conf st/resume.conf ) >/dev/null 2>&1
+assert_nonzero "resume conf:empty file is rejected" $?
+printf 'schema=1\ntruncated line without equals\n' > "$d/st/resume.conf"
+( cd "$d" && source "$SCRIPT" && parse_resume_conf st/resume.conf ) >/dev/null 2>&1
+assert_nonzero "resume conf:line without = is rejected" $?
+
+d=$(new_repo)
+rc=0
+err=$( cd "$d" && mkdir -p st && source "$SCRIPT" && RUN_STATE_DIR=st && SPEC_DIR=$'a\nb' && write_resume_conf 2>&1 ) || rc=$?
+assert_nonzero "resume conf:value with newline fails fast" "$rc"
+assert_like "resume conf:newline failure names the key" "*spec_dir*newline*" "$err"
+
+# ---------- resume state: RESUME_RUN resolution and locking ----------
+d=$(new_repo)
+( cd "$d" && RESUME_RUN='../../x' "$SCRIPT" ) >/dev/null 2>&1
+assert_rc "resume load:path traversal id is rejected" 1 $?
+
+mkdir -p "$d/.workflow/state/aaa-run"
+printf 'schema=1\n' > "$d/.workflow/state/aaa-run/resume.conf"
+err=$( cd "$d" && RESUME_RUN=nope "$SCRIPT" 2>&1 ); rc=$?
+assert_rc "resume load:unknown id fails" 1 "$rc"
+assert_like "resume load:unknown id lists available runs" "*aaa-run*" "$err"
+
+touch "$d/.workflow/state/aaa-run/completed"
+err=$( cd "$d" && RESUME_RUN=aaa-run "$SCRIPT" 2>&1 ); rc=$?
+assert_rc "resume load:completed run is refused" 1 "$rc"
+assert_like "resume load:completed run message says so" "*already completed*" "$err"
+
+d=$(new_repo)
+mkdir -p "$d/.workflow/state/20260101-000000" "$d/.workflow/state/20260102-000000"
+printf 'schema=1\n' > "$d/.workflow/state/20260101-000000/resume.conf"
+printf 'schema=1\n' > "$d/.workflow/state/20260102-000000/resume.conf"
+touch "$d/.workflow/state/20260102-000000/completed"
+out=$( cd "$d" && RESUME_RUN=last source "$SCRIPT" 2>/dev/null && printf '%s' "$RUN_ID" )
+assert_eq "resume load:last picks the newest unfinished run" "20260101-000000" "$out"
+touch "$d/.workflow/state/20260101-000000/completed"
+( cd "$d" && RESUME_RUN=last "$SCRIPT" ) >/dev/null 2>&1
+assert_rc "resume load:last with everything completed fails" 1 $?
+
+d=$(new_repo); st="$d/.workflow/state/r1"; mkdir -p "$st"
+printf 'schema=1\nengine_a=sh\nengine_b=pwd\nmax_rounds=5\n' > "$st/resume.conf"
+out=$( cd "$d" && RESUME_RUN=r1 source "$SCRIPT" 2>/dev/null && printf '%s/%s/%s' "$ENGINE_A" "$ENGINE_B" "$MAX_ROUNDS" )
+assert_eq "resume load:snapshot supplies engine and round defaults" "sh/pwd/5" "$out"
+out=$( cd "$d" && AGENT_B=codex && MAX_ROUNDS=2 && RESUME_RUN=r1 && source "$SCRIPT" 2>/dev/null && printf '%s/%s/%s' "$ENGINE_A" "$ENGINE_B" "$MAX_ROUNDS" )
+assert_eq "resume load:explicit env overrides the snapshot" "sh/codex/2" "$out"
+out=$( cd "$d" && AGENT_A=claude RESUME_RUN=r1 source "$SCRIPT" 2>/dev/null && printf '%s' "$ENGINE_A" )
+assert_eq "resume load:AGENT_A override does not trip the alias conflict" "claude" "$out"
+
+st2="$d/.workflow/state/r2"; mkdir -p "$st2"
+printf 'schema=1\ndual_spec=0\n' > "$st2/resume.conf"
+err=$( cd "$d" && DUAL_SPEC=1 RESUME_RUN=r2 "$SCRIPT" 2>&1 ); rc=$?
+assert_rc "resume load:immutable field conflict is rejected" 1 "$rc"
+assert_like "resume load:immutable conflict names the variable" "*DUAL_SPEC=1*" "$err"
+
+st3="$d/.workflow/state/r3"; mkdir -p "$st3"
+printf 'schema=1\nengine_a=sh\nengine_b=pwd\n' > "$st3/resume.conf"
+printf 'snapshot task\n' > "$st3/task.txt"
+err=$( cd "$d" && RESUME_RUN=r3 "$SCRIPT" "different task" 2>&1 ); rc=$?
+assert_rc "resume load:conflicting task argument fails" 1 "$rc"
+assert_like "resume load:task conflict points at the snapshot" "*task snapshot*" "$err"
+
+st4="$d/.workflow/state/r4"; mkdir -p "$st4/lock"
+printf 'schema=1\n' > "$st4/resume.conf"
+err=$( cd "$d" && RESUME_RUN=r4 "$SCRIPT" 2>&1 ); rc=$?
+assert_rc "resume load:busy lock is refused" 1 "$rc"
+assert_like "resume load:busy lock explains manual removal" "*rm -r*lock*" "$err"
+
+d=$(new_repo)
+( cd "$d" && source "$SCRIPT" && RUN_ID=xdup && mkdir -p .workflow/state/xdup && init_run_state task ) >/dev/null 2>&1
+assert_nonzero "fresh state:same-second run id collision fails clearly" $?
+
 # ---------- summary ----------
 echo ""
 echo "Passed $PASS, failed $FAIL"
