@@ -772,6 +772,58 @@ plan_tasks() {  # $1: plan.md; output unfinished task lines without the "- [ ] "
   grep -E '^- \[ \] ' "$1" | sed -E 's/^- \[ \] //' || true
 }
 
+ensure_task_queue() {  # $1: plan.md; create the run's task queue from the plan on first entry (C2).
+  # The script-held queue is the control flow; plan.md checkboxes are UI only.
+  # An existing empty queue means every task already committed, so no fallback then.
+  local queue="$RUN_STATE_DIR/tasks-remaining" tmp
+  [[ -f "$queue" ]] && return 0
+  tmp="$queue.tmp.$$"
+  plan_tasks "$1" > "$tmp"
+  if [[ ! -s "$tmp" ]]; then
+    echo "(warning: plan.md has no \"- [ ] \" task list; falling back to one whole-plan implementation task)" >&2
+    printf 'Complete the full implementation described in %s\n' "$1" > "$tmp"
+  fi
+  mv "$tmp" "$queue"
+}
+
+pop_task_queue() {  # Remove the queue's first line atomically, after that task committed.
+  local queue="$RUN_STATE_DIR/tasks-remaining" tmp
+  tmp="$queue.tmp.$$"
+  tail -n +2 "$queue" > "$tmp"
+  mv "$tmp" "$queue"
+}
+
+mark_plan_task_done() {  # $1: plan.md  $2: task text; flip the exact "- [ ]" line to "- [x]". No-op when already done.
+  local plan="$1" tmp
+  [[ -f "$plan" ]] || return 0
+  tmp="$plan.tmp.$$"
+  # Pass the task through the environment: awk -v would expand backslash escapes in task text.
+  TASK="$2" awk '
+    $0 == "- [ ] " ENVIRON["TASK"] { print "- [x] " ENVIRON["TASK"]; next }
+    { print }
+  ' "$plan" > "$tmp"
+  mv "$tmp" "$plan"
+}
+
+restore_or_record_acceptance_base() {  # Output the acceptance-test base sha, persisting it on first entry (C4).
+  # Without persistence, an interrupt between the acceptance commit and the protected-list
+  # write would recompute an empty diff on resume and silently disable test protection.
+  local f base
+  if [[ -n "$RUN_STATE_DIR" ]]; then
+    f="$RUN_STATE_DIR/acceptance-test-base"
+    if [[ -f "$f" ]]; then
+      cat "$f"
+      return 0
+    fi
+    base=$(git rev-parse HEAD)
+    printf '%s\n' "$base" > "$f.tmp.$$"
+    mv "$f.tmp.$$" "$f"
+    printf '%s\n' "$base"
+  else
+    git rev-parse HEAD
+  fi
+}
+
 normalize_dual_spec_decision() {  # $1: a|b|ma|mb; output canonical decision or fail.
   local decision="${1:-}"
   decision="${decision,,}"
@@ -1508,6 +1560,30 @@ human_gate_dual_spec_decision() {
   DUAL_SPEC_DECISION="$decision"
 }
 
+restore_dual_spec_decision() {  # Rebuild DUAL_SPEC_DECISION and the owner roles from spec-decision.md (C5).
+  # On resume, a skipped select-spec stage leaves DUAL_SPEC_DECISION empty; every later
+  # stage reads the owner/reviewer roles, so restore them before anything uses them.
+  [[ "$DUAL_SPEC" == "1" && -z "$DUAL_SPEC_DECISION" ]] || return 0
+  local f="$SPEC_DIR/spec-decision.md" decision slot
+  if [[ ! -f "$f" ]]; then
+    echo "!! DUAL_SPEC run has no decision yet and no $f to restore it from." >&2
+    exit 1
+  fi
+  decision=$(sed -n 's/^- decision: //p' "$f" | head -1)
+  if ! slot=$(dual_spec_owner_slot "$decision"); then
+    echo "!! Invalid decision [$decision] in $f; cannot restore the dual-spec selection." >&2
+    exit 1
+  fi
+  if [[ "$decision" == merge-* && ! -f "$WF/spec-merge-request.md" ]]; then
+    echo "!! Decision $decision needs $WF/spec-merge-request.md, which is missing." >&2
+    echo "   Restore it from the run archive under $RUNS_DIR, then resume again." >&2
+    exit 1
+  fi
+  DUAL_SPEC_DECISION="$decision"
+  set_spec_roles_from_slot "$slot"
+  echo "(restored dual-spec decision: $decision; owner $SPEC_OWNER_SLOT=$SPEC_OWNER_ENGINE)" >&2
+}
+
 run_dual_spec_spec_stage() {  # $1: task text
   local task="$1" decision prompt scope
   mkdir -p "$SPEC_DIR"
@@ -1576,6 +1652,7 @@ run_dual_spec_spec_stage() {  # $1: task text
     human_gate_dual_spec_decision
     end_stage
   fi
+  restore_dual_spec_decision   # A skipped select-spec leaves the decision empty on resume.
   decision="$DUAL_SPEC_DECISION"
 
   if begin_stage "finalize-spec" "$SPEC_DIR/spec.md"; then
@@ -1792,6 +1869,9 @@ main() {
       end_stage
     fi
   fi
+  # Covers the resume where finalize-spec was also skipped: every stage below reads
+  # the owner/reviewer roles chosen by the dual-spec decision (v1 review C5).
+  restore_dual_spec_decision
   if begin_stage "commit-spec"; then
     commit_work "$SPEC_OWNER_ENGINE" "Spec, approved by review and human gate"
     end_stage
@@ -1814,7 +1894,7 @@ main() {
   # The test author and implementer are separated, and A cannot edit these tests during implementation.
   if begin_stage "write-acceptance-tests" "$WF/protected-tests.txt" "$WF/protected-base.sha"; then
     local test_base
-    test_base=$(git rev-parse HEAD)
+    test_base=$(restore_or_record_acceptance_base)
     prompt=$(render_prompt write-acceptance-tests \
       "SPEC_FILE=$SPEC_DIR/spec.md" \
       "SPEC_DIR=$SPEC_DIR")
@@ -1838,14 +1918,12 @@ main() {
 
   # Small batches: one task per commit makes review and rollback easier.
   if begin_stage "write-code"; then
-    local tasks=() t i=1
-    mapfile -t tasks < <(plan_tasks "$SPEC_DIR/plan.md")
-    if (( ${#tasks[@]} == 0 )); then
-      echo "(warning: plan.md has no \"- [ ] \" task list; falling back to one whole-plan implementation task)" >&2
-      tasks=("Complete the full implementation described in $SPEC_DIR/plan.md")
-    fi
-    for t in "${tasks[@]}"; do
-      echo "--- Task $i/${#tasks[@]}:$t ---" | tee -a "$LOG"
+    local t i=1 total
+    ensure_task_queue "$SPEC_DIR/plan.md"
+    total=$(wc -l < "$RUN_STATE_DIR/tasks-remaining")
+    while [[ -s "$RUN_STATE_DIR/tasks-remaining" ]]; do
+      t=$(head -1 "$RUN_STATE_DIR/tasks-remaining")
+      echo "--- Task $i/$total:$t ---" | tee -a "$LOG"
       prompt=$(render_prompt implement-plan-task \
         "PLAN_FILE=$SPEC_DIR/plan.md" \
         "TASK=$t" \
@@ -1853,6 +1931,8 @@ main() {
       work "$SPEC_OWNER_ENGINE" "$prompt"
       gate_loop "$SPEC_OWNER_ENGINE" "$BUILD_GATE_CMD"
       commit_work "$SPEC_OWNER_ENGINE" "Task \"$t\""
+      pop_task_queue
+      mark_plan_task_done "$SPEC_DIR/plan.md" "$t"   # UI only; no-op when the worker already ticked it.
       i=$(( i + 1 ))
     done
 

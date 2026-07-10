@@ -896,6 +896,109 @@ err=$(
 )
 assert_like "resume workspace:dirty tree warns about auto-commit absorption" "*absorbed into the next automatic commit*" "$err"
 
+# ---------- resume state: dual-spec decision restore ----------
+d=$(tmpdir)
+mkdir -p "$d/specs" "$d/.workflow"
+printf -- '# Dual Spec Decision\n\n- decision: adopt-b\n- selected owner slot: B\n' > "$d/specs/spec-decision.md"
+out=$(
+  cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow \
+    && DUAL_SPEC=1 && DUAL_SPEC_DECISION= \
+    && restore_dual_spec_decision 2>/dev/null \
+    && printf '%s|%s|%s' "$DUAL_SPEC_DECISION" "$SPEC_OWNER_ENGINE" "$SPEC_REVIEWER_ENGINE"
+)
+assert_eq "dual_spec restore:adopt-b restores owner engine B" "adopt-b|codex|claude" "$out"
+
+printf -- '- decision: merge-b\n' > "$d/specs/spec-decision.md"
+printf 'adopt item\n' > "$d/.workflow/spec-merge-request.md"
+out=$(
+  cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow \
+    && DUAL_SPEC=1 && DUAL_SPEC_DECISION= \
+    && restore_dual_spec_decision 2>/dev/null \
+    && printf '%s|%s' "$DUAL_SPEC_DECISION" "$SPEC_OWNER_ENGINE"
+)
+assert_eq "dual_spec restore:merge-b with merge request restores" "merge-b|codex" "$out"
+
+rm "$d/.workflow/spec-merge-request.md"
+rc=0
+err=$(
+  cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow \
+    && DUAL_SPEC=1 && DUAL_SPEC_DECISION= && restore_dual_spec_decision 2>&1
+) || rc=$?
+assert_nonzero "dual_spec restore:merge without merge request fails closed" "$rc"
+assert_like "dual_spec restore:merge failure points at the archive" "*run archive*" "$err"
+
+printf -- '- decision: bogus\n' > "$d/specs/spec-decision.md"
+( cd "$d" && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow && DUAL_SPEC=1 && DUAL_SPEC_DECISION= && restore_dual_spec_decision ) >/dev/null 2>&1
+assert_nonzero "dual_spec restore:invalid decision fails" $?
+
+out=$(
+  cd "$d" && ENGINE_A=claude && ENGINE_B=codex && source "$SCRIPT" && SPEC_DIR=specs && WF=.workflow \
+    && DUAL_SPEC=1 && DUAL_SPEC_DECISION=adopt-a && SPEC_OWNER_ENGINE=claude \
+    && restore_dual_spec_decision && printf '%s|%s' "$DUAL_SPEC_DECISION" "$SPEC_OWNER_ENGINE"
+)
+assert_eq "dual_spec restore:existing decision is left alone" "adopt-a|claude" "$out"
+
+# ---------- resume state: acceptance test base ----------
+d=$(new_repo)
+mkdir -p "$d/.workflow/state/r"
+printf 'cafebabe\n' > "$d/.workflow/state/r/acceptance-test-base"
+out=$( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && restore_or_record_acceptance_base )
+assert_eq "acceptance base:persisted value is reused" "cafebabe" "$out"
+
+rm "$d/.workflow/state/r/acceptance-test-base"
+head_sha=$(git -C "$d" rev-parse HEAD)
+out=$( cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r && restore_or_record_acceptance_base )
+assert_eq "acceptance base:first entry records HEAD" "$head_sha" "$out"
+assert_eq "acceptance base:first entry persists the sha" "$head_sha" "$(cat "$d/.workflow/state/r/acceptance-test-base")"
+
+# ---------- resume state: write-code task queue ----------
+d=$(new_repo)
+mkdir -p "$d/.workflow/state/r"
+printf -- '- [ ] task one\n- [x] done task\n- [ ] task two\n' > "$d/plan.md"
+out=$(
+  cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r \
+    && ensure_task_queue plan.md \
+    && cat .workflow/state/r/tasks-remaining
+)
+assert_eq "task queue:created from unfinished plan tasks" $'task one\ntask two' "$out"
+
+printf 'custom remaining task\n' > "$d/.workflow/state/r/tasks-remaining"
+out=$(
+  cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r \
+    && ensure_task_queue plan.md \
+    && cat .workflow/state/r/tasks-remaining
+)
+assert_eq "task queue:existing queue is not rebuilt from the plan" "custom remaining task" "$out"
+
+out=$(
+  cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r \
+    && pop_task_queue \
+    && wc -l < .workflow/state/r/tasks-remaining
+)
+assert_eq "task queue:pop removes the finished first line" "0" "$out"
+
+out=$(
+  cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r \
+    && ensure_task_queue plan.md \
+    && wc -l < .workflow/state/r/tasks-remaining
+)
+assert_eq "task queue:empty queue means all done and gets no fallback" "0" "$out"
+
+rm "$d/.workflow/state/r/tasks-remaining"
+printf 'prose only, no checkbox list\n' > "$d/plan2.md"
+out=$(
+  cd "$d" && source "$SCRIPT" && RUN_STATE_DIR=.workflow/state/r \
+    && ensure_task_queue plan2.md 2>/dev/null \
+    && cat .workflow/state/r/tasks-remaining
+)
+assert_like "task queue:plan without checkboxes still falls back" "*Complete the full implementation*plan2.md*" "$out"
+
+d=$(tmpdir)
+printf -- '- [ ] task one\n- [ ] task one extra\nplain line\n' > "$d/plan.md"
+( cd "$d" && source "$SCRIPT" && mark_plan_task_done plan.md "task one" && mark_plan_task_done plan.md "task one" )
+assert_eq "plan checkbox:exact line is ticked once, prefix matches untouched" \
+  $'- [x] task one\n- [ ] task one extra\nplain line' "$(cat "$d/plan.md")"
+
 # ---------- summary ----------
 echo ""
 echo "Passed $PASS, failed $FAIL"
