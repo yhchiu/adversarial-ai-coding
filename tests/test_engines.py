@@ -266,6 +266,32 @@ def test_claude_reviewer_writes_verdict_from_structured_output(monkeypatch, tmp_
     assert verdict["approved"] is True and verdict["suggestions"] == ["s1"]
 
 
+def test_claude_reviewer_invalid_json_matches_bash_jq_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "not json at all"))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(last_cost="old-cost")
+    result = run_reviewer("claude", "p", s, session, io)
+    assert result == EngineResult(rc=5, text="")
+    assert session.last_cost == ""
+    assert io.engine_out.read_text(encoding="utf-8") == "not json at all\n"
+    assert io.verdict_path.exists()
+    assert io.verdict_path.stat().st_size == 0
+
+
+@pytest.mark.parametrize("structured_output", [{}, [], "", 0])
+def test_claude_reviewer_preserves_jq_coalesce_non_null_non_false_values(
+    monkeypatch, tmp_path, structured_output
+):
+    payload = json.dumps({"structured_output": structured_output, "result": "review"})
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    result = run_reviewer("claude", "p", s, EngineSession(), io)
+    assert result == EngineResult(rc=0, text="review")
+    assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == structured_output
+
+
 def test_claude_reviewer_missing_structured_output_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(engines, "_run_captured",
                         lambda argv: (0, json.dumps({"result": "no verdict"})))
@@ -275,6 +301,23 @@ def test_claude_reviewer_missing_structured_output_fallback(monkeypatch, tmp_pat
     verdict = json.loads(io.verdict_path.read_text(encoding="utf-8"))
     assert verdict["approved"] is False
     assert verdict["blockers"] == ["reviewer did not produce a structured verdict"]
+
+
+@pytest.mark.parametrize("structured_output", [None, False])
+def test_claude_reviewer_null_or_false_structured_output_uses_fallback(
+    monkeypatch, tmp_path, structured_output
+):
+    payload = json.dumps({"structured_output": structured_output, "result": "review"})
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    result = run_reviewer("claude", "p", s, EngineSession(), io)
+    assert result == EngineResult(rc=0, text="review")
+    assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == {
+        "approved": False,
+        "blockers": ["reviewer did not produce a structured verdict"],
+        "suggestions": [],
+    }
 
 
 def test_claude_reviewer_argv_has_schema(monkeypatch, tmp_path):

@@ -230,8 +230,15 @@ def _reviewer_claude(
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
-        payload = {}
-    verdict = payload.get("structured_output") or VERDICT_FALLBACK
+        io.verdict_path.write_text("", encoding="utf-8")
+        session.last_cost = ""
+        return EngineResult(5, "")
+    structured_output = payload.get("structured_output")
+    verdict = (
+        VERDICT_FALLBACK
+        if structured_output is None or structured_output is False
+        else structured_output
+    )
     io.verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     cost = payload.get("total_cost_usd")
     session.last_cost = "" if cost is None else str(cost)
