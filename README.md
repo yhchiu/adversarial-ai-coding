@@ -7,9 +7,9 @@
 One AI agent is the worker, and a second AI agent is the reviewer that reviews
 the work and writes adversarial acceptance tests.
 
-The workflow is designed around spec-first development, deterministic quality
-gates, protected acceptance tests, small commits, and human review before costly
-implementation starts.
+The workflow is designed around spec-driven development (SDD), adversarial
+test-driven development with protected acceptance tests, deterministic quality
+gates, small commits, and human review before costly implementation starts.
 
 The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
