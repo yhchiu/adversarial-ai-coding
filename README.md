@@ -475,13 +475,14 @@ test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
 
 By default, the workflow waits and retries on rate-limit or quota errors, for every
 agent. When the message states how long to wait, the workflow waits exactly that
-long instead of guessing. It understands three shapes:
+long instead of guessing. It understands four shapes:
 
 | Message | Agent | Wait |
 | --- | --- | --- |
 | `resets 10:50am` | Claude | Until that clock time, plus 2 minutes |
 | `try again in 90s` | Codex | That duration, plus 30 seconds |
 | `try again at Jul 14th, 2026 7:23 PM` | Codex | Until that timestamp, plus 30 seconds |
+| `try again at 12:50 AM` | Codex | Until that clock time, plus 30 seconds |
 
 Anything else falls back to exponential backoff (`RETRY_BASE_WAIT` doubling up to
 `RETRY_MAX_WAIT`), for at most `RETRY_MAX` retries.

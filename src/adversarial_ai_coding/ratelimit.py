@@ -45,6 +45,13 @@ _ABSOLUTE = re.compile(
     r"(?:st|nd|rd|th)?,? +(\d{4}),? +(\d{1,2}):(\d{2}) *([ap])\.?m",
     re.IGNORECASE,
 )
+# No bash counterpart: codex CLI v0.144+ emits a clock-only quota message
+# ("try again at 12:50 AM", no date). Checked after _ABSOLUTE, which needs a
+# month name where this needs digits, so the two can never match the same text.
+_CLOCK_AT = re.compile(
+    r"try again at +(\d{1,2}):(\d{2}) *([ap])\.?m",
+    re.IGNORECASE,
+)
 
 
 def _read(path: Path) -> str | None:
@@ -62,6 +69,25 @@ def is_rate_limited(path: Path) -> bool:
 def _hour24(hour12: int, ampm: str) -> int:
     h = hour12 % 12
     return h + 12 if ampm.lower() == "p" else h
+
+
+def _next_clock_epoch(now: int, hour12: int, minute: int, ampm: str) -> int | None:
+    """Next wall-clock occurrence of hour12:minute after `now`; None if invalid."""
+    try:
+        base = datetime.fromtimestamp(now)
+        target = base.replace(
+            hour=_hour24(hour12, ampm),
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+    except ValueError:  # e.g. minute 99
+        return None
+    if int(target.timestamp()) <= now:
+        # bash adds exactly 86400s; timedelta(days=1) on a naive local datetime can
+        # differ by 1h across a DST edge. Wall-clock rollover is the intended meaning.
+        target += timedelta(days=1)
+    return int(target.timestamp())
 
 
 def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
@@ -82,22 +108,11 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
         if not 1 <= hour12 <= 12:
             m = None  # GNU date rejects hour 0 or >12 with an am/pm marker
     if m:
-        try:
-            base = datetime.fromtimestamp(now)
-            target = base.replace(
-                hour=_hour24(hour12, m.group(3)),
-                minute=int(m.group(2)),
-                second=0,
-                microsecond=0,
-            )
-            if int(target.timestamp()) <= now:
-                # bash adds exactly 86400s; timedelta(days=1) on a naive local datetime can
-                # differ by 1h across a DST edge. Wall-clock rollover is the intended meaning.
-                target += timedelta(days=1)
-            wait = int(target.timestamp()) - now + 120
+        target_epoch = _next_clock_epoch(now, hour12, int(m.group(2)), m.group(3))
+        if target_epoch is not None:
+            wait = target_epoch - now + 120
             return wait if wait <= RESET_SANITY_MAX else None
-        except ValueError:
-            pass  # e.g. "5:99am": fall through to Formats 2 and 3.
+        # e.g. "5:99am": fall through to the remaining formats.
 
     # Format 2, OpenAI/Codex: "try again in 20s / 2 minutes / 3 hours" + 30s buffer.
     m = _RELATIVE.search(norm)
@@ -138,6 +153,20 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
             return 30  # Already elapsed; retry after a short buffer.
         wait = target_epoch - now + 30
         return wait if wait <= RESET_SANITY_MAX else None
+
+    # Format 4, Codex quota without a date: "try again at 12:50 AM"
+    # -> next occurrence, plus the codex 30s buffer.
+    m = _CLOCK_AT.search(norm)
+    if m:
+        hour12 = int(m.group(1))
+        if not 1 <= hour12 <= 12:
+            m = None  # same hour rule as Formats 1 and 3
+    if m:
+        target_epoch = _next_clock_epoch(now, hour12, int(m.group(2)), m.group(3))
+        if target_epoch is not None:
+            wait = target_epoch - now + 30
+            return wait if wait <= RESET_SANITY_MAX else None
+        # e.g. "5:99 AM": nothing left to try.
 
     return None
 

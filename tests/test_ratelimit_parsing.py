@@ -29,6 +29,12 @@ CODEX_QUOTA = (
     "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jul\n"
     "14th, 2026 7:23 PM.\n"
 )
+# Real codex CLI (v0.144.x) quota message: clock-only reset time, no date.
+CODEX_QUOTA_CLOCK = (
+    "ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), "
+    "visit https://chatgpt.com/codex/settings/usage to purchase more credits or "
+    "try again at 12:50 AM.\n"
+)
 
 
 def out_file(tmp_path, text):
@@ -45,8 +51,16 @@ def out_file(tmp_path, text):
         CODEX_429,
         "You've reached your usage limit.\n",
         CODEX_QUOTA,
+        CODEX_QUOTA_CLOCK,
     ],
-    ids=["claude-429-json", "too-many-requests", "codex-429-json", "reached-usage", "codex-quota-wrapped"],
+    ids=[
+        "claude-429-json",
+        "too-many-requests",
+        "codex-429-json",
+        "reached-usage",
+        "codex-quota-wrapped",
+        "codex-quota-clock",
+    ],
 )
 def test_rate_limit_samples_detected(tmp_path, sample):
     assert is_rate_limited(out_file(tmp_path, sample))
@@ -161,6 +175,39 @@ def test_resets_on_absolute_date_parses(tmp_path):
     target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
     p = out_file(tmp_path, "resets on Jul 14th, 2026 7:23 PM\n")
     assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
+
+
+def test_clock_only_try_again_at_waits_until_next_occurrence(tmp_path):
+    # Real incident (2026-07-12 E2E run): hit at 00:37, codex said
+    # "try again at 12:50 AM" with no date; expect a precise 13-minute wait.
+    now_fixed = int(datetime(2026, 7, 12, 0, 37, 0).timestamp())
+    p = out_file(tmp_path, CODEX_QUOTA_CLOCK)
+    assert parse_reset_wait(p, now_fixed) == 13 * 60 + 30
+
+
+def test_clock_only_past_time_rolls_to_tomorrow(tmp_path):
+    p = out_file(tmp_path, "try again at 8:00 AM.\n")
+    assert parse_reset_wait(p, NOW) == 86400 - 3600 + 30  # 82830
+
+
+def test_clock_only_pm_parses(tmp_path):
+    p = out_file(tmp_path, "try again at 12:30 PM.\n")
+    assert parse_reset_wait(p, NOW) == int(3.5 * 3600) + 30
+
+
+def test_clock_only_across_line_break(tmp_path):
+    now_fixed = int(datetime(2026, 7, 12, 0, 37, 0).timestamp())
+    p = out_file(tmp_path, "purchase more credits or try again at\n12:50 AM.\n")
+    assert parse_reset_wait(p, now_fixed) == 13 * 60 + 30
+
+
+def test_clock_only_hour_zero_falls_through(tmp_path):
+    # Mirrors the "resets 0:30am" rule: hour 0 with an am/pm marker is invalid.
+    assert parse_reset_wait(out_file(tmp_path, "try again at 0:30 AM.\n"), NOW) is None
+
+
+def test_clock_only_malformed_minute_returns_none(tmp_path):
+    assert parse_reset_wait(out_file(tmp_path, "try again at 5:99 AM.\n"), NOW) is None
 
 
 def test_human_duration():
