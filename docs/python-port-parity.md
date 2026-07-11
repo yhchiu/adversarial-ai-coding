@@ -139,14 +139,26 @@ Python replacement or an `intentionally-dropped(...)` rationale.
 
 ## Acceptance record
 
-Parity gate 3 is pending. A human must run the quota-gated real-agent E2E and
-the deliberate Ctrl-C/resume procedure from Plan 6 Task 3, then record:
+Parity gate 3 is complete. Both the quota-gated fresh real-agent E2E and the
+deliberate Ctrl-C/resume procedure from Plan 6 Task 3 passed.
 
-- Date and operator:
-- Models and arguments:
-- Full E2E run id and result: **PENDING**
-- Interrupted run id and write-code interrupt point: **PENDING**
-- Exit 130, one resume hint, and released lock: **PENDING**
-- Resume skipped completed stages without repeated spec/plan calls: **PENDING**
-- Completion marker and completed-run refusal: **PENDING**
-- Overall parity gate 3: **PENDING**
+- Date and operator: 2026-07-12, Arthur (human-run)
+- Models and arguments: Claude `sonnet` with `--effort=low`; Codex `gpt-5.5`
+  with `-c model_reasoning_effort=low`
+- Full E2E run id and result: **PASS**, run `20260712-000544`; pytest reported
+  `1 passed, 1 deselected in 1319.97s`; workspace
+  `C:\tmp\aicoding-full-e2e-20260712-000526`; completed marker present, lock
+  absent, and `strutil/strutil_test.go` recorded as the protected test
+- Interrupted run id and write-code interrupt point: **PASS**, run
+  `20260712-003327`, interrupted during `write-code`; workspace
+  `C:\tmp\aicoding-interrupt-e2e-20260712-003305`
+- Exit 130, one resume hint, and released lock: **PASS**, exit `130`, lock
+  absent after interruption
+- Resume skipped completed stages without repeated spec/plan calls: **PASS**,
+  resume archive `20260712-003327-2` logged skips for `write-spec`,
+  `commit-spec`, `write-implementation-plan`, and `write-acceptance-tests`;
+  its metrics contain only `write-code` and `final-review-and-fixes`
+- Completion marker and completed-run refusal: **PASS**, resume exited `0`,
+  completed marker present, lock absent, and a subsequent resume exited `1`
+  with `already completed; nothing to resume`
+- Overall parity gate 3: **PASS**
