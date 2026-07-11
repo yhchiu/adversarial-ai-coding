@@ -8,8 +8,17 @@ retry loop.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from .config import Settings
+    from .engines import EngineResult
+
+# EX_TEMPFAIL: an agent call gave up on quota/rate limit; the run is resumable (sh:72).
+QUOTA_ABORT_RC = 75
 
 RESET_SANITY_MAX = 2_592_000  # 30 days; beyond this is a parsing artefact.
 
@@ -129,3 +138,65 @@ def human_duration(seconds: int) -> str:
     if seconds >= 3600:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
     return f"{seconds // 60}m"
+
+
+@dataclass
+class RetryEvents:
+    archive_attempt: Callable[[int, int], None]
+    log_retry: Callable[[str], None]
+    notify: Callable[[str], None]
+    sleep: Callable[[float], None]
+
+
+def engine_call(
+    attempt: "Callable[[], EngineResult]",
+    *,
+    engine_out: Path,
+    settings: "Settings",
+    events: RetryEvents,
+    now: Callable[[], int] | None = None,
+) -> "EngineResult":
+    """Port of engine_call (sh:1131-1169): retry only on rate limits.
+
+    Every quota give-up returns rc=QUOTA_ABORT_RC so callers abort the run
+    as resumable instead of treating it like a quality failure.
+    """
+    from .engines import EngineResult  # local import to avoid a cycle
+
+    n = 0
+    attempt_no = 1
+    while True:
+        result = attempt()
+        events.archive_attempt(attempt_no, result.rc)
+        if result.rc == 0:
+            return result
+        if not is_rate_limited(engine_out):
+            return result
+        if not settings.retry_on_limit:
+            return EngineResult(QUOTA_ABORT_RC, result.text)
+        if n >= settings.retry_max:
+            events.log_retry(
+                f"!! Rate limit did not clear after {settings.retry_max} retries; giving up."
+            )
+            return EngineResult(QUOTA_ABORT_RC, result.text)
+        wait = parse_reset_wait(engine_out, now() if now else None)
+        if wait is not None and wait > settings.retry_max_reset_wait:
+            # The message told us exactly when the quota returns and it is far
+            # away. Backing off would burn hours of sleep and still fail (sh:1149-1155).
+            events.log_retry(
+                f"!! Quota resets in {human_duration(wait)}, beyond "
+                f"RETRY_MAX_RESET_WAIT={settings.retry_max_reset_wait}s. "
+                "Not waiting; rerun after the reset."
+            )
+            events.notify("adversarial-ai-coding: quota exhausted; run aborted")
+            return EngineResult(QUOTA_ABORT_RC, result.text)
+        n += 1
+        if wait is None:
+            wait = min(settings.retry_base_wait * (1 << (n - 1)), settings.retry_max_wait)
+        events.log_retry(
+            f"== Rate limit hit; waiting {wait // 60} minutes before retry "
+            f"{n}/{settings.retry_max} =="
+        )
+        events.notify(f"adversarial-ai-coding: rate limit hit; retry attempt {n}")
+        events.sleep(wait)
+        attempt_no += 1
