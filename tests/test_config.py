@@ -23,6 +23,7 @@ def test_defaults_match_bash():
     assert s.auto_branch is True
     assert s.use_worktree is False
     assert s.human_gate is True
+    assert s.human_gate_plan is False
     assert s.dual_spec is False
     assert s.open_pr is False
     assert s.notify_cmd == ""
@@ -34,6 +35,12 @@ def test_defaults_match_bash():
     assert s.tools == "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
     assert s.spec_dir == "specs/20260710-120000"
     assert s.runs_dir == ".workflow/runs"
+
+
+def test_plan_gate_is_opt_in_and_independent_of_human_gate():
+    assert make({"HUMAN_GATE_PLAN": "1"}).human_gate_plan is True
+    s = make({"HUMAN_GATE": "0", "HUMAN_GATE_PLAN": "1"})
+    assert (s.human_gate, s.human_gate_plan) == (False, True)
 
 
 def test_agent_a_configures_slot_a():

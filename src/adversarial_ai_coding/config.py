@@ -58,6 +58,7 @@ class Settings:
     auto_branch: bool
     use_worktree: bool
     human_gate: bool
+    human_gate_plan: bool
     dual_spec: bool
     open_pr: bool
     notify_cmd: str
@@ -96,6 +97,7 @@ class Settings:
             auto_branch=persisted("AUTO_BRANCH", "1") == "1",
             use_worktree=persisted("USE_WORKTREE", "0") == "1",
             human_gate=persisted("HUMAN_GATE", "1") == "1",
+            human_gate_plan=persisted("HUMAN_GATE_PLAN", "0") == "1",
             dual_spec=persisted("DUAL_SPEC", "0") == "1",
             open_pr=persisted("OPEN_PR", "0") == "1",
             # Deliberately never from the snapshot (bash line 307): provide per attempt.

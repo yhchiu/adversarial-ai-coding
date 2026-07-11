@@ -115,6 +115,24 @@ def test_snapshot_feeds_settings_from_env():
     assert values["use_worktree"] == "0"
 
 
+def test_plan_gate_survives_resume_without_the_env_var(tmp_path):
+    s = make_settings({"HUMAN_GATE_PLAN": "1"})
+    values = snapshot_values(
+        s,
+        branch="b",
+        gate_cmd="",
+        build_gate_cmd="",
+        task_arg="",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+    assert values["human_gate_plan"] == "1"
+    write_snapshot(tmp_path / "st", values)
+    snap = load_snapshot(tmp_path / "st")
+    resumed = Settings.from_env({}, run_id="20260711-000000", snapshot=snap)
+    assert resumed.human_gate_plan is True
+
+
 def test_check_immutable_conflict():
     # helpers.test.sh: "resume load:immutable field conflict is rejected"
     snap = {"DUAL_SPEC": "0", "SPEC_DIR": "specs/r"}
