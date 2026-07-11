@@ -28,3 +28,34 @@ def new_repo(tmp_path):
     _git("add", "-A")
     _git("commit", "-qm", "base")
     return tmp_path
+
+
+@pytest.fixture
+def make_ctx(new_repo):
+    """WorkflowContext over a throwaway repo with silenced console sinks."""
+    from adversarial_ai_coding.agents import AgentSession
+    from adversarial_ai_coding.archive import establish_run_archive
+    from adversarial_ai_coding.config import Settings
+    from adversarial_ai_coding.prompts import default_prompts_dir
+    from adversarial_ai_coding.workflow import WorkflowContext
+
+    def _make(env=None):
+        settings = Settings.from_env(env or {"RETRY_ON_LIMIT": "0"}, run_id="test")
+        wf = new_repo / ".workflow"
+        wf.mkdir(exist_ok=True)
+        archive = establish_run_archive(wf / "runs", "test", settings)
+        return WorkflowContext(
+            settings=settings,
+            archive=archive,
+            state=None,
+            session=AgentSession(),
+            workspace=new_repo,
+            wf=wf,
+            prompts_dir=default_prompts_dir({}),
+            spec_dir=new_repo / "specs",
+            cur_stage="stage",
+            echo=lambda _line: None,
+            echo_err=lambda _line: None,
+        )
+
+    return _make
