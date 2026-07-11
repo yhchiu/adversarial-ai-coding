@@ -11,7 +11,9 @@ from adversarial_ai_coding.workflow import (
     commit_if_dirty,
     commit_work,
     end_stage,
+    human_gate_plan,
     human_gate_spec,
+    plan_gate_preflight,
     set_spec_roles_from_slot,
 )
 
@@ -105,6 +107,32 @@ def test_human_gate_approval_and_abort(make_ctx):
     ctx.ask = lambda prompt: "n"
     with pytest.raises(WorkflowAbort, match="spec was not approved"):
         human_gate_spec(ctx)
+
+
+def test_plan_gate_is_off_by_default(make_ctx):
+    ctx = make_ctx({"RETRY_ON_LIMIT": "0"})
+    ctx.ask = lambda prompt: pytest.fail("plan gate must not ask when disabled")
+    human_gate_plan(ctx)
+
+
+def test_plan_gate_approval_and_abort(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE_PLAN": "1", "RETRY_ON_LIMIT": "0"})
+    lines = []
+    ctx.echo = lines.append
+    ctx.ask = lambda prompt: "y"
+    human_gate_plan(ctx)
+    assert any("plan.md" in line for line in lines)
+    ctx.ask = lambda prompt: "n"
+    with pytest.raises(WorkflowAbort, match="plan was not approved"):
+        human_gate_plan(ctx)
+
+
+def test_plan_gate_preflight_needs_a_terminal(make_ctx):
+    settings = make_ctx({"HUMAN_GATE_PLAN": "1", "RETRY_ON_LIMIT": "0"}).settings
+    with pytest.raises(WorkflowAbort, match="requires an interactive terminal"):
+        plan_gate_preflight(settings, stdin_isatty=False)
+    plan_gate_preflight(settings, stdin_isatty=True)
+    plan_gate_preflight(make_ctx().settings, stdin_isatty=False)
 
 
 def test_set_spec_roles_from_slot(make_ctx):

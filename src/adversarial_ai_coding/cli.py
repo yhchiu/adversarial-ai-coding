@@ -40,7 +40,7 @@ from .runstate import (
     snapshot_values,
     write_snapshot,
 )
-from .workflow import WorkflowContext, run_workflow
+from .workflow import WorkflowContext, plan_gate_preflight, run_workflow
 
 USAGE = """Usage:adversarial-ai-coding "task description"
       adversarial-ai-coding task.md         # If the argument is a file, use its contents as the task
@@ -153,6 +153,7 @@ def main(
             )
             return 1
         dual_spec_preflight(settings, stdin_isatty)
+        plan_gate_preflight(settings, stdin_isatty)
 
         print(
             f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "

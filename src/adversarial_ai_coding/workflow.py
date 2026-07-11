@@ -329,9 +329,9 @@ def commit_if_dirty(ctx: WorkflowContext, agent: str, description: str) -> None:
     commit_work(ctx, agent, description)
 
 
-def human_gate_spec(ctx: WorkflowContext) -> None:
-    if not ctx.settings.human_gate:
-        return
+def _human_approval(
+    ctx: WorkflowContext, *, subject: str, path: Path, focus: str
+) -> None:
     ctx.archive.log_section(
         "human gate",
         "workflow",
@@ -341,22 +341,58 @@ def human_gate_spec(ctx: WorkflowContext) -> None:
         echo=ctx.echo,
     )
     ctx.notify(
-        f"adversarial-ai-coding: spec awaits human approval "
-        f"({ctx.spec_dir / 'spec.md'})"
+        f"adversarial-ai-coding: {subject} awaits human approval ({path})"
     )
     ctx.echo("")
-    ctx.echo(
-        f"### Human checkpoint: review {ctx.spec_dir / 'spec.md'}, especially "
-        "the Assumptions and Open Questions section."
-    )
+    ctx.echo(f"### Human checkpoint: review {path}, especially {focus}")
     ctx.echo(
         "### You may edit the file before continuing; your edits will be "
-        "committed with the spec."
+        f"committed with the {subject}."
     )
     answer = ctx.ask("Enter y to approve and continue; anything else aborts:")
     if answer not in ("y", "Y"):
-        raise WorkflowAbort("Aborted: spec was not approved.")
-    ctx.log("Spec approved by human")
+        raise WorkflowAbort(f"Aborted: {subject} was not approved.")
+    ctx.log(f"{subject.capitalize()} approved by human")
+
+
+def human_gate_spec(ctx: WorkflowContext) -> None:
+    if not ctx.settings.human_gate:
+        return
+    _human_approval(
+        ctx,
+        subject="spec",
+        path=ctx.spec_dir / "spec.md",
+        focus="the Assumptions and Open Questions section.",
+    )
+
+
+def human_gate_plan(ctx: WorkflowContext) -> None:
+    """Optional (HUMAN_GATE_PLAN=1) checkpoint before the plan is committed.
+
+    plan.md is the task queue for the implementation stage: one `- [ ]` item
+    becomes one commit, so this is the last cheap place to intervene.
+    """
+
+    if not ctx.settings.human_gate_plan:
+        return
+    _human_approval(
+        ctx,
+        subject="plan",
+        path=ctx.spec_dir / "plan.md",
+        focus="the task breakdown: each `- [ ]` item becomes one commit.",
+    )
+
+
+def plan_gate_preflight(settings: Settings, stdin_isatty: bool) -> None:
+    """Fail before any paid AI call when the plan gate cannot ask a human."""
+
+    if not settings.human_gate_plan:
+        return
+    if not stdin_isatty:
+        raise WorkflowAbort(
+            "HUMAN_GATE_PLAN=1 requires an interactive terminal for plan "
+            "approval. Run interactively or set HUMAN_GATE_PLAN=0."
+        )
 
 
 def _run_git_default(args, cwd):
@@ -559,6 +595,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             ctx.spec_roles.owner_agent,
             scope,
         )
+        human_gate_plan(ctx)
         commit_work(ctx, ctx.spec_roles.owner_agent, "Implementation plan")
         end_stage(ctx)
 

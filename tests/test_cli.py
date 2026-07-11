@@ -149,6 +149,28 @@ def test_dual_spec_human_gate_blocked_before_branch(
     assert current_branch(new_repo) == "main"
 
 
+def test_plan_gate_without_tty_blocked_before_branch(
+    new_repo, monkeypatch, capsys
+):
+    from adversarial_ai_coding.gitops import current_branch
+
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda ctx, task: pytest.fail("preflight must abort before any AI call"),
+    )
+    rc = cli.main(
+        ["task"],
+        {"AGENT_A": "sh", "AGENT_B": "pwd", "HUMAN_GATE_PLAN": "1"},
+        stdin_isatty=False,
+    )
+    assert rc == 1
+    assert "HUMAN_GATE_PLAN=0" in capsys.readouterr().err
+    assert current_branch(new_repo) == "main"
+
+
 def test_resume_hint_printed_once_and_lock_released(
     new_repo, monkeypatch, capsys
 ):

@@ -121,6 +121,49 @@ def test_scenario1_quota_abort_then_resume(new_repo, tmp_path, monkeypatch):
     )
 
 
+def test_plan_gate_asks_and_commits_the_human_edit(new_repo, tmp_path, monkeypatch):
+    """HUMAN_GATE_PLAN=1 drives the real CLI with a simulated terminal."""
+
+    from adversarial_ai_coding import workflow as wf_mod
+    from adversarial_ai_coding.gitops import git_out, status_porcelain
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = wf_env(work, HUMAN_GATE="0", HUMAN_GATE_PLAN="1")
+    asked = []
+
+    def fake_input(prompt=""):
+        asked.append(prompt)
+        plan = next((new_repo / "specs").glob("*/plan.md"))
+        plan.write_text(
+            plan.read_text(encoding="utf-8") + "- [ ] task the human added\n",
+            encoding="utf-8",
+        )
+        return "y"
+
+    monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setenv("PYTHONPATH", "")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    assert cli.main(["demo task"], env, stdin_isatty=True) == 0
+    assert len(asked) == 1
+
+    plan = next((new_repo / "specs").glob("*/plan.md"))
+    rel = plan.relative_to(new_repo).as_posix()
+    added_in = git_out(
+        ["log", "--diff-filter=A", "--format=%H", "--", rel], new_repo
+    )
+    # The gate ran before the plan commit: the human edit is in the commit that
+    # first added plan.md, not in a later one.
+    assert "task the human added" in git_out(["show", f"{added_in}:{rel}"], new_repo)
+    text = plan.read_text(encoding="utf-8")
+    assert "- [ ] " not in text and "- [x]" in text
+    assert status_porcelain(new_repo) == ""
+
+
 def test_scenario2_lost_ledger_line_reruns_stage(
     new_repo, tmp_path, monkeypatch
 ):

@@ -101,6 +101,11 @@ def test_run_workflow_single_spec_stage_order(make_ctx, new_repo, monkeypatch):
     )
     monkeypatch.setattr(
         wf_mod,
+        "human_gate_plan",
+        lambda ctx: order.append(("human-plan", ctx.cur_stage)),
+    )
+    monkeypatch.setattr(
+        wf_mod,
         "gate_loop_ref",
         lambda cmd, **kwargs: order.append(("gate", cmd)),
     )
@@ -119,5 +124,13 @@ def test_run_workflow_single_spec_stage_order(make_ctx, new_repo, monkeypatch):
     ]
     assert ctx.state.is_completed()
     assert ("human", "write-spec") in order
+    # The plan gate runs after the AI review and before the plan is committed
+    # (the trailing work call is commit_work's commit prompt).
+    assert [e for e in order if e[1] == "write-implementation-plan"] == [
+        ("work", "write-implementation-plan"),
+        ("review", "write-implementation-plan"),
+        ("human-plan", "write-implementation-plan"),
+        ("work", "write-implementation-plan"),
+    ]
     assert ("finish", "demo task") in order
     assert (ctx.spec_dir / "plan.md").read_text(encoding="utf-8").startswith("- [x]")
