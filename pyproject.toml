@@ -9,6 +9,9 @@ dependencies = []
 requires = ["uv_build>=0.7,<1"]
 build-backend = "uv_build"
 
+[project.scripts]
+adversarial-ai-coding = "adversarial_ai_coding.cli:main_entry"
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
