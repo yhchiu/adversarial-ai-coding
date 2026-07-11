@@ -15,22 +15,8 @@ The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
 ## How It Works
 
-The script runs a staged workflow:
-
-```text
-Write spec             Worker writes, reviewer checks
-                       Optional DUAL_SPEC=1: A/B write independent specs,
-                       cross-review once, compare, then human selects owner
-Final spec approval    Reviewer checks the final spec, then human approves it
-Write plan             Worker creates checkbox tasks
-Write acceptance tests Reviewer writes tests, worker reviews them
-Implement tasks        Worker completes one checkbox task per commit
-Full gate + review     Worker runs the full gate if configured, reviewer checks the branch
-Final review           Worker self-reviews, reviewer gives final approval
-Finish                 Script prints push and PR commands
-```
-
-The worker and reviewer can be different agents:
+The script drives two agent slots through a staged pipeline: `A` is the worker
+agent and `B` is the reviewer agent. They can be different agents:
 
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
@@ -40,53 +26,75 @@ The worker and reviewer can be different agents:
 Using different agent commands for worker and reviewer is recommended because their
 failure modes are different.
 
+Every step marked ⟳ in the pipeline runs the same review loop, shown in the
+second diagram.
+
 ```mermaid
 flowchart TD
-  subgraph S1["Stage: Write spec (owner writes / reviewer reviews)"]
-    spec["spec.md includes Assumptions and Open Questions<br/>Headless AI cannot ask humans, so assumptions must be explicit."]
-  end
+    spec["<b>1 · Write spec</b><br/>A writes · B reviews ⟳"]
+    gate{"2 · Human approves<br/>the spec?"}
+    plan["<b>3 · Write plan</b><br/>A writes · B reviews ⟳"]
+    tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
+    task["<b>5 · Implement next task</b><br/>A codes · build gate · protected-test check · commit"]
+    more{"Tasks left?"}
+    branch["<b>6 · Full gate + branch review</b><br/>script runs GATE_CMD · B reviews diff ⟳"]
+    final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
+    fin(["<b>8 · Finish</b><br/>print push / PR commands"])
+    abort(["Abort"])
 
-  subgraph S2["Stage: Human approval"]
-    human{"HUMAN_GATE approval<br/>Review the spec before costly implementation starts."}
-  end
-
-  subgraph S3["Stage: Write implementation plan (owner writes / reviewer reviews)"]
-    plan["plan.md uses '- [ ]' checkbox tasks<br/>Each task maps to one commit."]
-  end
-
-  subgraph S4["Stage: Write acceptance tests (reviewer writes / owner reviews)"]
-    tests["Adversarial TDD separates test author from worker.<br/>Protected acceptance tests may be red at first."]
-  end
-
-  subgraph S5["Stage: Implement tasks"]
-    tasks["For each checkbox task:<br/>Owner implements -> lightweight build gate if configured -> protected-test diff check -> commit"]
-  end
-
-  subgraph S6["Stage: Full quality gate and branch review"]
-    fullgate["Run the full quality gate if configured.<br/>Acceptance tests must pass when the gate runs."]
-    branchreview["Reviewer reviews the complete branch diff."]
-    fullgate --> branchreview
-  end
-
-  subgraph S7["Stage: Final review and fixes"]
-    final["Owner handles accumulated suggestions and self-review findings.<br/>Run gates if configured, then reviewer performs final acceptance."]
-  end
-
-  subgraph S8["Stage: Finish"]
-    finish["Print git push / gh pr create commands and run metrics.<br/>OPEN_PR=1 runs push and PR creation automatically."]
-  end
-
-  spec --> human --> plan --> tests --> tasks --> fullgate --> branchreview --> final --> finish
-
-  style S1 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S2 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S3 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S4 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S5 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S6 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S7 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
-  style S8 fill:#ffffff,stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:6 4,color:#111827
+    spec --> gate
+    gate -- "y" --> plan
+    gate -- "anything else" --> abort
+    plan --> tests --> task --> more
+    more -- "yes" --> task
+    more -- "no" --> branch --> final --> fin
 ```
+
+The ⟳ review loop is one reusable building block. The script, not the AI,
+decides when the loop ends:
+
+```mermaid
+flowchart LR
+    review["B reviews the scope"] --> verdict{"verdict.json<br/>approved?"}
+    verdict -- "yes" --> done(["stage continues"])
+    verdict -- "no (blockers)" --> fix["A replies to review.md<br/>and fixes"]
+    fix --> dgate["deterministic gate<br/>(if configured)"] --> review
+    verdict -. "MAX_ROUNDS exhausted" .-> halt(["abort + notify human"])
+```
+
+Stage notes:
+
+1. **Write spec**: `spec.md` must include an Assumptions and Open Questions
+   section, because headless AI cannot ask humans and silent guessing is
+   forbidden. With `DUAL_SPEC=1`, A and B write independent candidate specs
+   first; see [Dual Spec Mode](#dual-spec-mode).
+2. **Human approval**: the highest-leverage checkpoint. A bad spec amplifies
+   into many bad changes, so a human approves the spec (and may edit it first)
+   before costly implementation starts. `HUMAN_GATE=0` skips this gate.
+3. **Write plan**: `plan.md` must be a `- [ ]` checkbox task list. Each task
+   maps to one commit.
+4. **Acceptance tests**: adversarial TDD separates the test author from the
+   implementer, so the roles swap: B writes the tests and A only reviews them.
+   The test files become protected; the script hard-checks them with
+   `git diff` after every later worker action. Red tests are expected here
+   (TDD red phase).
+5. **Implement tasks**: one checkbox task per commit keeps review and rollback
+   small. The per-task gate is the lightweight `BUILD_GATE_CMD` (compile
+   only); acceptance tests may stay red until all tasks are done.
+6. **Full gate + branch review**: the script itself runs `GATE_CMD` — the AI's
+   own "tests pass" claim is never trusted — and acceptance tests must pass
+   now. B then reviews the complete branch diff.
+7. **Final review and fixes**: A works through the accumulated
+   `.workflow/suggestions.md` items and its own self-review findings, then B
+   gives final acceptance.
+8. **Finish**: the script prints `git push` / `gh pr create` commands and run
+   metrics. `OPEN_PR=1` runs them automatically.
+
+Review verdicts are graded. `verdict.json` is
+`{approved, blockers[], suggestions[]}`: only blockers make the loop repeat,
+while suggestions accumulate in `.workflow/suggestions.md` and are handled in
+stage 7. This keeps a reviewer from blocking on nitpicks or approving just to
+be polite.
 
 ## Requirements
 
