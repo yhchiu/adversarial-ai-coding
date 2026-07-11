@@ -133,6 +133,16 @@ def test_out_of_range_hour_falls_through(tmp_path):
     assert parse_reset_wait(out_file(tmp_path, "resets 19:30pm\n"), NOW) is None
 
 
+def test_hour_zero_clock_falls_through(tmp_path):
+    # GNU date rejects "0:30am"; bash fell through to no match.
+    assert parse_reset_wait(out_file(tmp_path, "resets 0:30am\n"), NOW) is None
+
+
+def test_hour_zero_absolute_date_returns_none(tmp_path):
+    p = out_file(tmp_path, "try again at Jul 14th, 2026 0:23 PM.\n")
+    assert parse_reset_wait(p, NOW) is None
+
+
 def test_impossible_absolute_date_returns_none(tmp_path):
     p = out_file(tmp_path, "try again at Feb 30th, 2026 7:23 PM.\n")
     assert parse_reset_wait(p, NOW) is None

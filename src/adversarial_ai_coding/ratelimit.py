@@ -77,11 +77,15 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
     # bash uses `date -d "$t" 2>/dev/null || true`: unparseable clocks fail
     # silently and the parser keeps scanning the other formats.
     m = _CLOCK.search(norm)
-    if m and int(m.group(1)) <= 12:  # GNU date rejects "19:30pm".
+    if m:
+        hour12 = int(m.group(1))
+        if not 1 <= hour12 <= 12:
+            m = None  # GNU date rejects hour 0 or >12 with an am/pm marker
+    if m:
         try:
             base = datetime.fromtimestamp(now)
             target = base.replace(
-                hour=_hour24(int(m.group(1)), m.group(3)),
+                hour=_hour24(hour12, m.group(3)),
                 minute=int(m.group(2)),
                 second=0,
                 microsecond=0,
@@ -113,13 +117,17 @@ def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
 
     # Format 3, Codex quota: "try again at Jul 14th, 2026 7:23 PM" + 30s buffer.
     m = _ABSOLUTE.search(norm)
-    if m and int(m.group(4)) <= 12:  # GNU date rejects hours above 12 with pm.
+    if m:
+        hour12 = int(m.group(4))
+        if not 1 <= hour12 <= 12:
+            m = None  # GNU date rejects hour 0 or >12 with an am/pm marker
+    if m:
         month, day, year = m.group(1), int(m.group(2)), int(m.group(3))
         try:
             parsed_month = datetime.strptime(month[:3].title(), "%b").month
             target = datetime(
                 year, parsed_month, day,
-                _hour24(int(m.group(4)), m.group(6)), int(m.group(5)),
+                _hour24(hour12, m.group(6)), int(m.group(5)),
             )
         except ValueError:
             # e.g. "Feb 30th": bash date -d fails silently; nothing left to
