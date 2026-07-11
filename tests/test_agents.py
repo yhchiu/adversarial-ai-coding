@@ -6,21 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_ai_coding import engines
+from adversarial_ai_coding import agents
 from adversarial_ai_coding.config import Settings, SettingsError
-from adversarial_ai_coding.engines import (
+from adversarial_ai_coding.agents import (
     VERDICT_SCHEMA,
-    EngineIO,
-    EngineResult,
-    EngineSession,
-    engine_model,
-    generic_engine_args,
-    is_builtin_engine,
+    AgentIO,
+    AgentResult,
+    AgentSession,
+    agent_model,
+    generic_agent_args,
+    is_builtin_agent,
     notify,
     resolve_model_args,
     run_reviewer,
     run_worker,
-    validate_engines,
+    validate_agents,
 )
 
 
@@ -28,77 +28,77 @@ def make(env=None):
     return Settings.from_env(env or {}, run_id="20260711-000000")
 
 
-def test_is_builtin_engine():
-    assert is_builtin_engine("claude")
-    assert is_builtin_engine("codex")
-    assert is_builtin_engine("agy")
-    assert not is_builtin_engine("custom-agent")
+def test_is_builtin_agent():
+    assert is_builtin_agent("claude")
+    assert is_builtin_agent("codex")
+    assert is_builtin_agent("agy")
+    assert not is_builtin_agent("custom-agent")
 
 
-def test_engine_model_slot_a_uses_model_a():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "codex", "MODEL_A": "haiku", "MODEL_B": "mini"})
-    assert engine_model("claude", s) == "haiku"
-    assert engine_model("codex", s) == "mini"
+def test_agent_model_slot_a_uses_model_a():
+    s = make({"AGENT_A": "claude", "AGENT_B": "codex", "MODEL_A": "haiku", "MODEL_B": "mini"})
+    assert agent_model("claude", s) == "haiku"
+    assert agent_model("codex", s) == "mini"
 
 
-def test_engine_model_unset_is_empty_for_cli_default():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "codex"})
-    assert engine_model("claude", s) == ""
+def test_agent_model_unset_is_empty_for_cli_default():
+    s = make({"AGENT_A": "claude", "AGENT_B": "codex"})
+    assert agent_model("claude", s) == ""
 
 
-def test_engine_model_custom_engine_ignores_model_a():
-    s = make({"ENGINE_A": "custom-agent", "ENGINE_B": "codex", "MODEL_A": "ignored",
-              "ENGINE_A_ARGS": "--model custom"})
-    assert engine_model("custom-agent", s) == ""
+def test_agent_model_custom_agent_ignores_model_a():
+    s = make({"AGENT_A": "custom-agent", "AGENT_B": "codex", "MODEL_A": "ignored",
+              "AGENT_A_ARGS": "--model custom"})
+    assert agent_model("custom-agent", s) == ""
 
 
 def test_resolve_model_args_builtin_uses_cli_args():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "codex",
+    s = make({"AGENT_A": "claude", "AGENT_B": "codex",
               "CLAUDE_ARGS": "--fast", "CODEX_ARGS": "-c model_reasoning_effort=low"})
     assert resolve_model_args("claude", s) == "--fast"
     assert resolve_model_args("codex", s) == "-c model_reasoning_effort=low"
 
 
-def test_resolve_model_args_custom_engine_uses_slot_args():
-    s = make({"ENGINE_A": "custom-agent", "ENGINE_B": "codex",
-              "ENGINE_A_ARGS": "--model custom --flag"})
+def test_resolve_model_args_custom_agent_uses_slot_args():
+    s = make({"AGENT_A": "custom-agent", "AGENT_B": "codex",
+              "AGENT_A_ARGS": "--model custom --flag"})
     assert resolve_model_args("custom-agent", s) == "--model custom --flag"
-    assert generic_engine_args("custom-agent", s) == "--model custom --flag"
+    assert generic_agent_args("custom-agent", s) == "--model custom --flag"
 
 
-def test_resolve_model_args_unknown_engine_is_empty():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "codex"})
+def test_resolve_model_args_unknown_agent_is_empty():
+    s = make({"AGENT_A": "claude", "AGENT_B": "codex"})
     assert resolve_model_args("stranger", s) == ""
-    assert generic_engine_args("stranger", s) == ""
+    assert generic_agent_args("stranger", s) == ""
 
 
-def test_validate_engines_missing_command():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "codex"})
+def test_validate_agents_missing_command():
+    s = make({"AGENT_A": "claude", "AGENT_B": "codex"})
     with pytest.raises(SettingsError, match="Missing required command:claude"):
-        validate_engines(s, which=lambda name: None)
+        validate_agents(s, which=lambda name: None)
 
 
-def test_validate_engines_same_builtin_engine_rejected():
-    s = make({"ENGINE_A": "codex", "ENGINE_B": "codex"})
+def test_validate_agents_same_builtin_agent_rejected():
+    s = make({"AGENT_A": "codex", "AGENT_B": "codex"})
     with pytest.raises(SettingsError, match="cannot both use codex"):
-        validate_engines(s, which=lambda name: "C:/fake/" + name)
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
-def test_validate_engines_same_custom_engine_rejected():
-    s = make({"ENGINE_A": "wrapper", "ENGINE_B": "wrapper"})
-    with pytest.raises(SettingsError, match="custom engine command wrapper"):
-        validate_engines(s, which=lambda name: "C:/fake/" + name)
+def test_validate_agents_same_custom_agent_rejected():
+    s = make({"AGENT_A": "wrapper", "AGENT_B": "wrapper"})
+    with pytest.raises(SettingsError, match="custom agent command wrapper"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
-def test_validate_engines_both_claude_is_allowed():
-    s = make({"ENGINE_A": "claude", "ENGINE_B": "claude"})
-    validate_engines(s, which=lambda name: "C:/fake/" + name)  # must not raise
+def test_validate_agents_both_claude_is_allowed():
+    s = make({"AGENT_A": "claude", "AGENT_B": "claude"})
+    validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
 
 
 def make_io(tmp_path, lines=None):
     sink = [] if lines is None else lines
-    return EngineIO(
-        engine_out=tmp_path / "engine-out.txt",
+    return AgentIO(
+        agent_out=tmp_path / "agent-out.txt",
         verdict_path=tmp_path / "verdict.json",
         echo=sink.append,
     ), sink
@@ -120,7 +120,7 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
         "lines = [f'argc={len(sys.argv) - 1}']\n"
         "lines += [f'arg{i}={a}' for i, a in enumerate(sys.argv[1:], 1)]\n"
         "cap.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')\n"
-        "print('custom engine ran')\n",
+        "print('custom agent ran')\n",
         encoding="utf-8",
     )
     s = Settings.from_env(
@@ -128,34 +128,34 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
         run_id="r",
     )
     io, sink = make_io(tmp_path)
-    session = EngineSession()
+    session = AgentSession()
     result = run_worker(sys.executable, "hello prompt", s, session, io)
     assert result.rc == 0
     captured = capture.read_text(encoding="utf-8")
-    # The interpreter consumes fake.py as sys.argv[0]. The custom engine sees
+    # The interpreter consumes fake.py as sys.argv[0]. The custom agent sees
     # the whitespace-split slot args followed by the prompt as the final arg.
     assert "argc=3" in captured
     assert "arg1=--flag" in captured
     assert "arg2=value" in captured
     assert "arg3=hello prompt" in captured
-    assert io.engine_out.read_text(encoding="utf-8").strip() == "custom engine ran"
-    assert sink and sink[-1].strip() == "custom engine ran"
+    assert io.agent_out.read_text(encoding="utf-8").strip() == "custom agent ran"
+    assert sink and sink[-1].strip() == "custom agent ran"
 
 
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
     payload = json.dumps(
         {"session_id": "sess-1", "total_cost_usd": 0.42, "result": "did the work"}
     )
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, payload))
     s = Settings.from_env({"TOOLS": "Bash(git *)"}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession()
+    session = AgentSession()
     result = run_worker("claude", "prompt text", s, session, io)
     assert result.rc == 0
     assert result.text == "did the work"
     assert session.worker_session == "sess-1"
     assert session.last_cost == "0.42"
-    assert json.loads(io.engine_out.read_text(encoding="utf-8")) == json.loads(payload)
+    assert json.loads(io.agent_out.read_text(encoding="utf-8")) == json.loads(payload)
 
 
 def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
@@ -165,13 +165,13 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
         seen["argv"] = argv
         return (0, json.dumps({"session_id": "s2", "result": "ok"}))
 
-    monkeypatch.setattr(engines, "_run_captured", fake_run)
-    monkeypatch.setattr(engines.shutil, "which", lambda name: name)
+    monkeypatch.setattr(agents, "_run_captured", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env(
         {"MODEL_A": "haiku", "CLAUDE_ARGS": "--fast", "TOOLS": "Bash(git *)"}, run_id="r"
     )
     io, _ = make_io(tmp_path)
-    session = EngineSession(worker_session="prev-session")
+    session = AgentSession(worker_session="prev-session")
     run_worker("claude", "the prompt", s, session, io)
     argv = seen["argv"]
     assert argv[:2] == ["claude", "-p"]
@@ -184,25 +184,25 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
     assert argv[argv.index("--resume") + 1] == "prev-session"
 
 
-def test_claude_worker_failure_writes_engine_out_and_keeps_rc(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (2, "quota text"))
+def test_claude_worker_failure_writes_agent_out_and_keeps_rc(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (2, "quota text"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    result = run_worker("claude", "p", s, EngineSession(), io)
+    result = run_worker("claude", "p", s, AgentSession(), io)
     assert result.rc == 2
-    assert io.engine_out.read_text(encoding="utf-8").strip() == "quota text"
+    assert io.agent_out.read_text(encoding="utf-8").strip() == "quota text"
     err = capsys.readouterr().err
     assert "quota text" in err
     assert "claude exited with code 2" in err
 
 
 def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path):
-    # Deliberate lenient divergence: bash's jq failures inside engine_call's
+    # Deliberate lenient divergence: bash's jq failures inside agent_call's
     # condition context degraded to empty values rather than aborting.
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "not json at all"))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "not json at all"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(worker_session="keep-me")
+    session = AgentSession(worker_session="keep-me")
     result = run_worker("claude", "p", s, session, io)
     assert result.rc == 0
     assert result.text == "not json at all"
@@ -210,16 +210,16 @@ def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path)
 
 
 def test_claude_worker_top_level_null_matches_bash(monkeypatch, tmp_path):
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "null"))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "null"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(worker_session="old-session", last_cost="old-cost")
+    session = AgentSession(worker_session="old-session", last_cost="old-cost")
 
     result = run_worker("claude", "p", s, session, io)
 
-    assert result == EngineResult(rc=0, text="")
-    assert session == EngineSession(worker_session="null", last_cost="")
-    assert io.engine_out.read_text(encoding="utf-8") == "null\n"
+    assert result == AgentResult(rc=0, text="")
+    assert session == AgentSession(worker_session="null", last_cost="")
+    assert io.agent_out.read_text(encoding="utf-8") == "null\n"
 
 
 @pytest.mark.parametrize("payload", [[], "text", 0, True])
@@ -227,16 +227,16 @@ def test_claude_worker_non_object_json_matches_bash_jq_failure(
     monkeypatch, tmp_path, payload
 ):
     raw = json.dumps(payload)
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, raw))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, raw))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(worker_session="old-session", last_cost="old-cost")
+    session = AgentSession(worker_session="old-session", last_cost="old-cost")
 
     result = run_worker("claude", "p", s, session, io)
 
-    assert result == EngineResult(rc=5, text="")
-    assert session == EngineSession(worker_session="", last_cost="")
-    assert io.engine_out.read_text(encoding="utf-8") == raw + "\n"
+    assert result == AgentResult(rc=5, text="")
+    assert session == AgentSession(worker_session="", last_cost="")
+    assert io.agent_out.read_text(encoding="utf-8") == raw + "\n"
 
 
 @pytest.mark.parametrize(
@@ -256,11 +256,11 @@ def test_claude_worker_session_id_uses_jq_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+        agents, "_run_captured", lambda argv: (0, json.dumps(payload))
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(worker_session="old-session")
+    session = AgentSession(worker_session="old-session")
 
     run_worker("claude", "p", s, session, io)
 
@@ -287,14 +287,14 @@ def test_claude_worker_result_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+        agents, "_run_captured", lambda argv: (0, json.dumps(payload))
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
 
-    result = run_worker("claude", "p", s, EngineSession(), io)
+    result = run_worker("claude", "p", s, AgentSession(), io)
 
-    assert result == EngineResult(rc=0, text=expected)
+    assert result == AgentResult(rc=0, text=expected)
 
 
 def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
@@ -304,12 +304,12 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
         calls.append(argv)
         return (0, "codex output")
 
-    monkeypatch.setattr(engines, "_run_streaming", fake_stream)
-    monkeypatch.setattr(engines.shutil, "which", lambda name: name)
+    monkeypatch.setattr(agents, "_run_streaming", fake_stream)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"MODEL_B": "gpt-5.5", "AGENT_B": "codex",
                            "CODEX_ARGS": "-c model_reasoning_effort=low"}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession()
+    session = AgentSession()
     run_worker("codex", "p1", s, session, io)
     assert session.worker_session == "last"
     run_worker("codex", "p2", s, session, io)
@@ -325,11 +325,11 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
 
 def test_agy_worker_continue_flag(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(engines, "_run_streaming", lambda argv, io: (calls.append(argv), (0, "x"))[1])
-    monkeypatch.setattr(engines.shutil, "which", lambda name: name)
+    monkeypatch.setattr(agents, "_run_streaming", lambda argv, io: (calls.append(argv), (0, "x"))[1])
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession()
+    session = AgentSession()
     run_worker("agy", "p1", s, session, io)
     assert session.worker_session == "continue"
     run_worker("agy", "p2", s, session, io)
@@ -345,44 +345,44 @@ def test_claude_reviewer_writes_verdict_from_structured_output(monkeypatch, tmp_
         "total_cost_usd": 0.1,
         "result": "review text",
     })
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, payload))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    result = run_reviewer("claude", "p", s, EngineSession(), io)
+    result = run_reviewer("claude", "p", s, AgentSession(), io)
     assert result.text == "review text"
     verdict = json.loads(io.verdict_path.read_text(encoding="utf-8"))
     assert verdict["approved"] is True and verdict["suggestions"] == ["s1"]
 
 
 def test_claude_reviewer_invalid_json_matches_bash_jq_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "not json at all"))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "not json at all"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(last_cost="old-cost")
+    session = AgentSession(last_cost="old-cost")
     result = run_reviewer("claude", "p", s, session, io)
-    assert result == EngineResult(rc=5, text="")
+    assert result == AgentResult(rc=5, text="")
     assert session.last_cost == ""
-    assert io.engine_out.read_text(encoding="utf-8") == "not json at all\n"
+    assert io.agent_out.read_text(encoding="utf-8") == "not json at all\n"
     assert io.verdict_path.exists()
     assert io.verdict_path.stat().st_size == 0
 
 
 def test_claude_reviewer_top_level_null_matches_bash(monkeypatch, tmp_path):
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "null"))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "null"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(last_cost="old-cost")
+    session = AgentSession(last_cost="old-cost")
 
     result = run_reviewer("claude", "p", s, session, io)
 
-    assert result == EngineResult(rc=0, text="")
+    assert result == AgentResult(rc=0, text="")
     assert session.last_cost == ""
     assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == {
         "approved": False,
         "blockers": ["reviewer did not produce a structured verdict"],
         "suggestions": [],
     }
-    assert io.engine_out.read_text(encoding="utf-8") == "null\n"
+    assert io.agent_out.read_text(encoding="utf-8") == "null\n"
 
 
 @pytest.mark.parametrize("payload", [[], "text", 0, True])
@@ -390,18 +390,18 @@ def test_claude_reviewer_non_object_json_matches_bash_jq_failure(
     monkeypatch, tmp_path, payload
 ):
     raw = json.dumps(payload)
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, raw))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, raw))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(last_cost="old-cost")
+    session = AgentSession(last_cost="old-cost")
 
     result = run_reviewer("claude", "p", s, session, io)
 
-    assert result == EngineResult(rc=5, text="")
+    assert result == AgentResult(rc=5, text="")
     assert session.last_cost == ""
     assert io.verdict_path.exists()
     assert io.verdict_path.stat().st_size == 0
-    assert io.engine_out.read_text(encoding="utf-8") == raw + "\n"
+    assert io.agent_out.read_text(encoding="utf-8") == raw + "\n"
 
 
 @pytest.mark.parametrize("structured_output", [{}, [], "", 0])
@@ -409,20 +409,20 @@ def test_claude_reviewer_preserves_jq_coalesce_non_null_non_false_values(
     monkeypatch, tmp_path, structured_output
 ):
     payload = json.dumps({"structured_output": structured_output, "result": "review"})
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, payload))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    result = run_reviewer("claude", "p", s, EngineSession(), io)
-    assert result == EngineResult(rc=0, text="review")
+    result = run_reviewer("claude", "p", s, AgentSession(), io)
+    assert result == AgentResult(rc=0, text="review")
     assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == structured_output
 
 
 def test_claude_reviewer_missing_structured_output_fallback(monkeypatch, tmp_path):
-    monkeypatch.setattr(engines, "_run_captured",
+    monkeypatch.setattr(agents, "_run_captured",
                         lambda argv: (0, json.dumps({"result": "no verdict"})))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    run_reviewer("claude", "p", s, EngineSession(), io)
+    run_reviewer("claude", "p", s, AgentSession(), io)
     verdict = json.loads(io.verdict_path.read_text(encoding="utf-8"))
     assert verdict["approved"] is False
     assert verdict["blockers"] == ["reviewer did not produce a structured verdict"]
@@ -433,11 +433,11 @@ def test_claude_reviewer_null_or_false_structured_output_uses_fallback(
     monkeypatch, tmp_path, structured_output
 ):
     payload = json.dumps({"structured_output": structured_output, "result": "review"})
-    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, payload))
+    monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, payload))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    result = run_reviewer("claude", "p", s, EngineSession(), io)
-    assert result == EngineResult(rc=0, text="review")
+    result = run_reviewer("claude", "p", s, AgentSession(), io)
+    assert result == AgentResult(rc=0, text="review")
     assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == {
         "approved": False,
         "blockers": ["reviewer did not produce a structured verdict"],
@@ -466,11 +466,11 @@ def test_claude_cost_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, role, payload, expected
 ):
     monkeypatch.setattr(
-        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+        agents, "_run_captured", lambda argv: (0, json.dumps(payload))
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = EngineSession(last_cost="old-cost")
+    session = AgentSession(last_cost="old-cost")
 
     if role == "worker":
         run_worker("claude", "p", s, session, io)
@@ -497,36 +497,36 @@ def test_claude_reviewer_result_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+        agents, "_run_captured", lambda argv: (0, json.dumps(payload))
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
 
-    result = run_reviewer("claude", "p", s, EngineSession(), io)
+    result = run_reviewer("claude", "p", s, AgentSession(), io)
 
-    assert result == EngineResult(rc=0, text=expected)
+    assert result == AgentResult(rc=0, text=expected)
 
 
 def test_claude_reviewer_argv_has_schema(monkeypatch, tmp_path):
     seen = {}
-    monkeypatch.setattr(engines, "_run_captured",
+    monkeypatch.setattr(agents, "_run_captured",
                         lambda argv: (seen.update(argv=argv), (0, "{}"))[1])
-    monkeypatch.setattr(engines.shutil, "which", lambda name: name)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    run_reviewer("claude", "p", s, EngineSession(), io)
+    run_reviewer("claude", "p", s, AgentSession(), io)
     argv = seen["argv"]
     assert argv[argv.index("--json-schema") + 1] == VERDICT_SCHEMA
 
 
 def test_agy_reviewer_uses_30m_timeout_and_no_continue(monkeypatch, tmp_path):
     seen = {}
-    monkeypatch.setattr(engines, "_run_streaming",
+    monkeypatch.setattr(agents, "_run_streaming",
                         lambda argv, io: (seen.update(argv=argv), (0, "x"))[1])
-    monkeypatch.setattr(engines.shutil, "which", lambda name: name)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
     io, _ = make_io(tmp_path)
-    run_reviewer("agy", "p", s, EngineSession(worker_session="continue"), io)
+    run_reviewer("agy", "p", s, AgentSession(worker_session="continue"), io)
     argv = seen["argv"]
     assert "--print-timeout" in argv and "30m" in argv
     assert "--continue" not in argv  # reviewers always start fresh

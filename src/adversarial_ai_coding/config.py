@@ -1,9 +1,14 @@
 """Environment-variable settings.
 
-Port of the bash Settings section: adversarial-ai-coding.sh:49-64
-(alias_env_or_default) and 285-330 (defaults). Resolution order for
-persisted keys: environment, then the resume snapshot, then the default —
-matching bash "${VAR:-${RESUMED_VAR:-default}}".
+Port of the bash Settings section: adversarial-ai-coding.sh:285-330
+(defaults). Resolution order for persisted keys: environment, then the
+resume snapshot, then the default — matching bash
+"${VAR:-${RESUMED_VAR:-default}}".
+
+Deliberate divergence: bash accepts ENGINE_A/ENGINE_B (and *_ARGS) as
+legacy aliases of AGENT_A/AGENT_B (sh:49-64, alias_env_or_default). The
+Python port drops the aliases — AGENT_* are the only names; ENGINE_*
+variables are ignored.
 """
 
 from __future__ import annotations
@@ -18,18 +23,6 @@ class SettingsError(Exception):
     """A configuration problem the user must fix before the run starts."""
 
 
-def alias_env_or_default(
-    env: Mapping[str, str], preferred: str, legacy: str, default: str
-) -> str:
-    preferred_value = env.get(preferred, "")
-    legacy_value = env.get(legacy, "")
-    if preferred_value and legacy_value and preferred_value != legacy_value:
-        raise SettingsError(
-            f"Conflicting {preferred} and {legacy}; set only one or use the same value."
-        )
-    return preferred_value or legacy_value or default
-
-
 def _to_int(name: str, raw: str) -> int:
     try:
         return int(raw)
@@ -39,15 +32,15 @@ def _to_int(name: str, raw: str) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    engine_a: str
-    engine_b: str
+    agent_a: str
+    agent_b: str
     model_a: str
     model_b: str
     claude_args: str
     codex_args: str
     agy_args: str
-    engine_a_args: str
-    engine_b_args: str
+    agent_a_args: str
+    agent_b_args: str
     max_rounds: int
     auto_branch: bool
     use_worktree: bool
@@ -77,23 +70,15 @@ class Settings:
             return env.get(key) or snap.get(key) or default
 
         return cls(
-            engine_a=alias_env_or_default(
-                env, "AGENT_A", "ENGINE_A", snap.get("ENGINE_A") or "claude"
-            ),
-            engine_b=alias_env_or_default(
-                env, "AGENT_B", "ENGINE_B", snap.get("ENGINE_B") or "codex"
-            ),
+            agent_a=persisted("AGENT_A", "claude"),
+            agent_b=persisted("AGENT_B", "codex"),
             model_a=persisted("MODEL_A", ""),
             model_b=persisted("MODEL_B", ""),
             claude_args=persisted("CLAUDE_ARGS", ""),
             codex_args=persisted("CODEX_ARGS", ""),
             agy_args=persisted("AGY_ARGS", ""),
-            engine_a_args=alias_env_or_default(
-                env, "AGENT_A_ARGS", "ENGINE_A_ARGS", snap.get("ENGINE_A_ARGS") or ""
-            ),
-            engine_b_args=alias_env_or_default(
-                env, "AGENT_B_ARGS", "ENGINE_B_ARGS", snap.get("ENGINE_B_ARGS") or ""
-            ),
+            agent_a_args=persisted("AGENT_A_ARGS", ""),
+            agent_b_args=persisted("AGENT_B_ARGS", ""),
             max_rounds=_to_int("MAX_ROUNDS", persisted("MAX_ROUNDS", "3")),
             auto_branch=persisted("AUTO_BRANCH", "1") == "1",
             use_worktree=persisted("USE_WORKTREE", "0") == "1",

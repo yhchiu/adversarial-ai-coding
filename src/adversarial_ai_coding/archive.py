@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Sequence
 
 METRICS_HEADER = [
-    "run_id", "stage", "role", "engine", "round",
+    "run_id", "stage", "role", "agent", "round",
     "duration_s", "cost_usd", "model", "model_args", "generated_at",
 ]
 

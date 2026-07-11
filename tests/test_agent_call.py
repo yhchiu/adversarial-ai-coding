@@ -4,32 +4,32 @@ from datetime import datetime
 from pathlib import Path
 
 from adversarial_ai_coding.config import Settings
-from adversarial_ai_coding.engines import EngineResult
-from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC, RetryEvents, engine_call
+from adversarial_ai_coding.agents import AgentResult
+from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC, RetryEvents, agent_call
 
 RATE_LIMITED = 'api_error_status":429 hit your session limit'
 NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())
 
 
 class Stub:
-    """fake_engine from the bash suite: writes stub text and fails, or succeeds."""
+    """fake_agent from the bash suite: writes stub text and fails, or succeeds."""
 
-    def __init__(self, engine_out: Path, stub_text: str):
-        self.engine_out = engine_out
+    def __init__(self, agent_out: Path, stub_text: str):
+        self.agent_out = agent_out
         self.stub_text = stub_text
         self.calls = 0
 
-    def __call__(self) -> EngineResult:
+    def __call__(self) -> AgentResult:
         self.calls += 1
         if not self.stub_text:
-            return EngineResult(0, "ok")
-        self.engine_out.write_text(self.stub_text + "\n", encoding="utf-8")
-        return EngineResult(1, self.stub_text)
+            return AgentResult(0, "ok")
+        self.agent_out.write_text(self.stub_text + "\n", encoding="utf-8")
+        return AgentResult(1, self.stub_text)
 
 
 def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2", notes=None):
-    engine_out = tmp_path / "engine-out.txt"
-    stub = Stub(engine_out, stub_text)
+    agent_out = tmp_path / "agent-out.txt"
+    stub = Stub(agent_out, stub_text)
     slept, archived = [], []
     notes = [] if notes is None else notes
     events = RetryEvents(
@@ -42,7 +42,7 @@ def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2", notes=None):
         {"RETRY_ON_LIMIT": retry_on_limit, "RETRY_BASE_WAIT": "1", "RETRY_MAX": retry_max},
         run_id="r",
     )
-    result = engine_call(stub, engine_out=engine_out, settings=settings,
+    result = agent_call(stub, agent_out=agent_out, settings=settings,
                          events=events, now=lambda: NOW)
     return result, stub, slept, archived
 
@@ -117,8 +117,8 @@ def test_retry_logs_and_notifies_with_local_eta(tmp_path):
 
 
 def test_retry_decision_reads_injected_clock_once(tmp_path):
-    engine_out = tmp_path / "engine-out.txt"
-    stub = Stub(engine_out, "rate limit but no reset info")
+    agent_out = tmp_path / "agent-out.txt"
+    stub = Stub(agent_out, "rate limit but no reset info")
     current_times = iter([NOW, NOW + 3600])
     clock_calls = []
     notes = []
@@ -132,9 +132,9 @@ def test_retry_decision_reads_injected_clock_once(tmp_path):
         {"RETRY_BASE_WAIT": "60", "RETRY_MAX": "1"}, run_id="r"
     )
 
-    engine_call(
+    agent_call(
         stub,
-        engine_out=engine_out,
+        agent_out=agent_out,
         settings=settings,
         events=events,
         now=lambda: (clock_calls.append(True), next(current_times))[1],

@@ -34,7 +34,7 @@ def test_metrics_header_matches_bash():
     # helpers.test.sh: "metric:CSV header is correct"
     assert (
         ",".join(METRICS_HEADER)
-        == "run_id,stage,role,engine,round,duration_s,cost_usd,model,model_args,generated_at"
+        == "run_id,stage,role,agent,round,duration_s,cost_usd,model,model_args,generated_at"
     )
 
 

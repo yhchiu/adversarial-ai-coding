@@ -1,9 +1,12 @@
-"""Ports tests/helpers.test.sh:63-71 (agent aliases) and pins the bash
-settings defaults from adversarial-ai-coding.sh:285-330."""
+"""Pins the bash settings defaults from adversarial-ai-coding.sh:285-330.
+
+The bash agent-alias tests (helpers.test.sh:63-71) are deliberately not
+ported: the Python version drops the ENGINE_* legacy aliases, and a test
+below pins that they are ignored."""
 
 import pytest
 
-from adversarial_ai_coding.config import Settings, SettingsError, alias_env_or_default
+from adversarial_ai_coding.config import Settings, SettingsError
 
 
 def make(env=None, run_id="20260710-120000", snapshot=None):
@@ -12,8 +15,8 @@ def make(env=None, run_id="20260710-120000", snapshot=None):
 
 def test_defaults_match_bash():
     s = make()
-    assert s.engine_a == "claude"
-    assert s.engine_b == "codex"
+    assert s.agent_a == "claude"
+    assert s.agent_b == "codex"
     assert s.model_a == ""
     assert s.model_b == ""
     assert s.max_rounds == 3
@@ -33,45 +36,31 @@ def test_defaults_match_bash():
     assert s.runs_dir == ".workflow/runs"
 
 
-def test_agent_a_alias_configures_slot_a():
+def test_agent_a_configures_slot_a():
     # helpers.test.sh: "agent aliases:AGENT_A configures slot A"
-    assert make({"AGENT_A": "codex", "AGENT_B": "claude"}).engine_a == "codex"
+    assert make({"AGENT_A": "codex", "AGENT_B": "claude"}).agent_a == "codex"
 
 
-def test_legacy_engine_vars_still_work():
+def test_legacy_engine_vars_are_ignored():
+    # Deliberate divergence: bash accepts ENGINE_* as aliases; Python does not.
     s = make({"ENGINE_A": "agy", "ENGINE_B": "claude"})
-    assert (s.engine_a, s.engine_b) == ("agy", "claude")
+    assert (s.agent_a, s.agent_b) == ("claude", "codex")
 
 
-def test_conflicting_alias_fails_fast():
-    # helpers.test.sh: "agent aliases:conflicting AGENT_A and ENGINE_A fail fast"
-    with pytest.raises(SettingsError, match="Conflicting AGENT_A and ENGINE_A"):
-        make({"AGENT_A": "claude", "ENGINE_A": "codex"})
-
-
-def test_matching_alias_values_are_not_a_conflict():
-    assert make({"AGENT_A": "codex", "ENGINE_A": "codex"}).engine_a == "codex"
-
-
-def test_custom_agent_args_alias():
+def test_custom_agent_args():
     # helpers.test.sh: "agent aliases:custom agent uses AGENT_A_ARGS"
     s = make({"AGENT_A": "custom-agent", "AGENT_A_ARGS": "--model custom --flag"})
-    assert s.engine_a_args == "--model custom --flag"
-
-
-def test_conflicting_args_alias_fails_fast():
-    with pytest.raises(SettingsError, match="Conflicting AGENT_B_ARGS and ENGINE_B_ARGS"):
-        make({"AGENT_B_ARGS": "--x", "ENGINE_B_ARGS": "--y"})
+    assert s.agent_a_args == "--model custom --flag"
 
 
 def test_snapshot_supplies_resumed_defaults_and_env_wins():
-    snap = {"ENGINE_A": "agy", "MAX_ROUNDS": "5", "TOOLS": "Bash(ls *)"}
+    snap = {"AGENT_A": "agy", "MAX_ROUNDS": "5", "TOOLS": "Bash(ls *)"}
     s = make({}, snapshot=snap)
-    assert s.engine_a == "agy"
+    assert s.agent_a == "agy"
     assert s.max_rounds == 5
     assert s.tools == "Bash(ls *)"
     s = make({"AGENT_A": "codex", "MAX_ROUNDS": "2"}, snapshot=snap)
-    assert s.engine_a == "codex"
+    assert s.agent_a == "codex"
     assert s.max_rounds == 2
 
 
@@ -99,9 +88,3 @@ def test_empty_env_values_fall_back_like_bash():
     assert s.retry_on_limit is True
     assert s.max_rounds == 3
     assert s.auto_branch is True
-
-
-def test_alias_env_or_default_direct():
-    assert alias_env_or_default({}, "A", "B", "d") == "d"
-    assert alias_env_or_default({"B": "legacy"}, "A", "B", "d") == "legacy"
-    assert alias_env_or_default({"A": "new", "B": "new"}, "A", "B", "d") == "new"

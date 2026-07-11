@@ -32,7 +32,7 @@ CODEX_QUOTA = (
 
 
 def out_file(tmp_path, text):
-    p = tmp_path / "engine-out.txt"
+    p = tmp_path / "agent-out.txt"
     p.write_text(text, encoding="utf-8")
     return p
 

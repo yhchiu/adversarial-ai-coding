@@ -1,4 +1,4 @@
-"""Engine adapters and selection helpers.
+"""Agent adapters and selection helpers.
 
 Port of adversarial-ai-coding.sh:341-359 (validate_engines), 400-422
 (is_builtin_engine, resolve_model_args), 689-696 (engine_model),
@@ -17,7 +17,7 @@ from typing import Callable
 
 from .config import Settings, SettingsError
 
-BUILTIN_ENGINES = ("claude", "codex", "agy")
+BUILTIN_AGENTS = ("claude", "codex", "agy")
 
 # Exact schema string from adversarial-ai-coding.sh:1224.
 VERDICT_SCHEMA = (
@@ -34,17 +34,17 @@ VERDICT_FALLBACK = {
 }
 
 
-def is_builtin_engine(name: str) -> bool:
-    return name in BUILTIN_ENGINES
+def is_builtin_agent(name: str) -> bool:
+    return name in BUILTIN_AGENTS
 
 
-def engine_model(name: str, settings: Settings) -> str:
-    # Custom engines ignore MODEL_A/MODEL_B; they get args via ENGINE_*_ARGS.
-    if not is_builtin_engine(name):
+def agent_model(name: str, settings: Settings) -> str:
+    # Custom agents ignore MODEL_A/MODEL_B; they get args via AGENT_*_ARGS.
+    if not is_builtin_agent(name):
         return ""
-    if name == settings.engine_a and settings.model_a:
+    if name == settings.agent_a and settings.model_a:
         return settings.model_a
-    if name == settings.engine_b and settings.model_b:
+    if name == settings.agent_b and settings.model_b:
         return settings.model_b
     return ""
 
@@ -56,39 +56,39 @@ def resolve_model_args(name: str, settings: Settings) -> str:
         return settings.codex_args
     if name == "agy":
         return settings.agy_args
-    return generic_engine_args(name, settings)
+    return generic_agent_args(name, settings)
 
 
-def generic_engine_args(name: str, settings: Settings) -> str:
-    if name == settings.engine_a:
-        return settings.engine_a_args
-    if name == settings.engine_b:
-        return settings.engine_b_args
+def generic_agent_args(name: str, settings: Settings) -> str:
+    if name == settings.agent_a:
+        return settings.agent_a_args
+    if name == settings.agent_b:
+        return settings.agent_b_args
     return ""
 
 
-def validate_engines(
+def validate_agents(
     settings: Settings, which: Callable[[str], str | None] = shutil.which
 ) -> None:
-    for name in (settings.engine_a, settings.engine_b):
+    for name in (settings.agent_a, settings.agent_b):
         if which(name) is None:
             raise SettingsError(f"Missing required command:{name}")
-    # codex and agy resume the most recent session. Custom engines may have
+    # codex and agy resume the most recent session. Custom agents may have
     # the same limitation, so v1 requires distinct command names (bash :349-358).
-    if settings.engine_a == settings.engine_b and settings.engine_a != "claude":
-        if is_builtin_engine(settings.engine_a):
+    if settings.agent_a == settings.agent_b and settings.agent_a != "claude":
+        if is_builtin_agent(settings.agent_a):
             raise SettingsError(
-                f"A and B cannot both use {settings.engine_a} because session "
-                "resume would interfere. Use different engines."
+                f"A and B cannot both use {settings.agent_a} because session "
+                "resume would interfere. Use different agents."
             )
         raise SettingsError(
-            f"A and B cannot both use custom engine command {settings.engine_a}. "
+            f"A and B cannot both use custom agent command {settings.agent_a}. "
             "Use separate wrapper command names for worker and reviewer."
         )
 
 
 @dataclass
-class EngineSession:
+class AgentSession:
     """Bash WORKER_SESSION/LAST_COST (sh:1036-1038), owned by the workflow.
 
     The workflow resets worker_session at stage boundaries (begin_stage);
@@ -100,14 +100,14 @@ class EngineSession:
 
 
 @dataclass
-class EngineIO:
-    engine_out: Path
+class AgentIO:
+    agent_out: Path
     verdict_path: Path
     echo: Callable[[str], None]
 
 
 @dataclass
-class EngineResult:
+class AgentResult:
     rc: int
     text: str
 
@@ -131,7 +131,7 @@ def _run_captured(argv: list[str]) -> tuple[int, str]:
     return proc.returncode, proc.stdout.rstrip("\n")
 
 
-def _run_streaming(argv: list[str], io: EngineIO) -> tuple[int, str]:
+def _run_streaming(argv: list[str], io: AgentIO) -> tuple[int, str]:
     # bash: cmd ... 2>&1 | tee "$ENGINE_OUT" -- merged output streamed and saved.
     proc = subprocess.Popen(
         argv,
@@ -143,7 +143,7 @@ def _run_streaming(argv: list[str], io: EngineIO) -> tuple[int, str]:
     )
     lines: list[str] = []
     assert proc.stdout is not None
-    with io.engine_out.open("w", encoding="utf-8") as out_file:
+    with io.agent_out.open("w", encoding="utf-8") as out_file:
         for line in proc.stdout:
             line = line.rstrip("\n")
             lines.append(line)
@@ -153,8 +153,8 @@ def _run_streaming(argv: list[str], io: EngineIO) -> tuple[int, str]:
     return rc, "\n".join(lines)
 
 
-def _write_engine_out(io: EngineIO, text: str) -> None:
-    io.engine_out.write_text(text + "\n", encoding="utf-8")
+def _write_agent_out(io: AgentIO, text: str) -> None:
+    io.agent_out.write_text(text + "\n", encoding="utf-8")
 
 
 def _jq_raw(value: object) -> str:
@@ -178,7 +178,7 @@ def _jq_coalesce_empty(payload: dict[str, object], field: str) -> str:
 
 def _claude_common_args(settings: Settings) -> list[str]:
     args: list[str] = []
-    model = engine_model("claude", settings)
+    model = agent_model("claude", settings)
     if model:
         args += ["--model", model]
     args += settings.claude_args.split()
@@ -186,8 +186,8 @@ def _claude_common_args(settings: Settings) -> list[str]:
 
 
 def _worker_claude(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     argv = [
         _resolve_argv0("claude"),
         "-p",
@@ -203,35 +203,35 @@ def _worker_claude(
     if session.worker_session:
         argv += ["--resume", session.worker_session]
     rc, out = _run_captured(argv)
-    _write_engine_out(io, out)
+    _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)
         print(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return EngineResult(rc, out)
+        return AgentResult(rc, out)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         # Lenient divergence: bash's jq failure degraded to empty fields.
-        return EngineResult(0, out)
+        return AgentResult(0, out)
     if payload is None:
         session.worker_session = "null"
         session.last_cost = ""
-        return EngineResult(0, "")
+        return AgentResult(0, "")
     if not isinstance(payload, dict):
         session.worker_session = ""
         session.last_cost = ""
-        return EngineResult(5, "")
+        return AgentResult(5, "")
     session.worker_session = _jq_raw(payload.get("session_id"))
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
-    return EngineResult(0, _jq_coalesce_empty(payload, "result"))
+    return AgentResult(0, _jq_coalesce_empty(payload, "result"))
 
 
 def _reviewer_claude(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     argv = [_resolve_argv0("claude"), "-p", prompt]
     argv += _claude_common_args(settings)
     argv += [
@@ -245,28 +245,28 @@ def _reviewer_claude(
         VERDICT_SCHEMA,
     ]
     rc, out = _run_captured(argv)
-    _write_engine_out(io, out)
+    _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)
         print(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return EngineResult(rc, out)
+        return AgentResult(rc, out)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return EngineResult(5, "")
+        return AgentResult(5, "")
     if payload is None:
         io.verdict_path.write_text(json.dumps(VERDICT_FALLBACK), encoding="utf-8")
         session.last_cost = ""
-        return EngineResult(0, "")
+        return AgentResult(0, "")
     if not isinstance(payload, dict):
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return EngineResult(5, "")
+        return AgentResult(5, "")
     structured_output = payload.get("structured_output")
     verdict = (
         VERDICT_FALLBACK
@@ -275,12 +275,12 @@ def _reviewer_claude(
     )
     io.verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
-    return EngineResult(0, _jq_coalesce_empty(payload, "result"))
+    return AgentResult(0, _jq_coalesce_empty(payload, "result"))
 
 
 def _codex_model_args(settings: Settings) -> list[str]:
     args: list[str] = []
-    model = engine_model("codex", settings)
+    model = agent_model("codex", settings)
     if model:
         args += ["-c", f'model="{model}"']
     args += settings.codex_args.split()
@@ -288,8 +288,8 @@ def _codex_model_args(settings: Settings) -> list[str]:
 
 
 def _worker_codex(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     model_args = _codex_model_args(settings)
     if not session.worker_session:
         argv = [
@@ -315,12 +315,12 @@ def _worker_codex(
             prompt,
         ]
         rc, out = _run_streaming(argv, io)
-    return EngineResult(rc, out)
+    return AgentResult(rc, out)
 
 
 def _reviewer_codex(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     argv = [
         _resolve_argv0("codex"),
         "exec",
@@ -330,12 +330,12 @@ def _reviewer_codex(
         prompt,
     ]
     rc, out = _run_streaming(argv, io)
-    return EngineResult(rc, out)
+    return AgentResult(rc, out)
 
 
 def _agy_model_args(settings: Settings) -> list[str]:
     args: list[str] = []
-    model = engine_model("agy", settings)
+    model = agent_model("agy", settings)
     if model:
         args += ["--model", model]
     args += settings.agy_args.split()
@@ -343,8 +343,8 @@ def _agy_model_args(settings: Settings) -> list[str]:
 
 
 def _worker_agy(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     # --dangerously-skip-permissions approves every tool action; prefer an
     # isolated branch, worktree, or container when using agy (sh:1078-1079).
     argv = [
@@ -360,12 +360,12 @@ def _worker_agy(
         argv += ["--continue"]
     rc, out = _run_streaming(argv, io)
     session.worker_session = "continue"
-    return EngineResult(rc, out)
+    return AgentResult(rc, out)
 
 
 def _reviewer_agy(
-    prompt: str, settings: Settings, session: EngineSession, io: EngineIO
-) -> EngineResult:
+    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+) -> AgentResult:
     argv = [
         _resolve_argv0("agy"),
         "--print",
@@ -376,24 +376,24 @@ def _reviewer_agy(
     ]
     argv += _agy_model_args(settings)
     rc, out = _run_streaming(argv, io)
-    return EngineResult(rc, out)
+    return AgentResult(rc, out)
 
 
 def _run_generic(
-    name: str, prompt: str, settings: Settings, io: EngineIO
-) -> EngineResult:
-    argv = [_resolve_argv0(name), *generic_engine_args(name, settings).split(), prompt]
+    name: str, prompt: str, settings: Settings, io: AgentIO
+) -> AgentResult:
+    argv = [_resolve_argv0(name), *generic_agent_args(name, settings).split(), prompt]
     rc, out = _run_streaming(argv, io)
-    return EngineResult(rc, out)
+    return AgentResult(rc, out)
 
 
 def run_worker(
     name: str,
     prompt: str,
     settings: Settings,
-    session: EngineSession,
-    io: EngineIO,
-) -> EngineResult:
+    session: AgentSession,
+    io: AgentIO,
+) -> AgentResult:
     if name == "claude":
         return _worker_claude(prompt, settings, session, io)
     if name == "codex":
@@ -407,9 +407,9 @@ def run_reviewer(
     name: str,
     prompt: str,
     settings: Settings,
-    session: EngineSession,
-    io: EngineIO,
-) -> EngineResult:
+    session: AgentSession,
+    io: AgentIO,
+) -> AgentResult:
     if name == "claude":
         return _reviewer_claude(prompt, settings, session, io)
     if name == "codex":
