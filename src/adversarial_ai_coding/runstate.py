@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
@@ -149,3 +151,115 @@ def check_immutable(
             "and cannot change across resume.\n"
             f"   Unset {key} to keep the snapshot value, or start a fresh run."
         )
+
+
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def list_run_state_ids(root: Path) -> list[str]:
+    if not root.is_dir():
+        return []
+    return sorted((path.name for path in root.iterdir()), reverse=True)
+
+
+def resolve_resume_id(root: Path, resume_run: str) -> str:
+    run_id = resume_run
+    if run_id == "last":
+        run_id = ""
+        for candidate in list_run_state_ids(root):
+            if (root / candidate / "completed").is_file():
+                continue
+            run_id = candidate
+            break
+        if not run_id:
+            raise RunStateError(
+                f"!! RESUME_RUN=last: no unfinished run found under {root}.\n"
+                f"   Known run ids: {' '.join(list_run_state_ids(root))}"
+            )
+    if not _RUN_ID_RE.match(run_id):
+        raise RunStateError(
+            f"!! Invalid RESUME_RUN [{run_id}]: only letters, digits, - and _ "
+            "are allowed."
+        )
+    state_dir = root / run_id
+    if not state_dir.is_dir():
+        raise RunStateError(
+            f"!! No run state at {state_dir}.\n"
+            f"   Known run ids: {' '.join(list_run_state_ids(root))}\n"
+            "   If that run used USE_WORKTREE=1, cd into its worktree first; "
+            "the state lives there."
+        )
+    if (state_dir / "completed").is_file():
+        raise RunStateError(f"!! Run {run_id} already completed; nothing to resume.")
+    return run_id
+
+
+@dataclass
+class RunState:
+    state_dir: Path
+    run_id: str
+    locked: bool = False
+
+    @classmethod
+    def create(cls, root: Path, run_id: str, task_text: str) -> "RunState":
+        root.mkdir(parents=True, exist_ok=True)
+        state_dir = root / run_id
+        try:
+            state_dir.mkdir()
+        except FileExistsError:
+            raise RunStateError(
+                f"!! Run state {state_dir} already exists (same-second run id "
+                "collision?). Rerun for a fresh id."
+            ) from None
+        state = cls(state_dir=state_dir, run_id=run_id)
+        state.acquire_lock()
+        normalized_task = task_text if task_text.endswith("\n") else task_text + "\n"
+        _atomic_write(state_dir / "task.txt", normalized_task)
+        state._write_ledger([])
+        return state
+
+    @classmethod
+    def resume(cls, root: Path, resume_run: str) -> "RunState":
+        run_id = resolve_resume_id(root, resume_run)
+        state = cls(state_dir=root / run_id, run_id=run_id)
+        state.acquire_lock()
+        return state
+
+    def acquire_lock(self) -> None:
+        lock = self.state_dir / "lock"
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            raise RunStateError(
+                f"!! Run state {self.state_dir} is locked; another attempt may "
+                "still be running.\n   If you are sure the previous attempt is "
+                f"dead, remove the lock: rm -r {lock}"
+            ) from None
+        self.locked = True
+
+    def release_lock(self) -> None:
+        if not self.locked:
+            return
+        try:
+            (self.state_dir / "lock").rmdir()
+        except OSError:
+            pass
+        self.locked = False
+
+    def task_text(self) -> str:
+        path = self.state_dir / "task.txt"
+        if not path.is_file():
+            raise RunStateError(
+                f"!! Missing {path}; the run state is damaged. Start a fresh run."
+            )
+        return path.read_text(encoding="utf-8")
+
+    def mark_completed(self) -> None:
+        (self.state_dir / "completed").touch()
+
+    def is_completed(self) -> bool:
+        return (self.state_dir / "completed").is_file()
+
+    def _write_ledger(self, stages: list[str]) -> None:
+        payload = {"schema": 1, "stages": stages}
+        _atomic_write(self.state_dir / "ledger.json", json.dumps(payload) + "\n")
