@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Tasks 4 and 5 are gated on Task 3's HUMAN-RUN acceptance — do not execute them until the human has recorded a passing acceptance.
 
-**Goal:** Finish the port: pytest E2E driver, a consolidated parity audit, the real-engine acceptance run (including a deliberate interrupt + resume), CI cutover, and deletion of the bash implementation.
+**Goal:** Finish the port: pytest E2E driver, a consolidated parity audit, the real-agent acceptance run (including a deliberate interrupt + resume), CI cutover, and deletion of the bash implementation.
 
 **Architecture:** Plan 6 of the series implementing
 `docs/superpowers/specs/2026-07-10-python-rewrite-design.md`. This plan
@@ -53,7 +53,7 @@ workflow invocation, acceptance checklist).
 - Test: the file itself; `run.sh` stays frozen until Task 5.
 
 **Interfaces:**
-- `pytest -m e2e` runs the real-engine E2E (manual). Default runs exclude
+- `pytest -m e2e` runs the real-agent E2E (manual). Default runs exclude
   it. The setup-only baseline check runs whenever a Go toolchain exists
   (CI keeps it on ubuntu, where setup-go provides one).
 - Environment defaults mirror run.sh:18-34; `E2E_DIR` keeps the workspace.
@@ -65,7 +65,7 @@ workflow invocation, acceptance checklist).
 testpaths = ["tests"]
 addopts = "-m 'not e2e'"
 markers = [
-    "e2e: real-engine end-to-end; consumes quota; run manually with -m e2e",
+    "e2e: real-agent end-to-end; consumes quota; run manually with -m e2e",
 ]
 ```
 
@@ -77,7 +77,7 @@ markers = [
 Two layers:
 - test_fixture_baseline: copies the Go fixture, verifies the baseline gates
   locally. No AI. Runs wherever a Go toolchain exists (CI: ubuntu).
-- test_full_workflow_e2e: the real-engine run plus the acceptance
+- test_full_workflow_e2e: the real-agent run plus the acceptance
   checklist. Marked e2e; excluded by default; costs real quota.
 
 E2E defaults from real-run lessons (run.sh:27-34): worker at least
@@ -211,7 +211,7 @@ def test_full_workflow_e2e():
     metrics = run_dir / "metrics.csv"
     assert metrics.is_file()
     rows = list(csv.reader(metrics.open(newline="", encoding="utf-8")))
-    assert rows[0] == ["run_id", "stage", "role", "engine", "round",
+    assert rows[0] == ["run_id", "stage", "role", "agent", "round",
                        "duration_s", "cost_usd", "model", "model_args",
                        "generated_at"]
     assert len(rows) > 1 and all(len(r) == 10 for r in rows)
@@ -234,7 +234,7 @@ git add tests/e2e/test_e2e.py pyproject.toml
 git commit -m "test: port the E2E driver to pytest
 
 Split the bash driver into a no-AI fixture baseline test that runs
-wherever a Go toolchain exists and a marker-gated real-engine E2E with
+wherever a Go toolchain exists and a marker-gated real-agent E2E with
 the full acceptance checklist (stages, gates, branch, bootstrap files,
 spec/plan shape, protected tests untouched, artifact inventory, commit
 granularity, metrics schema). The e2e marker is excluded by default so

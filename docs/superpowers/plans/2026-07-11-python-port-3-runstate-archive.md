@@ -10,7 +10,7 @@ changes approved by the spec: the settings snapshot moves from
 `resume.conf` key=value to `settings.json`, and the stage ledger moves to
 `ledger.json`. All state writes stay atomic (temp file + `os.replace`).
 `RunState` owns `.workflow/state/<run-id>/`; `RunArchive` owns
-`.workflow/runs/<run-id>/`. Neither imports engines or workflow — they are
+`.workflow/runs/<run-id>/`. Neither imports agents or workflow — they are
 leaf modules the orchestration (plan 5) composes.
 
 **Tech Stack:** Python 3.12+, stdlib only (`json`, `os`, `re`, `subprocess` for git snapshots), pytest with temp git repos.
@@ -68,7 +68,7 @@ tests/test_archive_git.py               # Task 5
 | `archive_snapshot` :486 / `archive_text` :497 | `RunArchive.archive_snapshot` / `archive_text` |
 | `archive_task` :537 | `RunArchive.archive_task` |
 | `archive_git_state` :560 | `RunArchive.archive_git_state` |
-| `archive_engine_attempt` :1118 | `RunArchive.archive_engine_attempt` |
+| `archive_engine_attempt` :1118 | `RunArchive.archive_agent_attempt` |
 | `establish_run_archive` :593 | `archive.establish_run_archive` |
 | `write_run_metadata` :608 / `write_log_metadata` :634 | `RunArchive.write_run_metadata` / `write_log_metadata` |
 | `log_section` :652 | `RunArchive.log_section` |
@@ -77,13 +77,13 @@ tests/test_archive_git.py               # Task 5
 
 Deliberate divergences (document in code, pin with tests):
 - Snapshot format: `settings.json` (schema field, same keys as the bash
-  allowlist, unknown keys still refused). Values MAY contain newlines —
-  bash refused them only because of its line format; a test pins the
-  round-trip.
+  allowlist except `engine_*` is renamed `agent_*`, unknown keys still
+  refused). Values MAY contain newlines — bash refused them only because
+  of its line format; a test pins the round-trip.
 - Ledger format: `ledger.json` (`{"schema": 1, "stages": [...]}`).
 - `write_meta`/`write_run_metadata` use `json.dumps` instead of jq; key
-  order follows the bash jq object literally so archived files diff
-  cleanly against bash-era runs.
+  order follows the bash jq object (with `engine` keys renamed `agent`)
+  so archived files stay easy to diff against bash-era runs.
 
 ---
 
@@ -102,9 +102,10 @@ Bash tests ported: `tests/helpers.test.sh:696-731`.
 - Consumes: `config.Settings` (read-only, for `snapshot_values`).
 - Produces:
   - `runstate.RunStateError(Exception)` — every refuse-to-resume path.
-  - `runstate.SNAPSHOT_KEYS: tuple[str, ...]` — exactly the bash conf keys:
+  - `runstate.SNAPSHOT_KEYS: tuple[str, ...]` — the bash conf keys with
+    `engine_*` renamed `agent_*`:
     `("spec_dir", "dual_spec", "auto_branch", "use_worktree", "branch",
-    "engine_a", "engine_b", "engine_a_args", "engine_b_args", "model_a",
+    "agent_a", "agent_b", "agent_a_args", "agent_b_args", "model_a",
     "model_b", "claude_args", "codex_args", "agy_args", "max_rounds",
     "human_gate", "open_pr", "tools", "gate_cmd", "build_gate_cmd",
     "task_arg", "task_source_kind", "task_source_path")`
@@ -249,7 +250,7 @@ def test_snapshot_feeds_settings_from_env():
     values = snapshot_values(s, branch="b", gate_cmd="", build_gate_cmd="",
                              task_arg="", task_source_kind="literal",
                              task_source_path="")
-    assert values["engine_a"] == "agy"
+    assert values["agent_a"] == "agy"
     assert values["max_rounds"] == "5"
     assert values["auto_branch"] == "1"
     assert values["use_worktree"] == "0"
@@ -293,7 +294,7 @@ from .config import Settings
 SNAPSHOT_FILE = "settings.json"
 SNAPSHOT_KEYS = (
     "spec_dir", "dual_spec", "auto_branch", "use_worktree", "branch",
-    "engine_a", "engine_b", "engine_a_args", "engine_b_args", "model_a",
+    "agent_a", "agent_b", "agent_a_args", "agent_b_args", "model_a",
     "model_b", "claude_args", "codex_args", "agy_args", "max_rounds",
     "human_gate", "open_pr", "tools", "gate_cmd", "build_gate_cmd",
     "task_arg", "task_source_kind", "task_source_path",
@@ -330,10 +331,10 @@ def snapshot_values(
         "auto_branch": flag(settings.auto_branch),
         "use_worktree": flag(settings.use_worktree),
         "branch": branch,
-        "engine_a": settings.engine_a,
-        "engine_b": settings.engine_b,
-        "engine_a_args": settings.engine_a_args,
-        "engine_b_args": settings.engine_b_args,
+        "agent_a": settings.agent_a,
+        "agent_b": settings.agent_b,
+        "agent_a_args": settings.agent_a_args,
+        "agent_b_args": settings.agent_b_args,
         "model_a": settings.model_a,
         "model_b": settings.model_b,
         "claude_args": settings.claude_args,
@@ -847,14 +848,14 @@ def test_init_live_state_resume_keeps_durables_clears_transients(tmp_path):
     wf.mkdir()
     names = ["suggestions.md", "protected-tests.txt", "protected-base.sha",
              "spec-merge-request.md", "review.md", "verdict.json",
-             "last-engine-output.txt", "pr-body.md"]
+             "last-agent-output.txt", "pr-body.md"]
     for name in names:
         (wf / name).write_text("x\n", encoding="utf-8")
     init_live_state(wf, resume=True)
     for durable in ["suggestions.md", "protected-tests.txt", "protected-base.sha",
                     "spec-merge-request.md"]:
         assert (wf / durable).is_file()
-    for transient in ["review.md", "verdict.json", "last-engine-output.txt", "pr-body.md"]:
+    for transient in ["review.md", "verdict.json", "last-agent-output.txt", "pr-body.md"]:
         assert not (wf / transient).exists()
 
 
@@ -990,7 +991,7 @@ def init_live_state(wf: Path, *, resume: bool) -> None:
     # durable files later stages depend on, otherwise resuming deletes its
     # own inputs (C3, sh:667-687).
     wf.mkdir(parents=True, exist_ok=True)
-    files = ["review.md", "verdict.json", "last-engine-output.txt", "pr-body.md"]
+    files = ["review.md", "verdict.json", "last-agent-output.txt", "pr-body.md"]
     if not resume:
         files += ["suggestions.md", "protected-tests.txt", "protected-base.sha",
                   "spec-merge-request.md"]
@@ -1033,8 +1034,8 @@ write_meta, archive_task).
 - Test: `tests/test_archive_io.py`
 
 **Interfaces:**
-- Consumes: plan 1 archive helpers, `engines.engine_model` /
-  `engines.resolve_model_args`, `config.Settings`.
+- Consumes: plan 1 archive helpers, `agents.agent_model` /
+  `agents.resolve_model_args`, `config.Settings`.
 - Produces:
   - `@dataclass archive.RunArchive:` fields `run_dir: Path`, `run_id: str`,
     `settings: Settings`, `log_path: Path`, `metrics_path: Path`.
@@ -1045,26 +1046,26 @@ write_meta, archive_task).
   - RunArchive methods (signatures below are binding):
     - `art_path(name: str) -> Path` — `NNN-name`, sequence persisted in
       `.artifact-seq` so numbering survives resume.
-    - `write_meta(artifact: Path, role: str = "workflow", engine: str = "workflow", stage: str = "startup", round: int = 0, now: datetime | None = None) -> None`
+    - `write_meta(artifact: Path, role: str = "workflow", agent: str = "workflow", stage: str = "startup", round: int = 0, now: datetime | None = None) -> None`
       — writes `<artifact>.meta.json` with the exact key order of the bash
-      jq object: generated_at, generator_role, engine, model, model_args,
+      jq object: generated_at, generator_role, agent, model, model_args,
       stage, round, run_id, artifact. `model`/`model_args` are derived via
-      `engine_model`/`resolve_model_args`; `round` serializes as a string
+      `agent_model`/`resolve_model_args`; `round` serializes as a string
       (bash passes it as --arg).
-    - `archive_snapshot(src: Path, name: str, role, engine, stage, round) -> Path | None`
+    - `archive_snapshot(src: Path, name: str, role, agent, stage, round) -> Path | None`
       — returns None when src is missing (bash returns 0 silently).
-    - `archive_text(name: str, text: str, role, engine, stage, round) -> Path`
+    - `archive_text(name: str, text: str, role, agent, stage, round) -> Path`
     - `archive_task(task_arg: str, kind: str, source_path: str, resolved: str) -> None`
       — writes `task-source.md` (with the kind/argument/path header and the
       fenced resolved text) and `task.txt`.
-    - `archive_engine_attempt(role: str, engine: str, slug: str, attempt: int, rc: int, engine_out: Path, stage: str, round: int) -> None`
-      — copies engine_out (or writes the placeholder line) to
+    - `archive_agent_attempt(role: str, agent: str, slug: str, attempt: int, rc: int, agent_out: Path, stage: str, round: int) -> None`
+      — copies agent_out (or writes the placeholder line) to
       `<slug>-attempt-<n>-rc<rc>.raw` + meta.
     - `write_run_metadata() / write_log_metadata()` — JSON files matching
       the bash jq key order.
-    - `log_section(title: str, role, engine, stage, round, echo: Callable[[str], None] = print) -> None`
+    - `log_section(title: str, role, agent, stage, round, echo: Callable[[str], None] = print) -> None`
       — appends the 80-dash banner to the log and echoes it.
-    - `metric(role: str, engine: str, round: int, seconds: int, cost: str, stage: str) -> None`
+    - `metric(role: str, agent: str, round: int, seconds: int, cost: str, stage: str) -> None`
       — creates header on first write; quoted CSV row (plan 1 helpers).
 
 - [ ] **Step 1: Write the failing tests**
@@ -1115,19 +1116,19 @@ def test_art_path_increments_and_survives_reload(tmp_path):
 
 def test_write_meta_matches_bash_fields(tmp_path):
     # helpers.test.sh: "write_meta/archive_snapshot:write required metadata"
-    a = make_archive(tmp_path, {"ENGINE_A": "claude", "ENGINE_B": "codex"})
+    a = make_archive(tmp_path, {"AGENT_A": "claude", "AGENT_B": "codex"})
     src = tmp_path / "src.txt"
     src.write_text("data\n", encoding="utf-8")
-    dst = a.archive_snapshot(src, "snap.txt", role="worker", engine="claude",
+    dst = a.archive_snapshot(src, "snap.txt", role="worker", agent="claude",
                              stage="stage", round=3, now=FIXED)
     meta = json.loads((dst.parent / (dst.name + ".meta.json")).read_text(encoding="utf-8"))
     assert meta["generated_at"] == "2026-01-02T03:04:05+0800"
     assert meta["generator_role"] == "worker"
-    assert meta["engine"] == "claude"
+    assert meta["agent"] == "claude"
     assert meta["stage"] == "stage"
     assert meta["round"] == "3"
     assert meta["run_id"] == "test"
-    assert list(meta.keys()) == ["generated_at", "generator_role", "engine",
+    assert list(meta.keys()) == ["generated_at", "generator_role", "agent",
                                  "model", "model_args", "stage", "round",
                                  "run_id", "artifact"]
 
@@ -1156,33 +1157,33 @@ def test_archive_task_literal_kind(tmp_path):
     assert "- path:" not in source
 
 
-def test_archive_engine_attempt_names_and_placeholder(tmp_path):
+def test_archive_agent_attempt_names_and_placeholder(tmp_path):
     # helpers.test.sh: "engine_call:saves raw output for every retry attempt"
     a = make_archive(tmp_path)
-    out = tmp_path / "engine-out.txt"
-    out.write_text("raw engine output\n", encoding="utf-8")
-    a.archive_engine_attempt("worker", "claude", "worker-stage-r1", 1, 1, out,
+    out = tmp_path / "agent-out.txt"
+    out.write_text("raw agent output\n", encoding="utf-8")
+    a.archive_agent_attempt("worker", "claude", "worker-stage-r1", 1, 1, out,
                              stage="stage", round=1)
     saved = a.run_dir / "001-worker-stage-r1-attempt-1-rc1.raw"
-    assert saved.read_text(encoding="utf-8") == "raw engine output\n"
+    assert saved.read_text(encoding="utf-8") == "raw agent output\n"
     meta = json.loads((a.run_dir / "001-worker-stage-r1-attempt-1-rc1.raw.meta.json")
                       .read_text(encoding="utf-8"))
-    assert meta["generator_role"] == "worker" and meta["engine"] == "claude"
-    a.archive_engine_attempt("worker", "claude", "worker-stage-r1", 2, 1,
+    assert meta["generator_role"] == "worker" and meta["agent"] == "claude"
+    a.archive_agent_attempt("worker", "claude", "worker-stage-r1", 2, 1,
                              tmp_path / "gone.txt", stage="stage", round=1)
     placeholder = a.run_dir / "002-worker-stage-r1-attempt-2-rc1.raw"
-    assert "ENGINE_OUT was not written" in placeholder.read_text(encoding="utf-8")
+    assert "agent output was not written" in placeholder.read_text(encoding="utf-8")
 
 
 def test_metric_header_and_rows(tmp_path):
     # helpers.test.sh: "metric:header plus two rows" / "CSV header is correct"
-    a = make_archive(tmp_path, {"ENGINE_A": "claude", "ENGINE_B": "codex",
+    a = make_archive(tmp_path, {"AGENT_A": "claude", "AGENT_B": "codex",
                                 "CODEX_ARGS": '-c model="x,y" --flag "quoted value"'})
     a.metric("worker", "claude", 1, 12, "0.05", stage="stage1")
     a.metric("reviewer", "codex", 2, 30, "", stage="stage1")
     lines = a.metrics_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 3
-    assert lines[0] == ("run_id,stage,role,engine,round,duration_s,cost_usd,"
+    assert lines[0] == ("run_id,stage,role,agent,round,duration_s,cost_usd,"
                         "model,model_args,generated_at")
     row = next(csv.reader([lines[2]]))
     assert row[3] == "codex"
@@ -1197,17 +1198,17 @@ def test_log_section_banner(tmp_path):
                   now=FIXED)
     text = a.log_path.read_text(encoding="utf-8")
     assert "-" * 80 in text
-    assert "[2026-01-02T03:04:05+0800] AI call | role=worker engine=claude" in text
+    assert "[2026-01-02T03:04:05+0800] AI call | role=worker agent=claude" in text
     assert "stage=stage round=2" in text
     assert echoed  # banner also went to the console sink
 
 
 def test_run_and_log_metadata(tmp_path):
-    a = make_archive(tmp_path, {"ENGINE_A": "claude", "ENGINE_B": "codex"})
+    a = make_archive(tmp_path, {"AGENT_A": "claude", "AGENT_B": "codex"})
     a.write_run_metadata(spec_dir="specs/test", wf=".workflow", now=FIXED)
     payload = json.loads((a.run_dir / "001-run-metadata.json").read_text(encoding="utf-8"))
     assert payload["run_id"] == "test"
-    assert payload["engine_a"] == "claude"
+    assert payload["agent_a"] == "claude"
     a.write_log_metadata(now=FIXED)
     log_meta = json.loads((a.log_path.parent / (a.log_path.name + ".meta.json"))
                           .read_text(encoding="utf-8"))
@@ -1228,7 +1229,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .config import Settings
-from .engines import engine_model, resolve_model_args
+from .agents import agent_model, resolve_model_args
 
 METRICS_FIELDNAMES = METRICS_HEADER  # alias; header defined in plan 1
 
@@ -1254,14 +1255,14 @@ class RunArchive:
 
     # -- meta sidecars (sh:470-484) -------------------------------------------
     def write_meta(self, artifact: Path, role: str = "workflow",
-                   engine: str = "workflow", stage: str = "startup",
+                   agent: str = "workflow", stage: str = "startup",
                    round: int = 0, now: "datetime | None" = None) -> None:
         payload = {
             "generated_at": generated_at(now),
             "generator_role": role,
-            "engine": engine,
-            "model": engine_model(engine, self.settings),
-            "model_args": resolve_model_args(engine, self.settings),
+            "agent": agent,
+            "model": agent_model(agent, self.settings),
+            "model_args": resolve_model_args(agent, self.settings),
             "stage": stage,
             "round": str(round),
             "run_id": self.run_id,
@@ -1272,21 +1273,21 @@ class RunArchive:
 
     # -- snapshots (sh:486-505) ------------------------------------------------
     def archive_snapshot(self, src: Path, name: str, role: str = "workflow",
-                         engine: str = "workflow", stage: str = "startup",
+                         agent: str = "workflow", stage: str = "startup",
                          round: int = 0, now: "datetime | None" = None) -> Path | None:
         if not src.is_file():
             return None
         dst = self.art_path(name)
         _shutil.copyfile(src, dst)
-        self.write_meta(dst, role, engine, stage, round, now)
+        self.write_meta(dst, role, agent, stage, round, now)
         return dst
 
     def archive_text(self, name: str, text: str, role: str = "workflow",
-                     engine: str = "workflow", stage: str = "startup",
+                     agent: str = "workflow", stage: str = "startup",
                      round: int = 0, now: "datetime | None" = None) -> Path:
         dst = self.art_path(name)
         dst.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
-        self.write_meta(dst, role, engine, stage, round, now)
+        self.write_meta(dst, role, agent, stage, round, now)
         return dst
 
     # -- task provenance (sh:537-558) -------------------------------------------
@@ -1303,17 +1304,17 @@ class RunArchive:
         task_art.write_text(resolved.rstrip("\n") + "\n", encoding="utf-8")
         self.write_meta(task_art)
 
-    # -- engine attempts (sh:1118-1129) ------------------------------------------
-    def archive_engine_attempt(self, role: str, engine: str, slug: str,
-                               attempt: int, rc: int, engine_out: Path,
+    # -- agent attempts (sh:1118-1129) ------------------------------------------
+    def archive_agent_attempt(self, role: str, agent: str, slug: str,
+                               attempt: int, rc: int, agent_out: Path,
                                stage: str, round: int) -> None:
         dst = self.art_path(f"{slug}-attempt-{attempt}-rc{rc}.raw")
-        if engine_out.is_file():
-            _shutil.copyfile(engine_out, dst)
+        if agent_out.is_file():
+            _shutil.copyfile(agent_out, dst)
         else:
-            dst.write_text("(ENGINE_OUT was not written for this attempt)\n",
+            dst.write_text("(agent output was not written for this attempt)\n",
                            encoding="utf-8")
-        self.write_meta(dst, role, engine, stage, round)
+        self.write_meta(dst, role, agent, stage, round)
 
     # -- run/log metadata (sh:608-650) ---------------------------------------------
     def write_run_metadata(self, *, spec_dir: str, wf: str,
@@ -1329,12 +1330,12 @@ class RunArchive:
             "wf_run": str(self.run_dir),
             "log": str(self.log_path),
             "metrics": str(self.metrics_path),
-            "engine_a": s.engine_a,
-            "model_a": engine_model(s.engine_a, s),
-            "args_a": resolve_model_args(s.engine_a, s),
-            "engine_b": s.engine_b,
-            "model_b": engine_model(s.engine_b, s),
-            "args_b": resolve_model_args(s.engine_b, s),
+            "agent_a": s.agent_a,
+            "model_a": agent_model(s.agent_a, s),
+            "args_a": resolve_model_args(s.agent_a, s),
+            "agent_b": s.agent_b,
+            "model_b": agent_model(s.agent_b, s),
+            "args_b": resolve_model_args(s.agent_b, s),
             "dual_spec": "1" if s.dual_spec else "0",
             "max_rounds": str(s.max_rounds),
             "auto_branch": "1" if s.auto_branch else "0",
@@ -1350,12 +1351,12 @@ class RunArchive:
             "generator_role": "workflow",
             "run_id": self.run_id,
             "log_path": str(self.log_path),
-            "engine_a": s.engine_a,
-            "model_a": engine_model(s.engine_a, s),
-            "args_a": resolve_model_args(s.engine_a, s),
-            "engine_b": s.engine_b,
-            "model_b": engine_model(s.engine_b, s),
-            "args_b": resolve_model_args(s.engine_b, s),
+            "agent_a": s.agent_a,
+            "model_a": agent_model(s.agent_a, s),
+            "args_a": resolve_model_args(s.agent_a, s),
+            "agent_b": s.agent_b,
+            "model_b": agent_model(s.agent_b, s),
+            "args_b": resolve_model_args(s.agent_b, s),
             "dual_spec": "1" if s.dual_spec else "0",
         }
         self.log_path.with_name(self.log_path.name + ".meta.json").write_text(
@@ -1363,15 +1364,15 @@ class RunArchive:
 
     # -- log banner (sh:652-665) -------------------------------------------------
     def log_section(self, title: str, role: str = "workflow",
-                    engine: str = "workflow", stage: str = "startup",
+                    agent: str = "workflow", stage: str = "startup",
                     round: int = 0, echo: Callable[[str], None] = print,
                     now: "datetime | None" = None) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         banner = (
             "\n" + "-" * 80 + "\n"
-            f"[{generated_at(now)}] {title} | role={role} engine={engine} "
-            f"model={engine_model(engine, self.settings)} "
-            f"args={resolve_model_args(engine, self.settings)} "
+            f"[{generated_at(now)}] {title} | role={role} agent={agent} "
+            f"model={agent_model(agent, self.settings)} "
+            f"args={resolve_model_args(agent, self.settings)} "
             f"stage={stage} round={round}\n" + "-" * 80
         )
         with self.log_path.open("a", encoding="utf-8") as f:
@@ -1379,7 +1380,7 @@ class RunArchive:
         echo(banner)
 
     # -- metrics (sh:366-374) ------------------------------------------------------
-    def metric(self, role: str, engine: str, round: int, seconds: int,
+    def metric(self, role: str, agent: str, round: int, seconds: int,
                cost: str, stage: str, now: "datetime | None" = None) -> None:
         if not self.metrics_path.parent.is_dir():
             return
@@ -1387,9 +1388,9 @@ class RunArchive:
             self.metrics_path.write_text(",".join(METRICS_HEADER) + "\n",
                                          encoding="utf-8")
         write_csv_row(self.metrics_path, [
-            self.run_id, stage, role, engine, round, seconds, cost,
-            engine_model(engine, self.settings),
-            resolve_model_args(engine, self.settings),
+            self.run_id, stage, role, agent, round, seconds, cost,
+            agent_model(agent, self.settings),
+            resolve_model_args(agent, self.settings),
             generated_at(now),
         ])
 
@@ -1422,7 +1423,7 @@ git commit -m "feat: port run archive artifacts, meta, log, and metrics
 
 Port establish_run_archive with collision suffixes, the persistent
 artifact sequence, meta sidecars with the exact bash jq key order,
-text/snapshot/task/engine-attempt archiving, run and log metadata, the
+text/snapshot/task/agent-attempt archiving, run and log metadata, the
 log section banner, and the metric CSV writer built on the plan 1
 helpers. All methods take explicit stage/round/now parameters instead
 of bash's globals."
@@ -1440,7 +1441,7 @@ Bash tests ported: `tests/helpers.test.sh:352-362`.
 - Test: `tests/test_archive_git.py`
 
 **Interfaces:**
-- Produces: `RunArchive.archive_git_state(role: str, engine: str, slug: str, stage: str, round: int, cwd: Path | None = None) -> None`
+- Produces: `RunArchive.archive_git_state(role: str, agent: str, slug: str, stage: str, round: int, cwd: Path | None = None) -> None`
   — no-op outside a git work tree; writes `<slug>-git-status.txt`
   (porcelain) and `<slug>-git-diff.patch` (tracked `git diff --binary HEAD`
   plus each untracked file via `git diff --no-index --binary /dev/null`),
@@ -1499,7 +1500,7 @@ Expected: FAIL — AttributeError: no archive_git_state.
 - [ ] **Step 3: Append the method to `RunArchive`**
 
 ```python
-    def archive_git_state(self, role: str = "worker", engine: str = "workflow",
+    def archive_git_state(self, role: str = "worker", agent: str = "workflow",
                           slug: str = "git-state", stage: str = "startup",
                           round: int = 0, cwd: Path | None = None) -> None:
         import os
@@ -1514,7 +1515,7 @@ Expected: FAIL — AttributeError: no archive_git_state.
             return
         status_art = self.art_path(f"{slug}-git-status.txt")
         status_art.write_text(git("status", "--porcelain").stdout, encoding="utf-8")
-        self.write_meta(status_art, role, engine, stage, round)
+        self.write_meta(status_art, role, agent, stage, round)
 
         diff_art = self.art_path(f"{slug}-git-diff.patch")
         chunks = ["# git diff --binary HEAD --\n",
@@ -1526,7 +1527,7 @@ Expected: FAIL — AttributeError: no archive_git_state.
                        git("diff", "--no-index", "--binary", "--",
                            os.devnull, name).stdout]
         diff_art.write_text("".join(chunks), encoding="utf-8")
-        self.write_meta(diff_art, role, engine, stage, round)
+        self.write_meta(diff_art, role, agent, stage, round)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1558,5 +1559,5 @@ Expected: whole suite green (plans 1-2 tests plus ~35 new).
 - `begin_stage`/`end_stage` skip-and-echo orchestration, `print_resume_hint`,
   traps/exit-code handling: plan 5 (workflow/cli).
 - `verify_last_head`, `resume_workspace`, `setup_workspace`: plan 4 (gitops).
-- Wiring `RetryEvents.archive_attempt` to `RunArchive.archive_engine_attempt`:
+- Wiring `RetryEvents.archive_attempt` to `RunArchive.archive_agent_attempt`:
   plan 5 (workflow context assembly).

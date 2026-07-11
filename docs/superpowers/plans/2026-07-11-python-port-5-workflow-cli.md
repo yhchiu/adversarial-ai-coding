@@ -46,7 +46,7 @@ tests/test_agents_bootstrap.py          # Task 3
 tests/test_finish_pipeline.py           # Task 4
 tests/test_cli.py                       # Task 5
 tests/test_resume_integration.py        # Task 6
-tests/fake_agent.py                     # Task 6 (cross-platform fake engine)
+tests/fake_agent.py                     # Task 6 (cross-platform fake agent)
 ```
 
 ## Bash-Function Mapping (this plan's parity ledger)
@@ -90,18 +90,18 @@ Bash tests ported: `tests/helpers.test.sh:792-844` (ledger skip flow),
   ask: Callable[[str], str] = _default_ask
   run_id: str = ""            # bash RUN_ID; set by cli
   ```
-- `@dataclass workflow.SpecRoles: owner_slot: str = "A"; reviewer_slot: str = "B"; owner_engine: str = ""; reviewer_engine: str = ""`
+- `@dataclass workflow.SpecRoles: owner_slot: str = "A"; reviewer_slot: str = "B"; owner_agent: str = ""; reviewer_agent: str = ""`
 - `workflow.set_spec_roles_from_slot(ctx, slot: str) -> None` — mirrors
-  bash :887-892 using `dual_spec.engine_for_slot`.
+  bash :887-892 using `dual_spec.agent_for_slot`.
 - `workflow.begin_stage(ctx, name: str, *artifacts: Path) -> bool` — False
   when the ledger records the stage (after verifying every artifact exists,
   else `WorkflowAbort` pointing at the run archive); True resets
   `cur_stage`/`cur_round`/worker session and logs the banner.
 - `workflow.end_stage(ctx) -> None` — no-op without claimed state;
   otherwise `state.record_stage(cur_stage, head_sha(workspace))`.
-- `workflow.commit_work(ctx, engine, description) -> None` — render
+- `workflow.commit_work(ctx, agent, description) -> None` — render
   `commit-approved-work`, `work`, then `gitops.ensure_committed`.
-- `workflow.commit_if_dirty(ctx, engine, description) -> None`.
+- `workflow.commit_if_dirty(ctx, agent, description) -> None`.
 - `workflow.human_gate_spec(ctx) -> None` — HUMAN_GATE off returns;
   notify + prompt via `ctx.ask`; a non-y answer raises `WorkflowAbort`
   ("Aborted: spec was not approved.").
@@ -220,8 +220,8 @@ def test_human_gate_approval_and_abort(make_ctx):
 def test_set_spec_roles_from_slot(make_ctx):
     ctx = make_ctx({"AGENT_A": "claude", "AGENT_B": "codex", "RETRY_ON_LIMIT": "0"})
     set_spec_roles_from_slot(ctx, "B")
-    assert ctx.spec_roles.owner_engine == "codex"
-    assert ctx.spec_roles.reviewer_engine == "claude"
+    assert ctx.spec_roles.owner_agent == "codex"
+    assert ctx.spec_roles.reviewer_agent == "claude"
     assert ctx.spec_roles.owner_slot == "B"
     assert ctx.spec_roles.reviewer_slot == "A"
 ```
@@ -252,8 +252,8 @@ def _default_ask(prompt: str) -> str:
 class SpecRoles:
     owner_slot: str = "A"
     reviewer_slot: str = "B"
-    owner_engine: str = ""
-    reviewer_engine: str = ""
+    owner_agent: str = ""
+    reviewer_agent: str = ""
 
 
 # WorkflowContext gains (add to the dataclass from plan 4):
@@ -261,21 +261,21 @@ class SpecRoles:
 #   dual_spec_decision: str = ""
 #   ask: Callable[[str], str] = _default_ask
 #   run_id: str = ""
-# and __post_init__ fills empty spec_roles engines from settings:
-#   if not self.spec_roles.owner_engine:
-#       self.spec_roles.owner_engine = self.settings.engine_a
-#       self.spec_roles.reviewer_engine = self.settings.engine_b
+# and __post_init__ fills empty spec_roles agents from settings:
+#   if not self.spec_roles.owner_agent:
+#       self.spec_roles.owner_agent = self.settings.agent_a
+#       self.spec_roles.reviewer_agent = self.settings.agent_b
 
 
 def set_spec_roles_from_slot(ctx: WorkflowContext, slot: str) -> None:
-    from .dual_spec import engine_for_slot, reviewer_slot_for_owner_slot
+    from .dual_spec import agent_for_slot, reviewer_slot_for_owner_slot
 
     reviewer = reviewer_slot_for_owner_slot(slot)
     ctx.spec_roles = SpecRoles(
         owner_slot=slot,
         reviewer_slot=reviewer,
-        owner_engine=engine_for_slot(ctx, slot),
-        reviewer_engine=engine_for_slot(ctx, reviewer),
+        owner_agent=agent_for_slot(ctx, slot),
+        reviewer_agent=agent_for_slot(ctx, reviewer),
     )
 
 
@@ -308,23 +308,23 @@ def end_stage(ctx: WorkflowContext) -> None:
     ctx.state.record_stage(ctx.cur_stage, head_sha(ctx.workspace))
 
 
-def commit_work(ctx: WorkflowContext, engine: str, description: str) -> None:
+def commit_work(ctx: WorkflowContext, agent: str, description: str) -> None:
     from .gitops import ensure_committed
 
-    ctx.archive.log_section("commit", "worker", engine, ctx.cur_stage,
+    ctx.archive.log_section("commit", "worker", agent, ctx.cur_stage,
                             ctx.cur_round, echo=ctx.echo)
     prompt = render_prompt(ctx.prompts_dir, "commit-approved-work",
                            {"DESCRIPTION": description})
-    work(ctx, engine, prompt)
+    work(ctx, agent, prompt)
     ensure_committed(ctx.workspace, ctx.cur_stage, ctx.echo_err)
 
 
-def commit_if_dirty(ctx: WorkflowContext, engine: str, description: str) -> None:
+def commit_if_dirty(ctx: WorkflowContext, agent: str, description: str) -> None:
     from .gitops import status_porcelain
 
     if not status_porcelain(ctx.workspace):
         return  # skip if clean to avoid a wasted AI call (sh:1458-1461)
-    commit_work(ctx, engine, description)
+    commit_work(ctx, agent, description)
 
 
 def human_gate_spec(ctx: WorkflowContext) -> None:
@@ -388,7 +388,7 @@ Bash tests ported: `tests/helpers.test.sh:376-493` and `:900-940`
   - `normalize_dual_spec_decision(raw: str) -> str | None` — a/b/ma/mb
     (case-insensitive) to adopt-a/adopt-b/merge-a/merge-b, None otherwise.
   - `dual_spec_owner_slot(decision: str) -> str | None`
-  - `engine_for_slot(ctx, slot: str) -> str`
+  - `agent_for_slot(ctx, slot: str) -> str`
   - `reviewer_slot_for_owner_slot(slot: str) -> str`
   - `candidate_spec_for_slot(ctx, slot: str) -> Path`
   - `dual_spec_final_review_scope(ctx, decision: str) -> str`
@@ -447,7 +447,7 @@ def test_owner_slot_and_roles(make_ctx):
     assert ds.dual_spec_owner_slot("adopt-a") == "A"
     assert ds.dual_spec_owner_slot("merge-b") == "B"
     assert ds.dual_spec_owner_slot("bogus") is None
-    assert ds.engine_for_slot(ctx, "B") == "codex"
+    assert ds.agent_for_slot(ctx, "B") == "codex"
     assert ds.reviewer_slot_for_owner_slot("A") == "B"
 
 
@@ -522,8 +522,8 @@ def test_apply_merge_calls_owner_then_reviews(make_ctx, monkeypatch):
                         lambda c, r, w, s: calls.append(("review", r, w, s)))
     monkeypatch.setattr(ds, "human_gate_spec", lambda c: calls.append(("human",)))
 
-    def fake_work(c, engine, prompt):
-        calls.append(("work", engine))
+    def fake_work(c, agent, prompt):
+        calls.append(("work", agent))
         (ctx.spec_dir / "spec.md").write_text("merged B\n", encoding="utf-8")
 
     monkeypatch.setattr(ds, "work", fake_work)
@@ -543,8 +543,8 @@ def test_restore_decision_adopt_b(make_ctx):
         encoding="utf-8")
     ds.restore_dual_spec_decision(ctx)
     assert ctx.dual_spec_decision == "adopt-b"
-    assert ctx.spec_roles.owner_engine == "codex"
-    assert ctx.spec_roles.reviewer_engine == "claude"
+    assert ctx.spec_roles.owner_agent == "codex"
+    assert ctx.spec_roles.reviewer_agent == "claude"
 
 
 def test_restore_merge_requires_merge_request(make_ctx):
@@ -556,7 +556,7 @@ def test_restore_merge_requires_merge_request(make_ctx):
     (ctx.wf / "spec-merge-request.md").write_text("adopt item\n", encoding="utf-8")
     ds.restore_dual_spec_decision(ctx)
     assert ctx.dual_spec_decision == "merge-b"
-    assert ctx.spec_roles.owner_engine == "codex"
+    assert ctx.spec_roles.owner_agent == "codex"
 
 
 def test_restore_invalid_or_missing_decision(make_ctx):
@@ -572,10 +572,10 @@ def test_restore_invalid_or_missing_decision(make_ctx):
 def test_restore_existing_decision_left_alone(make_ctx):
     ctx = dual_ctx(make_ctx)
     ctx.dual_spec_decision = "adopt-a"
-    ctx.spec_roles.owner_engine = "claude"
+    ctx.spec_roles.owner_agent = "claude"
     ds.restore_dual_spec_decision(ctx)  # no spec-decision.md needed
     assert ctx.dual_spec_decision == "adopt-a"
-    assert ctx.spec_roles.owner_engine == "claude"
+    assert ctx.spec_roles.owner_agent == "claude"
 
 
 def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):
@@ -583,7 +583,7 @@ def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):
     ctx = dual_ctx(make_ctx)
     calls = []
 
-    def fake_work(c, engine, prompt):
+    def fake_work(c, agent, prompt):
         for name in ("spec-a.md", "spec-b.md",
                      "spec-comparison-a.md", "spec-comparison-b.md"):
             if name in prompt:
@@ -652,8 +652,8 @@ def dual_spec_owner_slot(decision: str) -> str | None:
             "adopt-b": "B", "merge-b": "B"}.get(decision)
 
 
-def engine_for_slot(ctx: WorkflowContext, slot: str) -> str:
-    return ctx.settings.engine_a if slot == "A" else ctx.settings.engine_b
+def agent_for_slot(ctx: WorkflowContext, slot: str) -> str:
+    return ctx.settings.agent_a if slot == "A" else ctx.settings.agent_b
 
 
 def reviewer_slot_for_owner_slot(slot: str) -> str:
@@ -794,9 +794,9 @@ def write_dual_spec_decision_file(ctx: WorkflowContext, decision: str) -> None:
         "# Dual Spec Decision\n\n"
         f"- decision: {decision}\n"
         f"- selected owner slot: {owner_slot}\n"
-        f"- selected owner engine: {engine_for_slot(ctx, owner_slot)}\n"
+        f"- selected owner agent: {agent_for_slot(ctx, owner_slot)}\n"
         f"- reviewer slot: {reviewer_slot}\n"
-        f"- reviewer engine: {engine_for_slot(ctx, reviewer_slot)}\n"
+        f"- reviewer agent: {agent_for_slot(ctx, reviewer_slot)}\n"
         f"- candidate A: {ctx.spec_dir / 'spec-a.md'}\n"
         f"- candidate B: {ctx.spec_dir / 'spec-b.md'}\n\n"
         f"The selected owner produces or owns the final {ctx.spec_dir / 'spec.md'}.\n"
@@ -879,7 +879,7 @@ def restore_dual_spec_decision(ctx: WorkflowContext) -> None:
     ctx.dual_spec_decision = decision
     set_spec_roles_from_slot(ctx, slot)
     ctx.echo_err(f"(restored dual-spec decision: {decision}; owner "
-                 f"{ctx.spec_roles.owner_slot}={ctx.spec_roles.owner_engine})")
+                 f"{ctx.spec_roles.owner_slot}={ctx.spec_roles.owner_agent})")
 
 
 def apply_dual_spec_decision(ctx: WorkflowContext, decision: str, task: str) -> None:
@@ -901,8 +901,8 @@ def apply_dual_spec_decision(ctx: WorkflowContext, decision: str, task: str) -> 
             "SPEC_FILE": str(spec_file),
             "TASK": task,
         })
-        work(ctx, ctx.spec_roles.owner_engine, prompt)
-    review_loop(ctx, ctx.spec_roles.reviewer_engine, ctx.spec_roles.owner_engine,
+        work(ctx, ctx.spec_roles.owner_agent, prompt)
+    review_loop(ctx, ctx.spec_roles.reviewer_agent, ctx.spec_roles.owner_agent,
                 dual_spec_final_review_scope(ctx, decision))
     human_gate_spec(ctx)
 
@@ -913,14 +913,14 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
     spec_b = ctx.spec_dir / "spec-b.md"
 
     if begin_stage(ctx, "write-spec-a", spec_a):
-        work(ctx, ctx.settings.engine_a,
+        work(ctx, ctx.settings.agent_a,
              render_prompt(ctx.prompts_dir, "dual-spec-write-candidate", {
                  "SPEC_FILE": str(spec_a), "OTHER_SPEC_FILE": str(spec_b),
                  "TASK": task}))
         end_stage(ctx)
 
     if begin_stage(ctx, "write-spec-b", spec_b):
-        work(ctx, ctx.settings.engine_b,
+        work(ctx, ctx.settings.agent_b,
              render_prompt(ctx.prompts_dir, "dual-spec-write-candidate", {
                  "SPEC_FILE": str(spec_b), "OTHER_SPEC_FILE": str(spec_a),
                  "TASK": task}))
@@ -931,7 +931,7 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
     if begin_stage(ctx, "review-spec-a", review_a, verdict_a):
         scope = render_prompt(ctx.prompts_dir, "review-scope-candidate-spec", {
             "SPEC_FILE": str(spec_a), "CANDIDATE": "A", "OTHER_CANDIDATE": "B"})
-        run_candidate_spec_review(ctx, ctx.settings.engine_b, scope,
+        run_candidate_spec_review(ctx, ctx.settings.agent_b, scope,
                                   review_a, verdict_a)
         end_stage(ctx)
 
@@ -940,14 +940,14 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
     if begin_stage(ctx, "review-spec-b", review_b, verdict_b):
         scope = render_prompt(ctx.prompts_dir, "review-scope-candidate-spec", {
             "SPEC_FILE": str(spec_b), "CANDIDATE": "B", "OTHER_CANDIDATE": "A"})
-        run_candidate_spec_review(ctx, ctx.settings.engine_a, scope,
+        run_candidate_spec_review(ctx, ctx.settings.agent_a, scope,
                                   review_b, verdict_b)
         end_stage(ctx)
 
-    for slot, engine in (("a", ctx.settings.engine_a), ("b", ctx.settings.engine_b)):
+    for slot, agent in (("a", ctx.settings.agent_a), ("b", ctx.settings.agent_b)):
         comparison = ctx.spec_dir / f"spec-comparison-{slot}.md"
         if begin_stage(ctx, f"compare-specs-{slot}", comparison):
-            work(ctx, engine,
+            work(ctx, agent,
                  render_prompt(ctx.prompts_dir, "dual-spec-compare", {
                      "OUTPUT_FILE": str(comparison),
                      "SPEC_A_FILE": str(spec_a), "SPEC_B_FILE": str(spec_b),
@@ -1227,7 +1227,7 @@ def test_run_workflow_single_spec_stage_order(make_ctx, new_repo, monkeypatch):
     ctx.run_id = "run"
     order = []
 
-    def fake_work(c, engine, prompt):
+    def fake_work(c, agent, prompt):
         order.append(("work", c.cur_stage))
         if c.cur_stage == "write-spec":
             c.spec_dir.mkdir(parents=True, exist_ok=True)
@@ -1309,9 +1309,9 @@ def finish(ctx: WorkflowContext, task: str, *, which=shutil.which,
         f"- Spec with assumptions and open questions:`{ctx.spec_dir}/spec.md`\n"
         f"- Implementation plan:`{ctx.spec_dir}/plan.md`\n\n"
         f"Generated by adversarial-ai-coding, with original slots "
-        f"A={ctx.settings.engine_a} and B={ctx.settings.engine_b}.\n"
-        f"Final spec owner/worker: {roles.owner_slot}={roles.owner_engine}. "
-        f"Reviewer: {roles.reviewer_slot}={roles.reviewer_engine}.\n"
+        f"A={ctx.settings.agent_a} and B={ctx.settings.agent_b}.\n"
+        f"Final spec owner/worker: {roles.owner_slot}={roles.owner_agent}. "
+        f"Reviewer: {roles.reviewer_slot}={roles.reviewer_agent}.\n"
         "Each stage passed deterministic quality gates and cross-review. "
         "Acceptance tests were written by the reviewer and protected against "
         "worker edits.\n",
@@ -1367,13 +1367,13 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
     else:
         set_spec_roles_from_slot(ctx, "A")
         if begin_stage(ctx, "write-spec", spec_file):
-            work(ctx, ctx.spec_roles.owner_engine,
+            work(ctx, ctx.spec_roles.owner_agent,
                  render_prompt(ctx.prompts_dir, "write-spec",
                                {"SPEC_FILE": str(spec_file), "TASK": task}))
             scope = render_prompt(ctx.prompts_dir, "review-scope-spec",
                                   {"SPEC_FILE": str(spec_file)})
-            review_loop_ref(ctx, ctx.spec_roles.reviewer_engine,
-                            ctx.spec_roles.owner_engine, scope)
+            review_loop_ref(ctx, ctx.spec_roles.reviewer_agent,
+                            ctx.spec_roles.owner_agent, scope)
             human_gate_spec(ctx)
             end_stage(ctx)
 
@@ -1382,19 +1382,19 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
     restore_dual_spec_decision(ctx)
 
     if begin_stage(ctx, "commit-spec"):
-        commit_work(ctx, ctx.spec_roles.owner_engine,
+        commit_work(ctx, ctx.spec_roles.owner_agent,
                     "Spec, approved by review and human gate")
         end_stage(ctx)
 
     if begin_stage(ctx, "write-implementation-plan", plan_file):
-        work(ctx, ctx.spec_roles.owner_engine,
+        work(ctx, ctx.spec_roles.owner_agent,
              render_prompt(ctx.prompts_dir, "write-implementation-plan",
                            {"SPEC_FILE": str(spec_file), "PLAN_FILE": str(plan_file)}))
         scope = render_prompt(ctx.prompts_dir, "review-scope-plan",
                               {"PLAN_FILE": str(plan_file), "SPEC_FILE": str(spec_file)})
-        review_loop_ref(ctx, ctx.spec_roles.reviewer_engine,
-                        ctx.spec_roles.owner_engine, scope)
-        commit_work(ctx, ctx.spec_roles.owner_engine, "Implementation plan")
+        review_loop_ref(ctx, ctx.spec_roles.reviewer_agent,
+                        ctx.spec_roles.owner_agent, scope)
+        commit_work(ctx, ctx.spec_roles.owner_agent, "Implementation plan")
         end_stage(ctx)
 
     # Adversarial TDD: reviewer writes acceptance tests, worker reviews them.
@@ -1403,14 +1403,14 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
     if begin_stage(ctx, "write-acceptance-tests", protected_list, protected_base):
         test_base = restore_or_record_acceptance_base(
             ctx.state, lambda: head_sha(ctx.workspace))
-        work(ctx, ctx.spec_roles.reviewer_engine,
+        work(ctx, ctx.spec_roles.reviewer_agent,
              render_prompt(ctx.prompts_dir, "write-acceptance-tests",
                            {"SPEC_FILE": str(spec_file), "SPEC_DIR": str(ctx.spec_dir)}))
         scope = render_prompt(ctx.prompts_dir, "review-scope-acceptance-tests",
                               {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)})
-        review_loop_ref(ctx, ctx.spec_roles.owner_engine,
-                        ctx.spec_roles.reviewer_engine, scope)
-        commit_work(ctx, ctx.spec_roles.reviewer_engine, "Acceptance tests")
+        review_loop_ref(ctx, ctx.spec_roles.owner_agent,
+                        ctx.spec_roles.reviewer_agent, scope)
+        commit_work(ctx, ctx.spec_roles.reviewer_agent, "Acceptance tests")
         from .gitops import git_out
         changed = git_out(["diff", "--name-only", test_base, "HEAD"], ctx.workspace)
         spec_prefix = str(ctx.spec_dir).replace("\\", "/") + "/"
@@ -1439,16 +1439,16 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             while remaining_tasks(ctx.state):
                 task_line = remaining_tasks(ctx.state)[0]
                 ctx.log(f"--- Task {i}/{total}:{task_line} ---")
-                work(ctx, ctx.spec_roles.owner_engine,
+                work(ctx, ctx.spec_roles.owner_agent,
                      render_prompt(ctx.prompts_dir, "implement-plan-task", {
                          "PLAN_FILE": str(plan_file), "TASK": task_line,
                          "PROTECTED_TESTS_FILE": str(protected_list)}))
                 gate_loop_ref(ctx.build_gate_cmd, cwd=ctx.workspace,
                               prompts_dir=ctx.prompts_dir,
                               max_rounds=ctx.settings.max_rounds,
-                              do_work=lambda p: work(ctx, ctx.spec_roles.owner_engine, p),
+                              do_work=lambda p: work(ctx, ctx.spec_roles.owner_agent, p),
                               log=ctx.log, notify=ctx.notify, stage=ctx.cur_stage)
-                commit_work(ctx, ctx.spec_roles.owner_engine, f'Task "{task_line}"')
+                commit_work(ctx, ctx.spec_roles.owner_agent, f'Task "{task_line}"')
                 pop_task_queue(ctx.state)
                 mark_plan_task_done(plan_file, task_line)  # UI only
                 i += 1
@@ -1456,29 +1456,29 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
                 "Acceptance tests must pass. ---")
         gate_loop_ref(ctx.gate_cmd, cwd=ctx.workspace, prompts_dir=ctx.prompts_dir,
                       max_rounds=ctx.settings.max_rounds,
-                      do_work=lambda p: work(ctx, ctx.spec_roles.owner_engine, p),
+                      do_work=lambda p: work(ctx, ctx.spec_roles.owner_agent, p),
                       log=ctx.log, notify=ctx.notify, stage=ctx.cur_stage)
         scope = render_prompt(ctx.prompts_dir, "review-scope-branch", {
             "SPEC_FILE": str(spec_file),
             "PROTECTED_TESTS_FILE": str(protected_list)})
-        review_loop_ref(ctx, ctx.spec_roles.reviewer_engine,
-                        ctx.spec_roles.owner_engine, scope, gate_cmd=ctx.gate_cmd)
-        commit_if_dirty(ctx, ctx.spec_roles.owner_engine, "Review fixes")
+        review_loop_ref(ctx, ctx.spec_roles.reviewer_agent,
+                        ctx.spec_roles.owner_agent, scope, gate_cmd=ctx.gate_cmd)
+        commit_if_dirty(ctx, ctx.spec_roles.owner_agent, "Review fixes")
         end_stage(ctx)
 
     if begin_stage(ctx, "final-review-and-fixes"):
-        work(ctx, ctx.spec_roles.owner_engine,
+        work(ctx, ctx.spec_roles.owner_agent,
              render_prompt(ctx.prompts_dir, "final-self-review",
                            {"SUGGESTIONS_FILE": str(ctx.suggestions_path)}))
         gate_loop_ref(ctx.gate_cmd, cwd=ctx.workspace, prompts_dir=ctx.prompts_dir,
                       max_rounds=ctx.settings.max_rounds,
-                      do_work=lambda p: work(ctx, ctx.spec_roles.owner_engine, p),
+                      do_work=lambda p: work(ctx, ctx.spec_roles.owner_agent, p),
                       log=ctx.log, notify=ctx.notify, stage=ctx.cur_stage)
         scope = render_prompt(ctx.prompts_dir, "review-scope-final-acceptance",
                               {"SPEC_FILE": str(spec_file)})
-        review_loop_ref(ctx, ctx.spec_roles.reviewer_engine,
-                        ctx.spec_roles.owner_engine, scope, gate_cmd=ctx.gate_cmd)
-        commit_if_dirty(ctx, ctx.spec_roles.owner_engine, "Final fixes")
+        review_loop_ref(ctx, ctx.spec_roles.reviewer_agent,
+                        ctx.spec_roles.owner_agent, scope, gate_cmd=ctx.gate_cmd)
+        commit_if_dirty(ctx, ctx.spec_roles.owner_agent, "Final fixes")
         end_stage(ctx)
 
     finish(ctx, task)
@@ -1540,7 +1540,7 @@ Bash tests ported: `tests/helpers.test.sh:551-574` (preflight),
   4. RESUME_RUN: resolve + `RunState.resume` + `load_snapshot` +
      `check_immutable`; task snapshot is the single source of truth (C6),
      conflicting task argument → rc 1 with the bash wording.
-  5. `Settings.from_env(env, run_id, snapshot)`; `validate_engines`;
+  5. `Settings.from_env(env, run_id, snapshot)`; `validate_agents`;
      git work-tree check ("Run this script from the root of the target git
      repository."); `dual_spec_preflight`.
   6. Workspace setup/resume (`os.chdir` into a worktree), archive
@@ -1602,7 +1602,7 @@ def test_not_a_git_repo_blocked(tmp_path, monkeypatch, capsys):
     assert "root of the target git repository" in capsys.readouterr().err
 
 
-def test_same_engine_blocked_without_branch_side_effect(new_repo, monkeypatch, capsys):
+def test_same_agent_blocked_without_branch_side_effect(new_repo, monkeypatch, capsys):
     from adversarial_ai_coding.gitops import current_branch
     monkeypatch.chdir(new_repo)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
@@ -1691,7 +1691,7 @@ def test_resume_task_conflict_fails(new_repo, monkeypatch, capsys):
     # Claim a run, leave it unfinished but unlocked.
     from adversarial_ai_coding.runstate import RunState, write_snapshot
     state = RunState.create(new_repo / ".workflow" / "state", "r1", "snapshot task\n")
-    write_snapshot(state.state_dir, {"engine_a": "sh", "engine_b": "pwd",
+    write_snapshot(state.state_dir, {"agent_a": "sh", "agent_b": "pwd",
                                      "branch": "main"})
     state.release_lock()
     rc = cli.main(["different task"], {"RESUME_RUN": "r1", "AUTO_BRANCH": "0"},
@@ -1728,7 +1728,7 @@ from typing import Mapping
 from .archive import establish_run_archive
 from .config import Settings, SettingsError, WorkflowAbort
 from .dual_spec import dual_spec_preflight
-from .engines import EngineSession, validate_engines
+from .agents import AgentSession, validate_agents
 from .gates import detect_build_gate, detect_gate
 from .gitops import current_branch, is_inside_work_tree, resume_workspace, setup_workspace
 from .prompts import (PromptTemplateError, bootstrap_agents_md,
@@ -1819,14 +1819,14 @@ def main(argv: list[str] | None = None,
         settings = Settings.from_env(env, run_id, snapshot)
         use_worktree = settings.use_worktree
 
-        validate_engines(settings)
+        validate_agents(settings)
         if not is_inside_work_tree(Path.cwd()):
             print("Run this script from the root of the target git repository.",
                   file=sys.stderr)
             return 1
         dual_spec_preflight(settings, stdin_isatty)
 
-        print(f"Workflow settings:A={settings.engine_a}  B={settings.engine_b}  "
+        print(f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
               f"DUAL_SPEC={'1' if settings.dual_spec else '0'}  "
               f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}")
         print(f"Task:{task}")
@@ -1875,7 +1875,7 @@ def main(argv: list[str] | None = None,
 
         ctx = WorkflowContext(
             settings=settings, archive=archive, state=state,
-            session=EngineSession(), workspace=workspace, wf=wf,
+            session=AgentSession(), workspace=workspace, wf=wf,
             prompts_dir=default_prompts_dir(env),
             spec_dir=workspace / settings.spec_dir,
             gate_cmd=gate_cmd, build_gate_cmd=build_gate_cmd, run_id=run_id,
@@ -1941,7 +1941,7 @@ git commit -m "feat: port cli entry point with resumable abort handling
 
 Port the startup sequence: usage, print-agents, task file resolution,
 resume loading with the task-snapshot conflict check (C6), settings and
-engine validation before any branch side effect, workspace setup or
+agent validation before any branch side effect, workspace setup or
 resume, archive and state claiming, AGENTS bootstrap, gate resolution
 from env/snapshot/detection, and the settings snapshot write before the
 first AI call. Exceptions map to bash exit codes (1, 75, 130); an
@@ -1980,7 +1980,7 @@ covered by the dual-spec unit ports, as it already was on Windows).
 - [ ] **Step 1: Write `tests/fake_agent.py`**
 
 ```python
-"""Cross-platform fake engine for the resume integration suite.
+"""Cross-platform fake agent for the resume integration suite.
 
 Port of resume.test.sh write_fake_agent. Invoked as:
   python fake_agent.py --role fake-worker <extra args...> "<prompt>"
@@ -2117,7 +2117,7 @@ FAKE = str(Path(__file__).parent / "fake_agent.py")
 def _make_wrapper(work: Path, role: str) -> str:
     """One executable wrapper command per role.
 
-    validate_engines rejects identical non-claude commands on both slots, so
+    validate_agents rejects identical non-claude commands on both slots, so
     the two roles need two distinct command strings — exactly like the bash
     suite's fake-worker/fake-reviewer scripts. Windows gets a .cmd batch
     file (CreateProcess runs those natively); POSIX gets a shell script.
@@ -2295,7 +2295,7 @@ Implementer notes (binding):
   ledger surgery; `_write_ledger` is intentionally reached into (tests may
   use private helpers for damage simulation, mirroring the bash suite's
   direct file edits).
-- The fake wrappers' engine names resolve through `shutil.which` in
+- The fake wrappers' agent names resolve through `shutil.which` in
   `_resolve_argv0`; a full path with an extension passes through unchanged
   on both platforms.
 
@@ -2335,5 +2335,5 @@ integration tests do the same in-process).
 
 ## Not in This Plan (deliberately)
 
-- E2E fixture driver port, CI cutover, real-engine acceptance, bash
+- E2E fixture driver port, CI cutover, real-agent acceptance, bash
   removal, README updates: plan 6.

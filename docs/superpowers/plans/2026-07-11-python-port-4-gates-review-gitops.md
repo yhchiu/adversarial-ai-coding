@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port the middle layer between engines/state and the stage flow: git operations (workspace setup/resume, protected files, fallback commits, checkpoint verification), deterministic quality gates, the worker call wrapper `work()`, and the review machinery (`run_review`, `review_loop`).
+**Goal:** Port the middle layer between agents/state and the stage flow: git operations (workspace setup/resume, protected files, fallback commits, checkpoint verification), deterministic quality gates, the worker call wrapper `work()`, and the review machinery (`run_review`, `review_loop`).
 
 **Architecture:** Plan 4 of the series implementing
 `docs/superpowers/specs/2026-07-10-python-rewrite-design.md`. Builds on
@@ -709,7 +709,7 @@ prompt and sends the file reference).
     settings: Settings
     archive: RunArchive
     state: RunState | None
-    session: EngineSession
+    session: AgentSession
     workspace: Path                 # git cwd
     wf: Path                        # .workflow
     prompts_dir: Path
@@ -723,28 +723,28 @@ prompt and sends the file reference).
     echo: Callable[[str], None] = print
     echo_err: Callable[[str], None] = _print_err   # module helper, stderr
     ```
-    Properties: `engine_out = wf / "last-engine-output.txt"`,
+    Properties: `agent_out = wf / "last-agent-output.txt"`,
     `verdict_path = wf / "verdict.json"`, `review_path = wf / "review.md"`,
     `suggestions_path = wf / "suggestions.md"`.
     Methods:
     - `log(text: str) -> None` — append to `archive.log_path` AND `echo`
       (the bash `tee -a "$LOG"`).
-    - `engine_io() -> EngineIO` — engine_out/verdict_path/echo bundle.
-    - `notify(message: str) -> None` — delegates to `engines.notify`.
-  - `workflow.work(ctx: WorkflowContext, engine: str, instruction: str) -> None`
+    - `agent_io() -> AgentIO` — agent_out/verdict_path/echo bundle.
+    - `notify(message: str) -> None` — delegates to `agents.notify`.
+  - `workflow.work(ctx: WorkflowContext, agent: str, instruction: str) -> None`
     — the full bash `work()` sequence: log_section, worker banner, prompt
-    archived as `<slug>-prompt.md`, `engine_call` around
-    `engines.run_worker` with the short prompt-file instruction, output
-    tee'd to log + `<slug>-output.txt` artifact + console, ENGINE_OUT
+    archived as `<slug>-prompt.md`, `agent_call` around
+    `agents.run_worker` with the short prompt-file instruction, output
+    tee'd to log + `<slug>-output.txt` artifact + console, agent_out
     snapshot, git state archive, metric with duration and
     `session.last_cost`, then `check_protected` unless
-    `ctx.checking_protected`. A quota abort from engine_call raises
-    `WorkflowAbort(msg, rc=QUOTA_ABORT_RC)`; other engine failures follow
+    `ctx.checking_protected`. A quota abort from agent_call raises
+    `WorkflowAbort(msg, rc=QUOTA_ABORT_RC)`; other agent failures follow
     bash (warning only — bash's `work` does not exit on engine rc != 0
-    because engine_call's non-retry failures return the rc and the
+    because bash `engine_call`'s non-retry failures return the rc and the
     pipeline's `> >(tee ...)` masks it; preserve that no-raise behavior and
     document it).
-  - `workflow.check_protected(ctx: WorkflowContext, engine: str) -> None`
+  - `workflow.check_protected(ctx: WorkflowContext, agent: str) -> None`
     — loops while violations exist: render `protected-tests-modified`
     prompt, recursive `work` with `checking_protected` set, at most 2
     recovery rounds then `WorkflowAbort` (rc 1) + notify.
@@ -760,7 +760,7 @@ def make_ctx(new_repo):
     """WorkflowContext over a throwaway repo with silenced console sinks."""
     from adversarial_ai_coding.archive import establish_run_archive
     from adversarial_ai_coding.config import Settings
-    from adversarial_ai_coding.engines import EngineSession
+    from adversarial_ai_coding.agents import AgentSession
     from adversarial_ai_coding.prompts import default_prompts_dir
     from adversarial_ai_coding.workflow import WorkflowContext
 
@@ -771,7 +771,7 @@ def make_ctx(new_repo):
         archive = establish_run_archive(wf / "runs", "test", settings)
         return WorkflowContext(
             settings=settings, archive=archive, state=None,
-            session=EngineSession(), workspace=new_repo, wf=wf,
+            session=AgentSession(), workspace=new_repo, wf=wf,
             prompts_dir=default_prompts_dir({}), spec_dir=new_repo / "specs",
             cur_stage="stage", echo=lambda _l: None, echo_err=lambda _l: None,
         )
@@ -791,7 +791,7 @@ import pytest
 
 from adversarial_ai_coding import workflow as wf_mod
 from adversarial_ai_coding.config import WorkflowAbort
-from adversarial_ai_coding.engines import EngineResult
+from adversarial_ai_coding.agents import AgentResult
 from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC
 from adversarial_ai_coding.workflow import check_protected, work
 
@@ -802,13 +802,13 @@ def test_work_archives_prompt_and_sends_file_reference(make_ctx, monkeypatch):
 
     def fake_worker(name, prompt, settings, session, io):
         seen["prompt"] = prompt
-        io.engine_out.write_text("ok\n", encoding="utf-8")
-        return EngineResult(0, "worker output")
+        io.agent_out.write_text("ok\n", encoding="utf-8")
+        return AgentResult(0, "worker output")
 
     monkeypatch.setattr(wf_mod, "run_worker", fake_worker)
     work(ctx, "claude", "FULL_PROMPT_SENTINEL for worker")
 
-    # The engine got the short file-reference instruction, not the full text.
+    # The agent got the short file-reference instruction, not the full text.
     assert "Read the full workflow prompt" in seen["prompt"]
     assert "worker-stage-r1-prompt.md" in seen["prompt"]
     assert "FULL_PROMPT_SENTINEL" not in seen["prompt"]
@@ -825,8 +825,8 @@ def test_work_quota_abort_raises_resumable(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def limited_worker(name, prompt, settings, session, io):
-        io.engine_out.write_text("You've hit your usage limit\n", encoding="utf-8")
-        return EngineResult(1, "limited")
+        io.agent_out.write_text("You've hit your usage limit\n", encoding="utf-8")
+        return AgentResult(1, "limited")
 
     monkeypatch.setattr(wf_mod, "run_worker", limited_worker)
     with pytest.raises(WorkflowAbort) as exc:
@@ -834,12 +834,12 @@ def test_work_quota_abort_raises_resumable(make_ctx, monkeypatch):
     assert exc.value.rc == QUOTA_ABORT_RC
 
 
-def test_work_ordinary_engine_failure_does_not_raise(make_ctx, monkeypatch):
+def test_work_ordinary_agent_failure_does_not_raise(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def failing_worker(name, prompt, settings, session, io):
-        io.engine_out.write_text("undefined: IsPalindrome\n", encoding="utf-8")
-        return EngineResult(1, "build error")
+        io.agent_out.write_text("undefined: IsPalindrome\n", encoding="utf-8")
+        return AgentResult(1, "build error")
 
     monkeypatch.setattr(wf_mod, "run_worker", failing_worker)
     work(ctx, "claude", "prompt")  # bash parity: no exit on ordinary failure
@@ -889,10 +889,10 @@ from typing import Callable
 
 from .archive import RunArchive, safe_slug
 from .config import Settings, WorkflowAbort
-from .engines import EngineIO, EngineSession, notify as engines_notify, run_worker
+from .agents import AgentIO, AgentSession, notify as agents_notify, run_worker
 from .gitops import protected_violations
 from .prompts import prompt_file_instruction, render_prompt
-from .ratelimit import QUOTA_ABORT_RC, RetryEvents, engine_call
+from .ratelimit import QUOTA_ABORT_RC, RetryEvents, agent_call
 from .runstate import RunState
 
 
@@ -905,7 +905,7 @@ class WorkflowContext:
     settings: Settings
     archive: RunArchive
     state: RunState | None
-    session: EngineSession
+    session: AgentSession
     workspace: Path
     wf: Path
     prompts_dir: Path
@@ -920,8 +920,8 @@ class WorkflowContext:
     echo_err: Callable[[str], None] = _print_err
 
     @property
-    def engine_out(self) -> Path:
-        return self.wf / "last-engine-output.txt"
+    def agent_out(self) -> Path:
+        return self.wf / "last-agent-output.txt"
 
     @property
     def verdict_path(self) -> Path:
@@ -941,25 +941,25 @@ class WorkflowContext:
         self.echo(text)
 
     def log_file(self, text: str) -> None:
-        # Log file only — for engine output that already streamed to the
-        # console via EngineIO.echo (avoids double-printing).
+        # Log file only — for agent output that already streamed to the
+        # console via AgentIO.echo (avoids double-printing).
         self.archive.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.archive.log_path.open("a", encoding="utf-8") as f:
             f.write(text + "\n")
 
-    def engine_io(self) -> EngineIO:
-        return EngineIO(engine_out=self.engine_out,
+    def agent_io(self) -> AgentIO:
+        return AgentIO(agent_out=self.agent_out,
                         verdict_path=self.verdict_path, echo=self.echo)
 
     def notify(self, message: str) -> None:
-        engines_notify(self.settings, message)
+        agents_notify(self.settings, message)
 
 
-def _retry_events(ctx: WorkflowContext, role: str, engine: str,
+def _retry_events(ctx: WorkflowContext, role: str, agent: str,
                   slug: str) -> RetryEvents:
     return RetryEvents(
-        archive_attempt=lambda attempt, rc: ctx.archive.archive_engine_attempt(
-            role, engine, slug, attempt, rc, ctx.engine_out,
+        archive_attempt=lambda attempt, rc: ctx.archive.archive_agent_attempt(
+            role, agent, slug, attempt, rc, ctx.agent_out,
             stage=ctx.cur_stage, round=ctx.cur_round),
         log_retry=ctx.log,
         notify=ctx.notify,
@@ -967,47 +967,47 @@ def _retry_events(ctx: WorkflowContext, role: str, engine: str,
     )
 
 
-def work(ctx: WorkflowContext, engine: str, instruction: str) -> None:
+def work(ctx: WorkflowContext, agent: str, instruction: str) -> None:
     t0 = time.monotonic()
     ctx.session.last_cost = ""
-    ctx.archive.log_section("AI call", "worker", engine, ctx.cur_stage,
+    ctx.archive.log_section("AI call", "worker", agent, ctx.cur_stage,
                             ctx.cur_round, echo=ctx.echo)
-    ctx.echo(f">>> Worker({engine}) is running...")
+    ctx.echo(f">>> Worker({agent}) is running...")
     slug = f"worker-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
     prompt_art = ctx.archive.archive_text(f"{slug}-prompt.md", instruction,
-                                          "worker", engine, ctx.cur_stage,
+                                          "worker", agent, ctx.cur_stage,
                                           ctx.cur_round)
     short_prompt = prompt_file_instruction(str(prompt_art))
-    io = ctx.engine_io()
-    result = engine_call(
-        lambda: run_worker(engine, short_prompt, ctx.settings, ctx.session, io),
-        engine_out=ctx.engine_out, settings=ctx.settings,
-        events=_retry_events(ctx, "worker", engine, slug),
+    io = ctx.agent_io()
+    result = agent_call(
+        lambda: run_worker(agent, short_prompt, ctx.settings, ctx.session, io),
+        agent_out=ctx.agent_out, settings=ctx.settings,
+        events=_retry_events(ctx, "worker", agent, slug),
     )
     output_art = ctx.archive.art_path(f"{slug}-output.txt")
     output_art.write_text(result.text.rstrip("\n") + "\n", encoding="utf-8")
-    ctx.archive.write_meta(output_art, "worker", engine, ctx.cur_stage, ctx.cur_round)
-    # Streamed engines already echoed live via EngineIO; log file only here.
+    ctx.archive.write_meta(output_art, "worker", agent, ctx.cur_stage, ctx.cur_round)
+    # Streamed agents already echoed live via AgentIO; log file only here.
     ctx.log_file(result.text)
     if result.rc == QUOTA_ABORT_RC:
         raise WorkflowAbort(
             "!! Worker gave up on a quota/rate limit; aborting the run as resumable.",
             rc=QUOTA_ABORT_RC,
         )
-    # bash parity: an ordinary engine failure logs upstream and continues;
+    # bash parity: an ordinary agent failure logs upstream and continues;
     # the review/gate loops are the correctness net, not the exit code here.
-    ctx.archive.archive_snapshot(ctx.engine_out, f"{slug}-final.raw", "worker",
-                                 engine, ctx.cur_stage, ctx.cur_round)
-    ctx.archive.archive_git_state("worker", engine, slug, ctx.cur_stage,
+    ctx.archive.archive_snapshot(ctx.agent_out, f"{slug}-final.raw", "worker",
+                                 agent, ctx.cur_stage, ctx.cur_round)
+    ctx.archive.archive_git_state("worker", agent, slug, ctx.cur_stage,
                                   ctx.cur_round, cwd=ctx.workspace)
-    ctx.archive.metric("worker", engine, ctx.cur_round,
+    ctx.archive.metric("worker", agent, ctx.cur_round,
                        int(time.monotonic() - t0), ctx.session.last_cost,
                        stage=ctx.cur_stage)
     if not ctx.checking_protected:
-        check_protected(ctx, engine)
+        check_protected(ctx, agent)
 
 
-def check_protected(ctx: WorkflowContext, engine: str) -> None:
+def check_protected(ctx: WorkflowContext, agent: str) -> None:
     protected_file = ctx.wf / "protected-tests.txt"
     base_file = ctx.wf / "protected-base.sha"
     if not (protected_file.is_file() and base_file.is_file()):
@@ -1037,7 +1037,7 @@ def check_protected(ctx: WorkflowContext, engine: str) -> None:
         })
         ctx.checking_protected = True
         try:
-            work(ctx, engine, prompt)
+            work(ctx, agent, prompt)
         finally:
             ctx.checking_protected = False
 ```
@@ -1054,11 +1054,11 @@ git add src/adversarial_ai_coding/workflow.py tests/conftest.py tests/test_work.
 git commit -m "feat: port worker call wrapper and protected-test recovery
 
 Add WorkflowContext, the explicit replacement for bash's process
-globals, with log/notify/engine-io helpers. work() archives the full
-prompt, hands the engine only the short file reference, tees output to
-log and artifact, snapshots ENGINE_OUT and git state, records metrics,
+globals, with log/notify/agent-io helpers. work() archives the full
+prompt, hands the agent only the short file reference, tees output to
+log and artifact, snapshots agent_out and git state, records metrics,
 and maps quota give-ups to a resumable WorkflowAbort while keeping
-bash's no-exit behavior for ordinary engine failures. check_protected
+bash's no-exit behavior for ordinary agent failures. check_protected
 forces recovery rounds when protected acceptance tests are touched and
 stops for human intervention after two failed recoveries."
 ```
@@ -1079,13 +1079,13 @@ Bash tests ported: `tests/helpers.test.sh:260-272` (verdict),
 - Test: `tests/test_review.py`
 
 **Interfaces:**
-- Consumes: WorkflowContext, engines.run_reviewer, ratelimit.engine_call,
+- Consumes: WorkflowContext, agents.run_reviewer, ratelimit.agent_call,
   prompts.render_prompt, gates.gate_loop, workflow.work.
 - Produces:
   - `review.verdict_approved(path: Path) -> bool` — False on missing file
     or broken JSON (bash `jq -e` semantics).
-  - `review.compose_review_prompt(engine: str, scope: str, prompts_dir: Path, wf: Path) -> str`
-    — the `review` template plus, for every non-claude engine, the
+  - `review.compose_review_prompt(agent: str, scope: str, prompts_dir: Path, wf: Path) -> str`
+    — the `review` template plus, for every non-claude agent, the
     `verdict-file-instruction` template appended (claude gets the verdict
     via `--json-schema` instead).
   - `review.collect_suggestions(ctx) -> None` — appends this round's
@@ -1093,7 +1093,7 @@ Bash tests ported: `tests/helpers.test.sh:260-272` (verdict),
     `## <stage>(round <n>)` heading.
   - `review.show_blockers(ctx) -> None` — logs "Review did not pass;
     blockers:" with the bullet list.
-  - `review.run_review(ctx, engine: str, scope: str) -> bool` — the full
+  - `review.run_review(ctx, agent: str, scope: str) -> bool` — the full
     bash sequence including the pre-written failed verdict sentinel, quota
     abort (raises `WorkflowAbort` rc 75 with the reviewer wording), the
     review.md / verdict.json snapshots, suggestion collection honoring
@@ -1118,7 +1118,7 @@ import pytest
 from adversarial_ai_coding import review as review_mod
 from adversarial_ai_coding import workflow as wf_mod
 from adversarial_ai_coding.config import WorkflowAbort
-from adversarial_ai_coding.engines import EngineResult
+from adversarial_ai_coding.agents import AgentResult
 from adversarial_ai_coding.prompts import default_prompts_dir
 from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC
 from adversarial_ai_coding.review import (
@@ -1155,10 +1155,10 @@ def test_compose_review_prompt_verdict_instruction(tmp_path):
 
 def approving_reviewer(verdict=None):
     def fake(name, prompt, settings, session, io):
-        io.engine_out.write_text("reviewed\n", encoding="utf-8")
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
         payload = verdict or {"approved": True, "blockers": [], "suggestions": []}
         io.verdict_path.write_text(json.dumps(payload), encoding="utf-8")
-        return EngineResult(0, "review text")
+        return AgentResult(0, "review text")
     return fake
 
 
@@ -1169,11 +1169,11 @@ def test_run_review_archives_and_approves(make_ctx, monkeypatch):
 
     def fake_reviewer(name, prompt, settings, session, io):
         seen["prompt"] = prompt
-        io.engine_out.write_text("reviewed\n", encoding="utf-8")
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
         io.verdict_path.write_text(
             '{"approved":true,"blockers":[],"suggestions":[]}', encoding="utf-8")
         (ctx.wf / "review.md").write_text("approved\n", encoding="utf-8")
-        return EngineResult(0, "review text")
+        return AgentResult(0, "review text")
 
     monkeypatch.setattr(review_mod, "run_reviewer", fake_reviewer)
     assert run_review(ctx, "codex", "FULL_PROMPT_SENTINEL review scope") is True
@@ -1189,8 +1189,8 @@ def test_run_review_prewrites_failed_sentinel(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def silent_reviewer(name, prompt, settings, session, io):
-        io.engine_out.write_text("said nothing structured\n", encoding="utf-8")
-        return EngineResult(0, "prose only")   # never writes verdict.json
+        io.agent_out.write_text("said nothing structured\n", encoding="utf-8")
+        return AgentResult(0, "prose only")   # never writes verdict.json
 
     monkeypatch.setattr(review_mod, "run_reviewer", silent_reviewer)
     assert run_review(ctx, "codex", "scope") is False
@@ -1204,8 +1204,8 @@ def test_run_review_quota_abort(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def limited_reviewer(name, prompt, settings, session, io):
-        io.engine_out.write_text("You've hit your usage limit\n", encoding="utf-8")
-        return EngineResult(1, "limited")
+        io.agent_out.write_text("You've hit your usage limit\n", encoding="utf-8")
+        return AgentResult(1, "limited")
 
     monkeypatch.setattr(review_mod, "run_reviewer", limited_reviewer)
     with pytest.raises(WorkflowAbort) as exc:
@@ -1277,10 +1277,10 @@ from pathlib import Path
 
 from .archive import safe_slug
 from .config import WorkflowAbort
-from .engines import run_reviewer
+from .agents import run_reviewer
 from .gates import gate_loop
 from .prompts import prompt_file_instruction, render_prompt
-from .ratelimit import QUOTA_ABORT_RC, engine_call
+from .ratelimit import QUOTA_ABORT_RC, agent_call
 from .workflow import WorkflowContext, _retry_events, work
 
 FAILED_VERDICT = ('{"approved": false, "blockers": ["reviewer did not write a '
@@ -1297,10 +1297,10 @@ def verdict_approved(path: Path) -> bool:
     return payload.get("approved") is True
 
 
-def compose_review_prompt(engine: str, scope: str, prompts_dir: Path,
+def compose_review_prompt(agent: str, scope: str, prompts_dir: Path,
                           wf: Path) -> str:
     prompt = render_prompt(prompts_dir, "review", {"SCOPE": scope, "WF": str(wf)})
-    if engine == "claude":
+    if agent == "claude":
         return prompt
     instr = render_prompt(prompts_dir, "verdict-file-instruction", {"WF": str(wf)})
     return prompt + instr
@@ -1334,30 +1334,30 @@ def show_blockers(ctx: WorkflowContext) -> None:
         ctx.log(f"  - {blocker}")
 
 
-def run_review(ctx: WorkflowContext, engine: str, scope: str) -> bool:
+def run_review(ctx: WorkflowContext, agent: str, scope: str) -> bool:
     t0 = time.monotonic()
     ctx.session.last_cost = ""
-    ctx.archive.log_section("review", "reviewer", engine, ctx.cur_stage,
+    ctx.archive.log_section("review", "reviewer", agent, ctx.cur_stage,
                             ctx.cur_round, echo=ctx.echo)
-    ctx.echo(f">>> Reviewer({engine}) is reviewing...")
+    ctx.echo(f">>> Reviewer({agent}) is reviewing...")
     slug = f"reviewer-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
-    prompt = compose_review_prompt(engine, scope, ctx.prompts_dir, ctx.wf)
+    prompt = compose_review_prompt(agent, scope, ctx.prompts_dir, ctx.wf)
     prompt_art = ctx.archive.archive_text(f"{slug}-prompt.md", prompt,
-                                          "reviewer", engine, ctx.cur_stage,
+                                          "reviewer", agent, ctx.cur_stage,
                                           ctx.cur_round)
     # Prewrite a failed sentinel instead of deleting the file: if the reviewer
     # does not write a verdict, the run stays failed (sh:1324-1327).
     ctx.verdict_path.write_text(FAILED_VERDICT, encoding="utf-8")
-    io = ctx.engine_io()
-    result = engine_call(
-        lambda: run_reviewer(engine, prompt_file_instruction(str(prompt_art)),
+    io = ctx.agent_io()
+    result = agent_call(
+        lambda: run_reviewer(agent, prompt_file_instruction(str(prompt_art)),
                              ctx.settings, ctx.session, io),
-        engine_out=ctx.engine_out, settings=ctx.settings,
-        events=_retry_events(ctx, "reviewer", engine, slug),
+        agent_out=ctx.agent_out, settings=ctx.settings,
+        events=_retry_events(ctx, "reviewer", agent, slug),
     )
     output_art = ctx.archive.art_path(f"{slug}-output.txt")
     output_art.write_text(result.text.rstrip("\n") + "\n", encoding="utf-8")
-    ctx.archive.write_meta(output_art, "reviewer", engine, ctx.cur_stage,
+    ctx.archive.write_meta(output_art, "reviewer", agent, ctx.cur_stage,
                            ctx.cur_round)
     ctx.log_file(result.text)
     if result.rc == QUOTA_ABORT_RC:
@@ -1370,9 +1370,9 @@ def run_review(ctx: WorkflowContext, engine: str, scope: str) -> bool:
         )
     if result.rc != 0:
         ctx.echo_err("(warning: reviewer execution failed)")
-    ctx.archive.archive_snapshot(ctx.engine_out, f"{slug}-final.raw", "reviewer",
-                                 engine, ctx.cur_stage, ctx.cur_round)
-    ctx.archive.metric("reviewer", engine, ctx.cur_round,
+    ctx.archive.archive_snapshot(ctx.agent_out, f"{slug}-final.raw", "reviewer",
+                                 agent, ctx.cur_stage, ctx.cur_round)
+    ctx.archive.metric("reviewer", agent, ctx.cur_round,
                        int(time.monotonic() - t0), ctx.session.last_cost,
                        stage=ctx.cur_stage)
     if not ctx.verdict_path.is_file():
@@ -1383,10 +1383,10 @@ def run_review(ctx: WorkflowContext, engine: str, scope: str) -> bool:
     stage_slug = safe_slug(ctx.cur_stage)
     ctx.archive.archive_snapshot(ctx.review_path,
                                  f"review-{stage_slug}-r{ctx.cur_round}.md",
-                                 "reviewer", engine, ctx.cur_stage, ctx.cur_round)
+                                 "reviewer", agent, ctx.cur_stage, ctx.cur_round)
     ctx.archive.archive_snapshot(ctx.verdict_path,
                                  f"verdict-{stage_slug}-r{ctx.cur_round}.json",
-                                 "reviewer", engine, ctx.cur_stage, ctx.cur_round)
+                                 "reviewer", agent, ctx.cur_stage, ctx.cur_round)
     if not verdict_approved(ctx.verdict_path):
         show_blockers(ctx)
         return False
