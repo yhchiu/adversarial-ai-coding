@@ -1,6 +1,6 @@
 # adversarial-ai-coding — 雙 AI 對抗式程式開發工作流
 
-用一支 bash script 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
+用 Python CLI 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
 
 ```bash
 for work in "訂規格" "規劃實作計畫" "撰寫程式碼" "整體review" "修bug"; do
@@ -41,8 +41,8 @@ done
 
 ## 核心設計(為什麼這樣做)
 
-- **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 script 自己跑,失敗輸出直接餵回給工作者修;AI 的「測試通過」回報只當參考。
-- **對抗式測試完整性**:驗收測試由審查方(B)依規格撰寫、工作方(A)審查;實作階段 A 禁改這些測試檔,script 在**每次工作者動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
+- **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 workflow 自己跑,失敗輸出直接餵回給工作者修;AI 的「測試通過」回報只當參考。
+- **對抗式測試完整性**:驗收測試由審查方(B)依規格撰寫、工作方(A)審查;實作階段 A 禁改這些測試檔,workflow 在**每次工作者動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
 - **人工檢查點在最高槓桿處**:spec 通過 AI 互審後、開始花大錢實作前,暫停等人核准(可先直接編輯 spec 再繼續);流程終點是「等人 merge 的 PR」,不是靜默結束。
 - **分級裁決**:`verdict.json` 為 `{approved, blockers[], suggestions[]}`,只有 blocker 擋關;suggestions 累積到 `.workflow/suggestions.md`,收尾階段逐條評估,避免審查者拿小事擋關或不好意思擋而放水。
 - **小批次**:一個 checkbox 任務一個 commit,審查與回退都容易。
@@ -51,33 +51,40 @@ done
 
 ## 前置需求
 
-- bash 環境(Windows 用 **Git Bash** 或 WSL;macOS / Linux 原生即可)
-- [`jq`](https://jqlang.github.io/jq/)
+- Python 3.12 以上
+- [Astral uv](https://docs.astral.sh/uv/)
+- `git`
 - 會用到的 AI CLI 已安裝並登入:`claude`(Claude Code)、`codex`(Codex CLI)、`agy`(Antigravity CLI,選用)
-- **在目標專案的 git repo 根目錄執行**(script 會檢查)
+- **在目標專案的 git repo 根目錄執行**(workflow 會檢查)。不需要 Bash 或 `jq`
 
 ## 快速開始
 
 ```bash
-# 從目標專案根目錄執行已安裝的 script;resources/ 要留在 script 旁邊
+# 先在 workflow checkout 安裝鎖定的環境
+cd /path/to/adversarial-ai-coding
+uv sync --frozen
+
+# 再從目標專案根目錄執行
 cd /path/to/your-project
-AAC=/path/to/adversarial-ai-coding/adversarial-ai-coding.sh
+AAC_PROJECT=/path/to/adversarial-ai-coding
 
 # 預設:A = Claude Code,B = Codex
-bash "$AAC" "為 CLI 加上 --json 輸出選項"
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding "為 CLI 加上 --json 輸出選項"
 
 # 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
-bash "$AAC" task.md
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 
 # 交換 agent
-AGENT_A=codex AGENT_B=claude bash "$AAC" task.md
+AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
-DUAL_SPEC=1 bash "$AAC" task.md
+DUAL_SPEC=1 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
-bash "$AAC" print-agents
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 ```
+
+若目標就是 workflow checkout 本身,可使用簡寫:`uv run adversarial-ai-coding task.md`。
 
 ## 雙 spec 模式
 
@@ -124,12 +131,12 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `AGENT_A` (`ENGINE_A`) | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令。`ENGINE_A` 是舊 alias |
-| `AGENT_B` (`ENGINE_B`) | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換)。`ENGINE_B` 是舊 alias |
+| `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令 |
+| `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型,例 `haiku`、`gpt-5.1-codex-mini`;便宜任務/試跑時控制成本用。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;A、B 同為 claude 時以 `MODEL_A` 為準。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` (`ENGINE_A_ARGS` / `ENGINE_B_ARGS`) | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前。`ENGINE_*_ARGS` 是舊 alias |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
@@ -145,8 +152,8 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒) |
 | `RETRY_MAX_RESET_WAIT` | `21600` | 訊息中的重置時刻若比這個秒數還遠(如週配額要等好幾天),立即放棄而不空等 |
 | `RESUME_RUN` | (空) | 續跑中斷的 run:填 `.workflow/state/` 下的 run id,或 `last` 取最新未完成的 run。已完成 stage 直接跳過。詳見「中斷後續跑」 |
-| `AGENTS_TEMPLATE` | script 旁的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
-| `PROMPTS_DIR` | script 旁的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
+| `AGENTS_TEMPLATE` | workflow checkout 內的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
+| `PROMPTS_DIR` | workflow checkout 內的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
 | `RUNS_DIR` | `.workflow/runs` | 每次 run 的 archive 根目錄;相對路徑會在 branch/worktree 準備完成後解析 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導 agent 改用內建檔案工具 |
@@ -158,7 +165,7 @@ Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && 
 每次 run 會把進度記錄在 `.workflow/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
 
 ```bash
-RESUME_RUN=20260710-153012 ./adversarial-ai-coding.sh
+RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
 
 續跑會跳過所有已完成的 stage(不重付 AI 費用),還原跨 stage 狀態(dual-spec 裁決、驗收測試基準、剩餘實作任務),從中斷點繼續。`RESUME_RUN=last` 自動選最新未完成的 run。續跑不必再帶 task 參數:以 run 的 task 快照為準,帶了且內容不同會直接拒絕。
@@ -166,7 +173,7 @@ RESUME_RUN=20260710-153012 ./adversarial-ai-coding.sh
 引擎、模型等多數設定每次 attempt 都可覆寫。最主要的用例是換掉配額耗盡的 agent:
 
 ```bash
-AGENT_B=agy RESUME_RUN=last ./adversarial-ai-coding.sh
+AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
 
 `SPEC_DIR`、`DUAL_SPEC`、`AUTO_BRANCH`、`USE_WORKTREE` 跨續跑不可變:它們決定 stage 圖與產物位置,衝突的覆寫會被拒絕。`NOTIFY_CMD` 刻意不持久化,每次 attempt 重新提供。
@@ -189,7 +196,8 @@ AGENT_B=agy RESUME_RUN=last ./adversarial-ai-coding.sh
 
 ```
 adversarial-ai-coding/
-├── adversarial-ai-coding.sh
+├── pyproject.toml
+├── src/adversarial_ai_coding/
 └── resources/
     ├── AGENTS.template.md   # 互審規範範本(簡單英文撰寫,對各家模型最通用)
     └── prompts/
@@ -209,7 +217,7 @@ your-project/
 │   ├── spec-decision.md             # DUAL_SPEC=1 時記錄選定 owner/reviewer
 │   ├── spec.md          # 規格(含驗收條件、假設與未決問題)
 │   └── plan.md          # 實作計畫(checkbox 任務清單,完成會打勾)
-├── .workflow/           # 不進版控(script 自動放 .gitignore)
+├── .workflow/           # 不進版控(workflow 自動放 .gitignore)
 │   ├── review.md        # B 的審查意見 + A 的逐條回覆
 │   ├── verdict.json     # 裁決:{approved, blockers[], suggestions[]}
 │   ├── suggestions.md   # 歷輪累積的不擋關建議(收尾階段逐條評估)
@@ -239,14 +247,14 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) |
 | 費用回報 | 有(metrics.csv) | 無 | 無 |
 
-- **A 與 B 不能同時是 `codex` 或同時是 `agy`**:兩者都以「最近一次 session」續接,互審會讓工作者續接到審查者的對話,script 直接擋下。
-- `codex exec resume` 沒有 `--sandbox` 旗標,script 改用 `-c 'sandbox_mode="workspace-write"'`。
-- agy 的 `--print-timeout` 預設僅 5 分鐘,script 已調高(工作 60 分、審查 30 分)。
-- 各 CLI 旗標以本機 `--help` 為準(本 script 依 2026-07 版本撰寫)。
+- **A 與 B 不能同時是 `codex` 或同時是 `agy`**:兩者都以「最近一次 session」續接,互審會讓工作者續接到審查者的對話,workflow 直接擋下。
+- `codex exec resume` 沒有 `--sandbox` 旗標,workflow 改用 `-c 'sandbox_mode="workspace-write"'`。
+- agy 的 `--print-timeout` 預設僅 5 分鐘,workflow 已調高(工作 60 分、審查 30 分)。
+- 各 CLI 旗標以本機 `--help` 為準(本 workflow 依 2026-07 版本撰寫)。
 
 ## 受保護測試的逃生口
 
-工作者(A)對驗收測試有異議時,只能把異議寫進 spec 的「假設與未決問題」,不能改測試。若測試**真的**錯了,由人工介入:直接編輯測試檔(人不受 script 限制,下一輪檢查比對的是「工作者動作後」的 diff——但注意人工改動會讓比對基準失真,建議改完後把新內容 commit 並更新 `.workflow/protected-base.sha` 為新的 commit SHA),或從 `.workflow/protected-tests.txt` 移除該檔。
+工作者(A)對驗收測試有異議時,只能把異議寫進 spec 的「假設與未決問題」,不能改測試。若測試**真的**錯了,由人工介入:直接編輯測試檔(人不受 workflow 限制,下一輪檢查比對的是「工作者動作後」的 diff——但注意人工改動會讓比對基準失真,建議改完後把新內容 commit 並更新 `.workflow/protected-base.sha` 為新的 commit SHA),或從 `.workflow/protected-tests.txt` 移除該檔。
 
 ## 安全性注意事項
 
@@ -258,24 +266,23 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 自訂 stage
 
-Stage 流程定義在 `main()` 內,由這些積木組成:`begin_stage`(重置 session)、`work <agent> <指示>`、`review_loop <審查者> <工作者> <範圍> [關卡指令]`、`gate_loop <agent> <關卡指令>`、`commit_work` / `commit_if_dirty`。照現有 stage 的樣式增刪即可。
+Stage 流程定義在 `workflow.run_workflow()` 內,由 `begin_stage`、`work`、`review_loop`、`gate_loop`、`commit_work` / `commit_if_dirty` 等 Python 積木組成。照現有 stage 的樣式增刪即可。
 
 ## 測試
 
 ```bash
-bash tests/helpers.test.sh   # 單元測試,不呼叫任何 AI
+uv run pytest -q   # 單元與整合測試,不呼叫任何 AI
 ```
 
 ### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)
 
 ```bash
-bash tests/e2e/run.sh                    # 完整六 stage(預設 sonnet worker/low effort + codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
-E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關卡,不呼叫任何 AI
+uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
 ```
 
-執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 script 與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。
+執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 Python 套件與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。
 
-**定位:改動 script 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
+**定位:改動 workflow 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
 
 ## 疑難排解
 
@@ -286,11 +293,10 @@ E2E_SETUP_ONLY=1 bash tests/e2e/run.sh   # 只建 fixture repo、親測基線關
 - **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
 - **撞到訂閱用量限額**(`You've hit your session limit`、`You've hit your usage limit`、429):預設會自動等待重試,三個 agent 通用。訊息若寫明等待時間就精準等(支援 `resets 10:50am`、`try again in 90s`、`try again at Jul 14th, 2026 7:23 PM` 三種格式,最後一種即使被換行折斷也能解析),否則指數退避;等待會發 `NOTIFY_CMD` 通知並記錄在 log。
   **若重置時刻比 `RETRY_MAX_RESET_WAIT`(預設 6 小時)還遠**——例如 codex 週配額要等好幾天——則立即放棄並印出重置時刻,不做徒勞的空等;配額回來後重跑即可。`RETRY_ON_LIMIT=0` 可完全關閉重試。非限額的 agent 失敗不會重試,原始輸出攤印在 log 結尾供診斷。
-- **換行問題**:script 必須是 LF;repo 已用 `.gitattributes` 強制 `*.sh eol=lf`。
 
 ## 延伸方向
 
-- **Script 邏輯再複雜就換工具**:[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)(Python/TS)是 `claude -p` 的程式化介面,原生支援 structured output、session 物件、工具核准 callback。
+- **進一步的 agent 整合**:[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)(Python/TS)是 `claude -p` 的程式化介面,原生支援 structured output、session 物件、工具核准 callback。
 - **規格模板**:前兩個 stage 可搭配 [GitHub spec-kit](https://github.com/github/spec-kit) 的 SDD 產物格式。
 - **CI 無人值守**:`HUMAN_GATE=0 OPEN_PR=1` + `NOTIFY_CMD`,人改在 PR 上把關;Claude Code 與 Codex 都有官方 CI 整合。
 

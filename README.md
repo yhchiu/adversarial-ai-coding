@@ -1,6 +1,6 @@
 # adversarial-ai-coding
 
-`adversarial-ai-coding` is a Bash workflow for agentic software development.
+`adversarial-ai-coding` is a Python workflow for agentic software development.
 
 ## Multi-Agent Adversarial Coding Workflow
 
@@ -15,7 +15,7 @@ The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
 ## How It Works
 
-The script drives two agent slots through a staged pipeline: `A` is the worker
+The workflow drives two agent slots through a staged pipeline: `A` is the worker
 agent and `B` is the reviewer agent. They can be different agents:
 
 - `claude` for Claude Code CLI
@@ -37,7 +37,7 @@ flowchart TD
     tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
     task["<b>5 · Implement next task</b><br/>A codes · build gate · protected-test check · commit"]
     more{"Tasks left?"}
-    branch["<b>6 · Full gate + branch review</b><br/>script runs GATE_CMD · B reviews diff ⟳"]
+    branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · B reviews diff ⟳"]
     final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
     fin(["<b>8 · Finish</b><br/>print push / PR commands"])
     abort(["Abort"])
@@ -50,7 +50,7 @@ flowchart TD
     more -- "no" --> branch --> final --> fin
 ```
 
-The ⟳ review loop is one reusable building block. The script, not the AI,
+The ⟳ review loop is one reusable building block. The workflow, not the AI,
 decides when the loop ends:
 
 ```mermaid
@@ -75,19 +75,19 @@ Stage notes:
    maps to one commit.
 4. **Acceptance tests**: adversarial TDD separates the test author from the
    implementer, so the roles swap: B writes the tests and A only reviews them.
-   The test files become protected; the script hard-checks them with
+   The test files become protected; the workflow hard-checks them with
    `git diff` after every later worker action. Red tests are expected here
    (TDD red phase).
 5. **Implement tasks**: one checkbox task per commit keeps review and rollback
    small. The per-task gate is the lightweight `BUILD_GATE_CMD` (compile
    only); acceptance tests may stay red until all tasks are done.
-6. **Full gate + branch review**: the script itself runs `GATE_CMD` — the AI's
+6. **Full gate + branch review**: the workflow itself runs `GATE_CMD` — the AI's
    own "tests pass" claim is never trusted — and acceptance tests must pass
    now. B then reviews the complete branch diff.
 7. **Final review and fixes**: A works through the accumulated
    `.workflow/suggestions.md` items and its own self-review findings, then B
    gives final acceptance.
-8. **Finish**: the script prints `git push` / `gh pr create` commands and run
+8. **Finish**: the workflow prints `git push` / `gh pr create` commands and run
    metrics. `OPEN_PR=1` runs them automatically.
 
 Review verdicts are graded. `verdict.json` is
@@ -98,46 +98,55 @@ be polite.
 
 ## Requirements
 
-- Bash. On Windows, use Git Bash or WSL.
+- Python 3.12 or newer
+- [Astral uv](https://docs.astral.sh/uv/)
 - `git`
-- [`jq`](https://jqlang.github.io/jq/)
 - The AI CLIs you plan to use, already installed and logged in:
   - `claude`
   - `codex`
   - `agy` is optional
 - Any custom agent or wrapper commands you configure through `AGENT_A` or
-  `AGENT_B`, available on `PATH`. Legacy `ENGINE_A` / `ENGINE_B` variables are
-  still accepted.
-- Run the script from the root of the target Git repository.
+  `AGENT_B`, available on `PATH`.
+- Run the workflow from the root of the target Git repository. Bash and `jq`
+  are not required.
 
 ## Quick Start
 
-Run the installed script from the root of the project you want to work on. Keep
-the `resources/` directory beside the script in the `adversarial-ai-coding`
-checkout; the target project does not need a copied script or template.
+Install the locked environment once in the `adversarial-ai-coding` checkout:
+
+```bash
+cd /path/to/adversarial-ai-coding
+uv sync --frozen
+```
+
+Then run it from the root of the target project. `--project` selects the
+workflow's environment without changing the target working directory:
 
 ```bash
 cd /path/to/your-project
-AAC=/path/to/adversarial-ai-coding/adversarial-ai-coding.sh
+AAC_PROJECT=/path/to/adversarial-ai-coding
 ```
+
+When the target is this checkout itself, the shorter form is
+`uv run adversarial-ai-coding task.md`.
 
 Run a task with the default agents, where Claude is the worker and Codex is the
 reviewer:
 
 ```bash
-bash "$AAC" "Add --json output to the CLI"
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding "Add --json output to the CLI"
 ```
 
 You can also write the task in a file:
 
 ```bash
-bash "$AAC" task.md
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
 Swap the worker and reviewer agents:
 
 ```bash
-AGENT_A=codex AGENT_B=claude bash "$AAC" task.md
+AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
 Use custom agent or wrapper commands:
@@ -145,19 +154,19 @@ Use custom agent or wrapper commands:
 ```bash
 AGENT_A=gemini AGENT_A_ARGS='--model gemini-2.5-pro --yolo' \
 AGENT_B=my-review-wrapper AGENT_B_ARGS='--strict' \
-  bash "$AAC" task.md
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
 Enable dual spec mode:
 
 ```bash
-DUAL_SPEC=1 bash "$AAC" task.md
+DUAL_SPEC=1 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
 Print the agent rules template for manual merging into an existing `AGENTS.md`:
 
 ```bash
-bash "$AAC" print-agents
+uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 ```
 
 ## Dual Spec Mode
@@ -192,7 +201,7 @@ and `HUMAN_GATE=1`; unattended runs should leave it disabled.
 
 ## Custom Agent Commands
 
-If `AGENT_A` or `AGENT_B` is not `claude`, `codex`, or `agy`, the script
+If `AGENT_A` or `AGENT_B` is not `claude`, `codex`, or `agy`, the workflow
 treats it as a custom agent command. The command is run with the slot-specific
 args followed by a short prompt-file instruction as the final argument:
 
@@ -249,12 +258,12 @@ Add `--json` output to the CLI.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `AGENT_A` (`ENGINE_A`) | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. `ENGINE_A` is a legacy alias. |
-| `AGENT_B` (`ENGINE_B`) | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. `ENGINE_B` is a legacy alias. |
+| `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. |
+| `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
 | `MODEL_A` | CLI default | Model override for built-in worker slots. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom agents should pass model flags through `AGENT_B_ARGS`. |
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in agent commands, split on whitespace and appended to agent calls. |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` (`ENGINE_A_ARGS` / `ENGINE_B_ARGS`) | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. The `ENGINE_*_ARGS` names are legacy aliases. |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
@@ -270,8 +279,8 @@ Add `--json` output to the CLI.
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
 | `RETRY_MAX_RESET_WAIT` | `21600` | When the message states a reset time farther away than this, abort instead of waiting. |
 | `RESUME_RUN` | empty | Resume an interrupted run: a run id from `.workflow/state/`, or `last` for the newest unfinished run. Completed stages are skipped. See "Resuming an Interrupted Run". |
-| `AGENTS_TEMPLATE` | `resources/AGENTS.template.md` beside the script | Path to the `AGENTS.md` template. |
-| `PROMPTS_DIR` | `resources/prompts` beside the script | Directory for workflow prompt templates. |
+| `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
+| `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
 | `RUNS_DIR` | `.workflow/runs` | Directory for archived workflow run artifacts. |
 | `TOOLS` | git/go build/test/vet allowlist | Claude Code `--allowedTools` value. |
@@ -280,7 +289,7 @@ On Windows, if you want Go race tests in the gate, use:
 
 ```bash
 GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...' \
-  bash "$AAC" task.md
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
 ## Resuming an Interrupted Run
@@ -290,7 +299,7 @@ task, the effective settings, a stage completion ledger, and the remaining
 implementation tasks. When a run aborts, it prints a paste-ready command:
 
 ```bash
-RESUME_RUN=20260710-153012 ./adversarial-ai-coding.sh
+RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
 
 The resumed run skips every completed stage (no AI cost is paid again),
@@ -304,7 +313,7 @@ Engines, models, and most settings may be overridden per attempt. The main
 use case is swapping an agent whose quota ran out:
 
 ```bash
-AGENT_B=agy RESUME_RUN=last ./adversarial-ai-coding.sh
+AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
 
 `SPEC_DIR`, `DUAL_SPEC`, `AUTO_BRANCH`, and `USE_WORKTREE` are immutable
@@ -332,12 +341,13 @@ Notes:
 
 ## Artifacts
 
-The script writes live workflow state under `.workflow/` and archives each run
+The workflow writes live state under `.workflow/` and archives each run
 under `.workflow/runs/<RUN_ID>/` by default.
 
 ```text
 adversarial-ai-coding/
-|-- adversarial-ai-coding.sh
+|-- pyproject.toml
+|-- src/adversarial_ai_coding/
 `-- resources/
     |-- AGENTS.template.md
     `-- prompts/
@@ -399,7 +409,7 @@ test and update `.workflow/protected-base.sha`, or remove the file from
 
 ## Safety Notes
 
-- Deterministic gates are run by the script, not trusted from AI output.
+- Deterministic gates are run by the workflow, not trusted from AI output.
 - `agy` currently uses `--dangerously-skip-permissions`; prefer a worktree or
   container when using it.
 - Branches and worktrees isolate Git state, but they do not isolate the full
@@ -417,30 +427,17 @@ test and update `.workflow/protected-base.sha`, or remove the file from
 
 ## Testing This Repository
 
-Run helper tests. These do not call any AI agent:
+Run the unit and integration suite. It does not call any AI agent:
 
 ```bash
-bash tests/helpers.test.sh
-```
-
-Run the manual E2E fixture setup without calling AI:
-
-```bash
-E2E_SETUP_ONLY=1 bash tests/e2e/run.sh
+uv run pytest -q
 ```
 
 Run the full E2E only when changing core workflow behavior. It calls real AI
 agents and consumes quota:
 
 ```bash
-bash tests/e2e/run.sh
-```
-
-On Windows, if Go cannot initialize its default build cache from Git Bash, set a
-writable cache path:
-
-```bash
-export GOCACHE=/tmp/go-build-aac
+uv run pytest -m e2e -s
 ```
 
 ## Troubleshooting
@@ -465,7 +462,7 @@ and use `NOTIFY_CMD` or PR review for human control.
 ### The per-task quality gate keeps failing
 
 During task implementation, full acceptance tests may still be red. When
-configured, the script uses `BUILD_GATE_CMD` for per-task checks and `GATE_CMD`
+configured, the workflow uses `BUILD_GATE_CMD` for per-task checks and `GATE_CMD`
 after all tasks finish.
 
 ### Reviewer reports corrupted files on Windows
@@ -476,8 +473,8 @@ test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
 
 ### Rate limit or quota errors
 
-By default, the script waits and retries on rate-limit or quota errors, for every
-agent. When the message states how long to wait, the script waits exactly that
+By default, the workflow waits and retries on rate-limit or quota errors, for every
+agent. When the message states how long to wait, the workflow waits exactly that
 long instead of guessing. It understands three shapes:
 
 | Message | Agent | Wait |

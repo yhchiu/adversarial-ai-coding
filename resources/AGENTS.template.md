@@ -35,7 +35,7 @@ All AI participants must follow these rules.
   Never edit, delete, or skip them during implementation.
 - If you believe a test is wrong, record your objection in the
   "Assumptions and Open Questions" section of the spec. Do not touch the test.
-  The script verifies this with git diff and will force a revert.
+  The workflow verifies this with git diff and will force a revert.
 
 ## Spec and plan
 
