@@ -161,6 +161,8 @@ def _jq_raw(value: object) -> str:
     """Render a decoded JSON value like jq -r."""
     if isinstance(value, str):
         return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

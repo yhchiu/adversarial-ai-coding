@@ -248,7 +248,8 @@ def test_claude_worker_non_object_json_matches_bash_jq_failure(
         ({"session_id": 0}, "0"),
         ({"session_id": True}, "true"),
         ({"session_id": "session"}, "session"),
-        ({"session_id": {"part": 1}}, '{"part":1}'),
+        ({"session_id": {"part": 1}}, '{\n  "part": 1\n}'),
+        ({"session_id": [1, 2]}, "[\n  1,\n  2\n]"),
     ],
 )
 def test_claude_worker_session_id_uses_jq_raw_coercion(
@@ -275,8 +276,11 @@ def test_claude_worker_session_id_uses_jq_raw_coercion(
         ({"result": 0}, "0"),
         ({"result": True}, "true"),
         ({"result": "work"}, "work"),
-        ({"result": {"done": [1, 2]}}, '{"done":[1,2]}'),
-        ({"result": [1, 2]}, "[1,2]"),
+        (
+            {"result": {"done": [1, 2], "label": "完成"}},
+            '{\n  "done": [\n    1,\n    2\n  ],\n  "label": "完成"\n}',
+        ),
+        ({"result": [1, 2]}, "[\n  1,\n  2\n]"),
     ],
 )
 def test_claude_worker_result_uses_jq_coalesce_and_raw_coercion(
@@ -451,6 +455,11 @@ def test_claude_reviewer_null_or_false_structured_output_uses_fallback(
         ({"total_cost_usd": 0}, "0"),
         ({"total_cost_usd": True}, "true"),
         ({"total_cost_usd": "0.50"}, "0.50"),
+        (
+            {"total_cost_usd": {"a": 1, "b": [2]}},
+            '{\n  "a": 1,\n  "b": [\n    2\n  ]\n}',
+        ),
+        ({"total_cost_usd": [1, 2]}, "[\n  1,\n  2\n]"),
     ],
 )
 def test_claude_cost_uses_jq_coalesce_and_raw_coercion(
@@ -480,8 +489,8 @@ def test_claude_cost_uses_jq_coalesce_and_raw_coercion(
         ({"result": 0}, "0"),
         ({"result": True}, "true"),
         ({"result": "review"}, "review"),
-        ({"result": {"approved": True}}, '{"approved":true}'),
-        ({"result": ["review"]}, '["review"]'),
+        ({"result": {"approved": True}}, '{\n  "approved": true\n}'),
+        ({"result": ["review"]}, '[\n  "review"\n]'),
     ],
 )
 def test_claude_reviewer_result_uses_jq_coalesce_and_raw_coercion(
