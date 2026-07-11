@@ -17,3 +17,7 @@ dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: real-agent end-to-end; consumes quota; run manually with -m e2e",
+]
