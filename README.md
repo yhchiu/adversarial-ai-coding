@@ -33,9 +33,9 @@ second diagram.
 flowchart TD
     spec["<b>1 · Write spec</b><br/>A writes · B reviews ⟳"]
     gate{"2 · Human approves<br/>the spec?"}
-    plan["<b>3 · Write plan</b><br/>A writes · B reviews ⟳"]
+    plan["<b>3 · Write plan</b><br/>A writes the checkbox task list · B reviews ⟳"]
     tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
-    task["<b>5 · Implement next task</b><br/>A codes · build gate · protected-test check · commit"]
+    task["<b>5 · Implement next task</b><br/>A codes · build gate (compile only) · protected-test check · commit"]
     more{"Tasks left?"}
     branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · B reviews diff ⟳"]
     final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
@@ -48,6 +48,7 @@ flowchart TD
     plan --> tests --> task --> more
     more -- "yes" --> task
     more -- "no" --> branch --> final --> fin
+    tests -. "run by the full gate" .-> branch
 ```
 
 The ⟳ review loop is one reusable building block. The workflow, not the AI,
@@ -61,6 +62,12 @@ flowchart LR
     fix --> dgate["deterministic gate<br/>(if configured)"] --> review
     verdict -. "MAX_ROUNDS exhausted" .-> halt(["abort + notify human"])
 ```
+
+A deterministic gate is a shell command the workflow runs itself instead of
+trusting the AI's "tests pass" claims. There are two: `GATE_CMD` is the full
+gate (build, vet, and every test, including the acceptance tests), and
+`BUILD_GATE_CMD` is the lightweight per-task gate (compile only). Stages
+without a configured gate command skip that step.
 
 Stage notes:
 
@@ -77,7 +84,9 @@ Stage notes:
    implementer, so the roles swap: B writes the tests and A only reviews them.
    The test files become protected; the workflow hard-checks them with
    `git diff` after every later worker action. Red tests are expected here
-   (TDD red phase).
+   (TDD red phase). See
+   [Protected Acceptance Tests](#protected-acceptance-tests) for details and
+   the escape hatch when a protected test is wrong.
 5. **Implement tasks**: one checkbox task per commit keeps review and rollback
    small. The per-task gate is the lightweight `BUILD_GATE_CMD` (compile
    only); acceptance tests may stay red until all tasks are done.
