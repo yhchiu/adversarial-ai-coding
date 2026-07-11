@@ -1,9 +1,63 @@
 """Ports helpers.test.sh:551-574 (preflight) and 1003-1040 (CLI exits)."""
 
+import io
+import os
+import subprocess
+import sys
+
 import pytest
 
 from adversarial_ai_coding import cli
 from adversarial_ai_coding.prompts import AGENTS_MARKER
+
+
+def test_configure_stdio_replaces_cp950_with_utf8(monkeypatch):
+    stdout_bytes = io.BytesIO()
+    stderr_bytes = io.BytesIO()
+    stdout = io.TextIOWrapper(stdout_bytes, encoding="cp950", errors="strict")
+    stderr = io.TextIOWrapper(stderr_bytes, encoding="cp950", errors="strict")
+    monkeypatch.setattr(cli.sys, "stdout", stdout)
+    monkeypatch.setattr(cli.sys, "stderr", stderr)
+
+    cli._configure_stdio()
+
+    assert stdout.encoding.lower().replace("-", "") == "utf8"
+    assert stderr.encoding.lower().replace("-", "") == "utf8"
+    print("codex private-use: \uf4c1")
+    stdout.flush()
+    assert "\uf4c1" in stdout_bytes.getvalue().decode("utf-8")
+
+
+def test_main_entry_configures_stdio_before_main(monkeypatch):
+    order = []
+    monkeypatch.setattr(cli, "_configure_stdio", lambda: order.append("stdio"))
+    monkeypatch.setattr(cli, "main", lambda: order.append("main") or 0)
+    with pytest.raises(SystemExit) as exc:
+        cli.main_entry()
+    assert exc.value.code == 0
+    assert order == ["stdio", "main"]
+
+
+def test_main_entry_emits_agent_unicode_when_parent_encoding_is_cp950(tmp_path):
+    template = tmp_path / "AGENTS.template.md"
+    template.write_text(f"{AGENTS_MARKER}\ncodex private-use: \uf4c1\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    env["PYTHONIOENCODING"] = "cp950"
+    env["AGENTS_TEMPLATE"] = str(template)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from adversarial_ai_coding.cli import main_entry; main_entry()",
+            "print-agents",
+        ],
+        capture_output=True,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert "\uf4c1" in proc.stdout.decode("utf-8")
 
 
 def test_no_args_prints_usage_rc1(capsys):

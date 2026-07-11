@@ -47,6 +47,15 @@ USAGE = """Usage:adversarial-ai-coding "task description"
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit"""
 
 
+def _configure_stdio() -> None:
+    """Make console and redirected output safe for arbitrary agent Unicode."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def _print_resume_hint(
     run_id: str,
     use_worktree: bool,
@@ -280,4 +289,5 @@ def _abort_message(
 
 
 def main_entry() -> None:
+    _configure_stdio()
     sys.exit(main())
