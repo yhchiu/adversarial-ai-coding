@@ -56,3 +56,46 @@ def prompt_file_instruction(artifact_path: str) -> str:
         "Read the full workflow prompt from this repository file "
         f"and follow it exactly: {artifact_path}\n"
     )
+
+
+AGENTS_MARKER = "<!-- adversarial-ai-coding:begin -->"
+
+
+def default_agents_template(env: Mapping[str, str]) -> Path:
+    if env.get("AGENTS_TEMPLATE"):
+        return Path(env["AGENTS_TEMPLATE"])
+    resources = Path(env.get("RESOURCES_DIR") or REPO_ROOT / "resources")
+    return resources / "AGENTS.template.md"
+
+
+def write_agents_section(template: Path) -> str:
+    if not template.is_file():
+        raise PromptTemplateError(
+            f"(AGENTS.md template not found:{template}; keep "
+            "resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)"
+        )
+    return template.read_text(encoding="utf-8")
+
+
+def bootstrap_agents_md(cwd: Path, template: Path, echo, echo_err) -> None:
+    agents = cwd / "AGENTS.md"
+    if agents.is_file():
+        if AGENTS_MARKER not in agents.read_text(encoding="utf-8"):
+            echo_err(
+                "(note: AGENTS.md exists but does not include "
+                "adversarial-ai-coding rules; run \"print-agents\" and "
+                "merge them manually)"
+            )
+    else:
+        try:
+            agents.write_text(write_agents_section(template), encoding="utf-8")
+        except PromptTemplateError as exc:
+            echo_err(str(exc))
+            return
+        echo("Created AGENTS.md with adversarial-ai-coding cross-review rules.")
+    claude = cwd / "CLAUDE.md"
+    if not claude.is_file():
+        claude.write_text(
+            "Follow the adversarial-ai-coding cross-review rules in AGENTS.md.\n",
+            encoding="utf-8",
+        )
