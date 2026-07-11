@@ -13,7 +13,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .config import Settings
 
@@ -260,6 +260,132 @@ class RunState:
     def is_completed(self) -> bool:
         return (self.state_dir / "completed").is_file()
 
+    def _read_ledger(self) -> list[str]:
+        path = self.state_dir / "ledger.json"
+        if not path.is_file():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise RunStateError(
+                f"!! {path} is not valid JSON; the state may be damaged. "
+                "Start a fresh run."
+            ) from None
+        if not isinstance(payload, dict) or payload.get("schema") != 1:
+            raise RunStateError(
+                f"!! {path}: unknown ledger schema; start a fresh run."
+            )
+        stages = payload.get("stages", [])
+        return [str(stage) for stage in stages]
+
     def _write_ledger(self, stages: list[str]) -> None:
         payload = {"schema": 1, "stages": stages}
         _atomic_write(self.state_dir / "ledger.json", json.dumps(payload) + "\n")
+
+    def stage_done(self, name: str) -> bool:
+        return name in self._read_ledger()
+
+    def completed_stages(self) -> list[str]:
+        return self._read_ledger()
+
+    def record_stage(self, name: str, head_sha: str) -> None:
+        stages = self._read_ledger()
+        stages.append(name)
+        self._write_ledger(stages)
+        _atomic_write(self.state_dir / "last-head", head_sha + "\n")
+
+    def read_last_head(self) -> str | None:
+        path = self.state_dir / "last-head"
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8").strip()
+
+
+def restore_or_record_acceptance_base(
+    state: RunState | None, head_sha: Callable[[], str]
+) -> str:
+    # Without persistence, an interrupt between the acceptance commit and the
+    # protected-list write would recompute an empty diff on resume and silently
+    # disable test protection (C4, sh:832-849).
+    if state is None:
+        return head_sha()
+    path = state.state_dir / "acceptance-test-base"
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    base = head_sha()
+    _atomic_write(path, base + "\n")
+    return base
+
+
+def plan_tasks(plan_path: Path) -> list[str]:
+    if not plan_path.is_file():
+        return []
+    tasks = []
+    for line in plan_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("- [ ] "):
+            tasks.append(line[len("- [ ] ") :])
+    return tasks
+
+
+def _queue_path(state: RunState) -> Path:
+    return state.state_dir / "tasks-remaining"
+
+
+def ensure_task_queue(state: RunState, plan_path: Path) -> None:
+    # The script-held queue is control flow; plan.md checkboxes are UI only.
+    # An existing EMPTY queue means every task already committed (C2).
+    queue = _queue_path(state)
+    if queue.is_file():
+        return
+    tasks = plan_tasks(plan_path)
+    if not tasks:
+        import sys
+
+        print(
+            '(warning: plan.md has no "- [ ] " task list; falling back to '
+            "one whole-plan implementation task)",
+            file=sys.stderr,
+        )
+        tasks = [f"Complete the full implementation described in {plan_path}"]
+    _atomic_write(queue, "".join(task + "\n" for task in tasks))
+
+
+def remaining_tasks(state: RunState) -> list[str]:
+    queue = _queue_path(state)
+    if not queue.is_file():
+        return []
+    return [line for line in queue.read_text(encoding="utf-8").splitlines() if line]
+
+
+def pop_task_queue(state: RunState) -> None:
+    tasks = remaining_tasks(state)
+    _atomic_write(_queue_path(state), "".join(task + "\n" for task in tasks[1:]))
+
+
+def mark_plan_task_done(plan_path: Path, task: str) -> None:
+    if not plan_path.is_file():
+        return
+    lines = plan_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    target = f"- [ ] {task}"
+    for index, line in enumerate(lines):
+        if line.rstrip("\n") == target:
+            lines[index] = line.replace("- [ ] ", "- [x] ", 1)
+            break
+    _atomic_write(plan_path, "".join(lines))
+
+
+def init_live_state(wf: Path, *, resume: bool) -> None:
+    # Self-healing transients are always cleared; a resume must keep durable
+    # files later stages depend on, otherwise resuming deletes its own inputs
+    # (C3, sh:667-687).
+    wf.mkdir(parents=True, exist_ok=True)
+    files = ["review.md", "verdict.json", "last-agent-output.txt", "pr-body.md"]
+    if not resume:
+        files += [
+            "suggestions.md",
+            "protected-tests.txt",
+            "protected-base.sha",
+            "spec-merge-request.md",
+        ]
+    for name in files:
+        (wf / name).unlink(missing_ok=True)
