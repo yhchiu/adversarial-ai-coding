@@ -299,6 +299,53 @@ class RunArchive:
             ],
         )
 
+    def archive_git_state(
+        self,
+        role: str = "worker",
+        agent: str = "workflow",
+        slug: str = "git-state",
+        stage: str = "startup",
+        round: int = 0,
+        cwd: Path | None = None,
+    ) -> None:
+        import subprocess
+
+        def git(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=check,
+            )
+
+        if git("rev-parse", "--is-inside-work-tree").returncode != 0:
+            return
+
+        status_art = self.art_path(f"{slug}-git-status.txt")
+        status_art.write_text(
+            git("status", "--porcelain").stdout, encoding="utf-8"
+        )
+        self.write_meta(status_art, role, agent, stage, round)
+
+        diff_art = self.art_path(f"{slug}-git-diff.patch")
+        chunks = [
+            "# git diff --binary HEAD --\n",
+            git("diff", "--binary", "HEAD", "--").stdout,
+            "\n",
+            "# untracked files\n",
+        ]
+        listing = git("ls-files", "--others", "--exclude-standard", "-z").stdout
+        for name in filter(None, listing.split("\0")):
+            chunks += [
+                f"\n## {name}\n",
+                git("diff", "--no-index", "--binary", "--", os.devnull, name).stdout,
+            ]
+        diff_art.write_text("".join(chunks), encoding="utf-8")
+        self.write_meta(diff_art, role, agent, stage, round)
+
 
 def establish_run_archive(
     runs_dir: Path, run_id: str, settings: Settings
