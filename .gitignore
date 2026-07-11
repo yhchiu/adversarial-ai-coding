@@ -4,3 +4,6 @@
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Local development worktrees
+.worktrees/
