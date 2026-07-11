@@ -136,6 +136,7 @@ Python replacement or an `intentionally-dropped(...)` rationale.
 | jq is not a runtime requirement | Verdict and snapshot JSON are parsed with the standard library, removing an otherwise unnecessary executable dependency. | `tests/test_cli.py::test_startup_does_not_require_jq` |
 | `setup_workspace` returns the selected path instead of changing process directory | The CLI owns the single `chdir`, keeping git helpers explicit and testable. | `tests/test_gitops.py::test_setup_workspace_branch_mode`, `::test_setup_workspace_worktree_mode`, `::test_setup_workspace_no_branch_mode` |
 | Task-file paths use `Path.resolve` | This is the cross-platform replacement for the bash `abs_path` helper. | `tests/test_cli.py::test_task_file_argument_is_read` |
+| An optional second human gate (`HUMAN_GATE_PLAN`) guards the plan | Python-only addition, not a port gap: bash gated only the spec, but `plan.md` is the implementation task queue, so it is the last cheap place to intervene. Off by default, so the bash-equivalent flow is unchanged. | `tests/test_stageflow.py::test_plan_gate_approval_and_abort`, `tests/test_resume_integration.py::test_plan_gate_asks_and_commits_the_human_edit` |
 
 ## Acceptance record
 

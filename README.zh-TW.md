@@ -22,6 +22,7 @@ flowchart TD
     spec["<b>1 · 訂規格</b><br/>A 作 · B 審 ⟳"]
     gate{"2 · 人工核准 spec?"}
     plan["<b>3 · 規劃實作計畫</b><br/>A 寫 checkbox 任務清單 · B 審 ⟳"]
+    plangate{"人工核准 plan?<br/>(選用:HUMAN_GATE_PLAN=1)"}
     tests["<b>4 · 撰寫驗收測試</b>(角色互換)<br/>B 作 · A 審 ⟳"]
     task["<b>5 · 實作下一個任務</b><br/>A 實作 · 輕量編譯關卡 · 受保護測試檢查 · commit"]
     more{"還有任務?"}
@@ -33,7 +34,10 @@ flowchart TD
     spec --> gate
     gate -- "y" --> plan
     gate -- "其他輸入" --> abort
-    plan --> tests --> task --> more
+    plan --> plangate
+    plangate -- "y(或未啟用)" --> tests
+    plangate -- "其他輸入" --> abort
+    tests --> task --> more
     more -- "是" --> task
     more -- "否" --> branch --> final --> fin
     tests -. "由完整關卡執行" .-> branch
@@ -56,7 +60,7 @@ flowchart LR
 
 1. **訂規格**:`spec.md` 必含「假設與未決問題」——headless 下 AI 不能問人,禁止默默腦補。`DUAL_SPEC=1` 時 A/B 先各寫一份獨立候選 spec,見[雙 spec 模式](#雙-spec-模式)。
 2. **人工核准**:最高槓桿的人工檢查點——人核准 spec(可先直接編輯,改動會一併 commit)後,才開始花大錢實作。無人值守用 `HUMAN_GATE=0` 跳過。
-3. **規劃實作計畫**:`plan.md` 必須是「- [ ] 」checkbox 任務清單,一個任務對應一個 commit。
+3. **規劃實作計畫**:`plan.md` 必須是「- [ ] 」checkbox 任務清單,一個任務對應一個 commit。`HUMAN_GATE_PLAN=1` 可在此加第二個人工檢查點:AI 互審後、commit 之前暫停——plan 就是後續實作的任務佇列,這是開始燒錢前最後一個便宜的介入點。預設關閉;與 spec gate 一樣可先直接編輯 `plan.md`,改動會一併 commit。
 4. **撰寫驗收測試**:對抗式 TDD 讓出題者與答題者分離,所以角色互換:B 寫測試、A 只負責審。測試檔隨後受保護,之後每次工作者動作後 workflow 都用 `git diff` 硬性檢查;此階段紅燈是預期的(TDD red phase)。詳細機制與「測試真的錯了怎麼辦」見[受保護測試的逃生口](#受保護測試的逃生口)。
 5. **逐任務實作**:一個 checkbox 任務一個 commit,審查與回退都容易。逐任務只跑輕量的 `BUILD_GATE_CMD`(只驗編譯);所有任務完成前,驗收測試允許紅燈。
 6. **完整關卡 + 整體審查**:workflow 親自跑 `GATE_CMD`,此時驗收測試必須全綠;接著 B 審整條 branch 的完整 diff。
@@ -165,6 +169,7 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
+| `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |
 | `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈) |
@@ -314,7 +319,7 @@ uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + co
 
 - **`(B 未產出 verdict.json,視為未通過)`**:審查者 agent 失敗或沒照規範寫檔,看 `.workflow/logs/`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
 - **卡在權限詢問**:headless 下沒人能按「允許」。Claude Code 需要的指令加進 `TOOLS`;codex 確認 sandbox 模式;agy 確認旗標。
-- **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty;在 CI 等無人環境設 `HUMAN_GATE=0`,並用 `NOTIFY_CMD` 接手把關。
+- **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty,`HUMAN_GATE_PLAN=1` 也是(這個在啟動時就會擋下,不會白燒 AI 額度);在 CI 等無人環境設 `HUMAN_GATE=0`(並讓 `HUMAN_GATE_PLAN` 維持 `0`),並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
 - **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
 - **撞到訂閱用量限額**(`You've hit your session limit`、`You've hit your usage limit`、429):預設會自動等待重試,三個 agent 通用。訊息若寫明等待時間就精準等(支援 `resets 10:50am`、`try again in 90s`、`try again at Jul 14th, 2026 7:23 PM`、只有時刻的 `try again at 12:50 AM` 四種格式,即使被換行折斷也能解析),否則指數退避;等待會發 `NOTIFY_CMD` 通知並記錄在 log。

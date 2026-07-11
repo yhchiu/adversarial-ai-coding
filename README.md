@@ -34,6 +34,7 @@ flowchart TD
     spec["<b>1 · Write spec</b><br/>A writes · B reviews ⟳"]
     gate{"2 · Human approves<br/>the spec?"}
     plan["<b>3 · Write plan</b><br/>A writes the checkbox task list · B reviews ⟳"]
+    plangate{"Human approves the plan?<br/>(optional: HUMAN_GATE_PLAN=1)"}
     tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
     task["<b>5 · Implement next task</b><br/>A codes · build gate (compile only) · protected-test check · commit"]
     more{"Tasks left?"}
@@ -45,7 +46,10 @@ flowchart TD
     spec --> gate
     gate -- "y" --> plan
     gate -- "anything else" --> abort
-    plan --> tests --> task --> more
+    plan --> plangate
+    plangate -- "y (or gate disabled)" --> tests
+    plangate -- "anything else" --> abort
+    tests --> task --> more
     more -- "yes" --> task
     more -- "no" --> branch --> final --> fin
     tests -. "run by the full gate" .-> branch
@@ -79,7 +83,11 @@ Stage notes:
    into many bad changes, so a human approves the spec (and may edit it first)
    before costly implementation starts. `HUMAN_GATE=0` skips this gate.
 3. **Write plan**: `plan.md` must be a `- [ ]` checkbox task list. Each task
-   maps to one commit.
+   maps to one commit. `HUMAN_GATE_PLAN=1` adds a second human checkpoint
+   here, after the review and before the plan is committed: the plan is the
+   task queue, so it is the last cheap place to intervene. Off by default;
+   like the spec gate, you may edit `plan.md` first and your edits are
+   committed with it.
 4. **Acceptance tests**: adversarial TDD separates the test author from the
    implementer, so the roles swap: B writes the tests and A only reviews them.
    The test files become protected; the workflow hard-checks them with
@@ -275,6 +283,7 @@ Add `--json` output to the CLI.
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
+| `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
 | `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`, npm projects with a `test` script use `npm test`, Cargo projects use `cargo test`, and projects without a detected gate skip deterministic gates unless you set it. |
 | `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. Go projects use `go build ./...`, Cargo projects use `cargo build`, and projects without a detected build gate skip this per-task gate unless you set it. |
@@ -465,8 +474,10 @@ its permission flags and isolation.
 
 ### No interactive terminal is available for approval
 
-`HUMAN_GATE=1` requires a TTY. In unattended environments, set `HUMAN_GATE=0`
-and use `NOTIFY_CMD` or PR review for human control.
+`HUMAN_GATE=1` requires a TTY, and so does `HUMAN_GATE_PLAN=1` (which is
+checked at startup, before any AI call). In unattended environments, set
+`HUMAN_GATE=0` (and leave `HUMAN_GATE_PLAN` at `0`) and use `NOTIFY_CMD` or PR
+review for human control.
 
 ### The per-task quality gate keeps failing
 
