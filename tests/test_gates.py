@@ -5,7 +5,12 @@ import json
 import pytest
 
 from adversarial_ai_coding.config import WorkflowAbort
-from adversarial_ai_coding.gates import detect_build_gate, detect_gate, gate_loop
+from adversarial_ai_coding.gates import (
+    detect_build_gate,
+    detect_gate,
+    gate_loop,
+    run_shell,
+)
 from adversarial_ai_coding.prompts import default_prompts_dir
 
 PROMPTS = default_prompts_dir({})
@@ -110,3 +115,9 @@ def test_gate_loop_output_tail_truncated(tmp_path):
     prompt = calls["work"][0]
     assert "line399" in prompt
     assert "line100" not in prompt
+
+
+def test_run_shell_uses_platform_shell(tmp_path):
+    rc, output = run_shell("exit 0", tmp_path)
+    assert rc == 0
+    assert output == ""

@@ -73,6 +73,23 @@ def test_metrics_summary_missing_file_is_empty(tmp_path):
     assert metrics_summary(tmp_path / "absent.csv") == ""
 
 
+def test_metrics_summary_ignores_short_rows_and_keeps_first_seen_order(tmp_path):
+    csv = tmp_path / "metrics.csv"
+    _write_metrics(
+        csv,
+        [
+            ["run1", "stage-b", "worker", "claude", 1, 2, 0, "", "", "t"],
+            ["run1", "stage-a", "worker", "claude", 1, 3, 0, "", "", "t"],
+        ],
+    )
+    with csv.open("a", encoding="utf-8") as metrics:
+        metrics.write("truncated,row\n")
+    lines = metrics_summary(csv).splitlines()
+    assert "stage-b" in lines[0]
+    assert "stage-a" in lines[1]
+    assert len(lines) == 2
+
+
 def test_csv_row_rejects_bare_string():
     with pytest.raises(TypeError):
         csv_row("abc")

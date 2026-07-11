@@ -37,6 +37,25 @@ def test_not_a_git_repo_blocked(tmp_path, monkeypatch, capsys):
     assert "root of the target git repository" in capsys.readouterr().err
 
 
+def test_startup_does_not_require_jq(new_repo, monkeypatch):
+    monkeypatch.chdir(new_repo)
+    looked_up = []
+
+    def fake_which(name):
+        looked_up.append(name)
+        return None if name == "jq" else "C:/fake/" + name
+
+    monkeypatch.setattr(cli.shutil, "which", fake_which)
+    monkeypatch.setattr(cli, "run_workflow", lambda ctx, task: None)
+    rc = cli.main(
+        ["task"],
+        {"AGENT_A": "sh", "AGENT_B": "pwd", "AUTO_BRANCH": "0"},
+        stdin_isatty=False,
+    )
+    assert rc == 0
+    assert "jq" not in looked_up
+
+
 def test_same_agent_blocked_without_branch_side_effect(
     new_repo, monkeypatch, capsys
 ):

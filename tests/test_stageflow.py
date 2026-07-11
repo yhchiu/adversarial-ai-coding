@@ -116,3 +116,9 @@ def test_set_spec_roles_from_slot(make_ctx):
     assert ctx.spec_roles.reviewer_agent == "claude"
     assert ctx.spec_roles.owner_slot == "B"
     assert ctx.spec_roles.reviewer_slot == "A"
+
+
+def test_default_ask_rejects_noninteractive_stdin(monkeypatch):
+    monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(WorkflowAbort, match="No interactive terminal"):
+        wf_mod._default_ask("approve?")

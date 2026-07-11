@@ -142,6 +142,22 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
     assert sink and sink[-1].strip() == "custom agent ran"
 
 
+def test_generic_worker_resolves_argv0_with_shutil_which(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(agents.shutil, "which", lambda name: "C:/resolved/fake.cmd")
+    monkeypatch.setattr(
+        agents,
+        "_run_streaming",
+        lambda argv, io: (calls.append(argv), (0, "ok"))[1],
+    )
+    settings = Settings.from_env(
+        {"AGENT_A": "fake", "AGENT_B": "codex"}, run_id="r"
+    )
+    io, _ = make_io(tmp_path)
+    run_worker("fake", "prompt", settings, AgentSession(), io)
+    assert calls[0][0] == "C:/resolved/fake.cmd"
+
+
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
     payload = json.dumps(
         {"session_id": "sess-1", "total_cost_usd": 0.42, "result": "did the work"}
