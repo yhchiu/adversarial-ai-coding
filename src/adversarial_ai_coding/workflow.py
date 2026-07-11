@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +23,25 @@ from .runstate import RunState
 
 def _print_err(text: str) -> None:
     print(text, file=sys.stderr)
+
+
+def _default_ask(prompt: str) -> str:
+    # Divergence: bash read /dev/tty; the port supports interactive stdin only.
+    if not sys.stdin.isatty():
+        raise WorkflowAbort(
+            "!! No interactive terminal is available for approval. Run from an "
+            "interactive terminal, or set HUMAN_GATE=0 to skip this gate (not "
+            "recommended)."
+        )
+    return input(prompt)
+
+
+@dataclass
+class SpecRoles:
+    owner_slot: str = "A"
+    reviewer_slot: str = "B"
+    owner_agent: str = ""
+    reviewer_agent: str = ""
 
 
 @dataclass
@@ -43,6 +62,15 @@ class WorkflowContext:
     build_gate_cmd: str = ""
     echo: Callable[[str], None] = print
     echo_err: Callable[[str], None] = _print_err
+    spec_roles: SpecRoles = field(default_factory=SpecRoles)
+    dual_spec_decision: str = ""
+    ask: Callable[[str], str] = _default_ask
+    run_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.spec_roles.owner_agent:
+            self.spec_roles.owner_agent = self.settings.agent_a
+            self.spec_roles.reviewer_agent = self.settings.agent_b
 
     @property
     def agent_out(self) -> Path:
@@ -215,3 +243,101 @@ def check_protected(ctx: WorkflowContext, agent: str) -> None:
             work(ctx, agent, prompt)
         finally:
             ctx.checking_protected = False
+
+
+def set_spec_roles_from_slot(ctx: WorkflowContext, slot: str) -> None:
+    reviewer = "B" if slot == "A" else "A"
+    ctx.spec_roles = SpecRoles(
+        owner_slot=slot,
+        reviewer_slot=reviewer,
+        owner_agent=(ctx.settings.agent_a if slot == "A" else ctx.settings.agent_b),
+        reviewer_agent=(
+            ctx.settings.agent_a if reviewer == "A" else ctx.settings.agent_b
+        ),
+    )
+
+
+def begin_stage(ctx: WorkflowContext, name: str, *artifacts: Path) -> bool:
+    if ctx.state is not None and ctx.state.stage_done(name):
+        for artifact in artifacts:
+            if not artifact.exists():
+                raise WorkflowAbort(
+                    f"!! Stage {name} is recorded complete but its artifact "
+                    f"{artifact} is missing.\n   Restore it from the run archive "
+                    f"under {ctx.archive.run_dir.parent}, or delete "
+                    f"{ctx.state.state_dir} to start over."
+                )
+        ctx.log(f"== skip [{name}] (already completed in run {ctx.run_id})")
+        return False
+    ctx.cur_stage = name
+    ctx.session.worker_session = ""
+    ctx.cur_round = 1
+    ctx.archive.log_section(
+        "stage begin",
+        "workflow",
+        "workflow",
+        ctx.cur_stage,
+        ctx.cur_round,
+        echo=ctx.echo,
+    )
+    ctx.log(f"\n================ [{name}] ================")
+    return True
+
+
+def end_stage(ctx: WorkflowContext) -> None:
+    if ctx.state is None:
+        return
+    from .gitops import head_sha
+
+    ctx.state.record_stage(ctx.cur_stage, head_sha(ctx.workspace))
+
+
+def commit_work(ctx: WorkflowContext, agent: str, description: str) -> None:
+    from .gitops import ensure_committed
+
+    ctx.archive.log_section(
+        "commit", "worker", agent, ctx.cur_stage, ctx.cur_round, echo=ctx.echo
+    )
+    prompt = render_prompt(
+        ctx.prompts_dir, "commit-approved-work", {"DESCRIPTION": description}
+    )
+    work(ctx, agent, prompt)
+    ensure_committed(ctx.workspace, ctx.cur_stage, ctx.echo_err)
+
+
+def commit_if_dirty(ctx: WorkflowContext, agent: str, description: str) -> None:
+    from .gitops import status_porcelain
+
+    if not status_porcelain(ctx.workspace):
+        return
+    commit_work(ctx, agent, description)
+
+
+def human_gate_spec(ctx: WorkflowContext) -> None:
+    if not ctx.settings.human_gate:
+        return
+    ctx.archive.log_section(
+        "human gate",
+        "workflow",
+        "workflow",
+        ctx.cur_stage,
+        ctx.cur_round,
+        echo=ctx.echo,
+    )
+    ctx.notify(
+        f"adversarial-ai-coding: spec awaits human approval "
+        f"({ctx.spec_dir / 'spec.md'})"
+    )
+    ctx.echo("")
+    ctx.echo(
+        f"### Human checkpoint: review {ctx.spec_dir / 'spec.md'}, especially "
+        "the Assumptions and Open Questions section."
+    )
+    ctx.echo(
+        "### You may edit the file before continuing; your edits will be "
+        "committed with the spec."
+    )
+    answer = ctx.ask("Enter y to approve and continue; anything else aborts:")
+    if answer not in ("y", "Y"):
+        raise WorkflowAbort("Aborted: spec was not approved.")
+    ctx.log("Spec approved by human")
