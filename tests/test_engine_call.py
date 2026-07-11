@@ -27,10 +27,11 @@ class Stub:
         return EngineResult(1, self.stub_text)
 
 
-def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2"):
+def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2", notes=None):
     engine_out = tmp_path / "engine-out.txt"
     stub = Stub(engine_out, stub_text)
-    slept, archived, notes = [], [], []
+    slept, archived = [], []
+    notes = [] if notes is None else notes
     events = RetryEvents(
         archive_attempt=lambda attempt, rc: archived.append((attempt, rc)),
         log_retry=lambda msg: notes.append(msg),
@@ -81,12 +82,69 @@ def test_reset_beyond_ceiling_aborts_without_sleeping(tmp_path):
     assert slept == []
 
 
+def test_reset_beyond_ceiling_logs_and_notifies_with_local_eta(tmp_path):
+    far = "You've hit your usage limit. try again at Jul 20, 2026 9:00 AM."
+    notes = []
+
+    run(tmp_path, far, notes=notes)
+
+    assert notes == [
+        "!! Quota resets in 240h 0m (about 2026-07-20 09:00), beyond "
+        "RETRY_MAX_RESET_WAIT=21600s. Not waiting; rerun after the reset.",
+        "adversarial-ai-coding: quota exhausted until 2026-07-20 09:00; "
+        "run aborted",
+    ]
+
+
 def test_reset_within_ceiling_waits_and_retries(tmp_path):
     near = "You've hit your usage limit. try again at Jul 10, 2026 10:00 AM."
     result, stub, slept, _ = run(tmp_path, near)
     assert result.rc == QUOTA_ABORT_RC
     assert stub.calls == 3
     assert slept == [3600 + 30, 3600 + 30]
+
+
+def test_retry_logs_and_notifies_with_local_eta(tmp_path):
+    near = "You've hit your usage limit. try again at Jul 10, 2026 10:00 AM."
+    notes = []
+
+    run(tmp_path, near, retry_max="1", notes=notes)
+
+    assert notes[:2] == [
+        "== Rate limit hit; waiting 60 minutes, about until 10:00, before retry 1/1 ==",
+        "adversarial-ai-coding: rate limit hit; retry around 10:00 (attempt 1)",
+    ]
+
+
+def test_retry_decision_reads_injected_clock_once(tmp_path):
+    engine_out = tmp_path / "engine-out.txt"
+    stub = Stub(engine_out, "rate limit but no reset info")
+    current_times = iter([NOW, NOW + 3600])
+    clock_calls = []
+    notes = []
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=notes.append,
+        notify=notes.append,
+        sleep=lambda seconds: None,
+    )
+    settings = Settings.from_env(
+        {"RETRY_BASE_WAIT": "60", "RETRY_MAX": "1"}, run_id="r"
+    )
+
+    engine_call(
+        stub,
+        engine_out=engine_out,
+        settings=settings,
+        events=events,
+        now=lambda: (clock_calls.append(True), next(current_times))[1],
+    )
+
+    assert len(clock_calls) == 1
+    assert notes[0] == (
+        "== Rate limit hit; waiting 1 minutes, about until 09:01, "
+        "before retry 1/1 =="
+    )
 
 
 def test_exponential_backoff_when_unparseable(tmp_path):

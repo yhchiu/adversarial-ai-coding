@@ -187,24 +187,34 @@ def engine_call(
                 f"!! Rate limit did not clear after {settings.retry_max} retries; giving up."
             )
             return EngineResult(QUOTA_ABORT_RC, result.text)
-        wait = parse_reset_wait(engine_out, now() if now else None)
+        current_epoch = now() if now else int(datetime.now().timestamp())
+        wait = parse_reset_wait(engine_out, current_epoch)
         if wait is not None and wait > settings.retry_max_reset_wait:
             # The message told us exactly when the quota returns and it is far
             # away. Backing off would burn hours of sleep and still fail (sh:1149-1155).
+            eta = datetime.fromtimestamp(current_epoch + wait).strftime(
+                "%Y-%m-%d %H:%M"
+            )
             events.log_retry(
-                f"!! Quota resets in {human_duration(wait)}, beyond "
+                f"!! Quota resets in {human_duration(wait)} (about {eta}), beyond "
                 f"RETRY_MAX_RESET_WAIT={settings.retry_max_reset_wait}s. "
                 "Not waiting; rerun after the reset."
             )
-            events.notify("adversarial-ai-coding: quota exhausted; run aborted")
+            events.notify(
+                f"adversarial-ai-coding: quota exhausted until {eta}; run aborted"
+            )
             return EngineResult(QUOTA_ABORT_RC, result.text)
         n += 1
         if wait is None:
             wait = min(settings.retry_base_wait * (1 << (n - 1)), settings.retry_max_wait)
+        eta = datetime.fromtimestamp(current_epoch + wait).strftime("%H:%M")
         events.log_retry(
-            f"== Rate limit hit; waiting {wait // 60} minutes before retry "
+            f"== Rate limit hit; waiting {wait // 60} minutes, about until {eta}, "
+            "before retry "
             f"{n}/{settings.retry_max} =="
         )
-        events.notify(f"adversarial-ai-coding: rate limit hit; retry attempt {n}")
+        events.notify(
+            f"adversarial-ai-coding: rate limit hit; retry around {eta} (attempt {n})"
+        )
         events.sleep(wait)
         attempt_no += 1

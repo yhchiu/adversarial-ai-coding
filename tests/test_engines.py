@@ -209,6 +209,90 @@ def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path)
     assert session.worker_session == "keep-me"
 
 
+def test_claude_worker_top_level_null_matches_bash(monkeypatch, tmp_path):
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "null"))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(worker_session="old-session", last_cost="old-cost")
+
+    result = run_worker("claude", "p", s, session, io)
+
+    assert result == EngineResult(rc=0, text="")
+    assert session == EngineSession(worker_session="null", last_cost="")
+    assert io.engine_out.read_text(encoding="utf-8") == "null\n"
+
+
+@pytest.mark.parametrize("payload", [[], "text", 0, True])
+def test_claude_worker_non_object_json_matches_bash_jq_failure(
+    monkeypatch, tmp_path, payload
+):
+    raw = json.dumps(payload)
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, raw))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(worker_session="old-session", last_cost="old-cost")
+
+    result = run_worker("claude", "p", s, session, io)
+
+    assert result == EngineResult(rc=5, text="")
+    assert session == EngineSession(worker_session="", last_cost="")
+    assert io.engine_out.read_text(encoding="utf-8") == raw + "\n"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, "null"),
+        ({"session_id": None}, "null"),
+        ({"session_id": False}, "false"),
+        ({"session_id": 0}, "0"),
+        ({"session_id": True}, "true"),
+        ({"session_id": "session"}, "session"),
+        ({"session_id": {"part": 1}}, '{"part":1}'),
+    ],
+)
+def test_claude_worker_session_id_uses_jq_raw_coercion(
+    monkeypatch, tmp_path, payload, expected
+):
+    monkeypatch.setattr(
+        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+    )
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(worker_session="old-session")
+
+    run_worker("claude", "p", s, session, io)
+
+    assert session.worker_session == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, ""),
+        ({"result": None}, ""),
+        ({"result": False}, ""),
+        ({"result": 0}, "0"),
+        ({"result": True}, "true"),
+        ({"result": "work"}, "work"),
+        ({"result": {"done": [1, 2]}}, '{"done":[1,2]}'),
+        ({"result": [1, 2]}, "[1,2]"),
+    ],
+)
+def test_claude_worker_result_uses_jq_coalesce_and_raw_coercion(
+    monkeypatch, tmp_path, payload, expected
+):
+    monkeypatch.setattr(
+        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+    )
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+
+    result = run_worker("claude", "p", s, EngineSession(), io)
+
+    assert result == EngineResult(rc=0, text=expected)
+
+
 def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
     calls = []
 
@@ -279,6 +363,43 @@ def test_claude_reviewer_invalid_json_matches_bash_jq_failure(monkeypatch, tmp_p
     assert io.verdict_path.stat().st_size == 0
 
 
+def test_claude_reviewer_top_level_null_matches_bash(monkeypatch, tmp_path):
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, "null"))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(last_cost="old-cost")
+
+    result = run_reviewer("claude", "p", s, session, io)
+
+    assert result == EngineResult(rc=0, text="")
+    assert session.last_cost == ""
+    assert json.loads(io.verdict_path.read_text(encoding="utf-8")) == {
+        "approved": False,
+        "blockers": ["reviewer did not produce a structured verdict"],
+        "suggestions": [],
+    }
+    assert io.engine_out.read_text(encoding="utf-8") == "null\n"
+
+
+@pytest.mark.parametrize("payload", [[], "text", 0, True])
+def test_claude_reviewer_non_object_json_matches_bash_jq_failure(
+    monkeypatch, tmp_path, payload
+):
+    raw = json.dumps(payload)
+    monkeypatch.setattr(engines, "_run_captured", lambda argv: (0, raw))
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(last_cost="old-cost")
+
+    result = run_reviewer("claude", "p", s, session, io)
+
+    assert result == EngineResult(rc=5, text="")
+    assert session.last_cost == ""
+    assert io.verdict_path.exists()
+    assert io.verdict_path.stat().st_size == 0
+    assert io.engine_out.read_text(encoding="utf-8") == raw + "\n"
+
+
 @pytest.mark.parametrize("structured_output", [{}, [], "", 0])
 def test_claude_reviewer_preserves_jq_coalesce_non_null_non_false_values(
     monkeypatch, tmp_path, structured_output
@@ -318,6 +439,63 @@ def test_claude_reviewer_null_or_false_structured_output_uses_fallback(
         "blockers": ["reviewer did not produce a structured verdict"],
         "suggestions": [],
     }
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer"])
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, ""),
+        ({"total_cost_usd": None}, ""),
+        ({"total_cost_usd": False}, ""),
+        ({"total_cost_usd": 0}, "0"),
+        ({"total_cost_usd": True}, "true"),
+        ({"total_cost_usd": "0.50"}, "0.50"),
+    ],
+)
+def test_claude_cost_uses_jq_coalesce_and_raw_coercion(
+    monkeypatch, tmp_path, role, payload, expected
+):
+    monkeypatch.setattr(
+        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+    )
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+    session = EngineSession(last_cost="old-cost")
+
+    if role == "worker":
+        run_worker("claude", "p", s, session, io)
+    else:
+        run_reviewer("claude", "p", s, session, io)
+
+    assert session.last_cost == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, ""),
+        ({"result": None}, ""),
+        ({"result": False}, ""),
+        ({"result": 0}, "0"),
+        ({"result": True}, "true"),
+        ({"result": "review"}, "review"),
+        ({"result": {"approved": True}}, '{"approved":true}'),
+        ({"result": ["review"]}, '["review"]'),
+    ],
+)
+def test_claude_reviewer_result_uses_jq_coalesce_and_raw_coercion(
+    monkeypatch, tmp_path, payload, expected
+):
+    monkeypatch.setattr(
+        engines, "_run_captured", lambda argv: (0, json.dumps(payload))
+    )
+    s = Settings.from_env({}, run_id="r")
+    io, _ = make_io(tmp_path)
+
+    result = run_reviewer("claude", "p", s, EngineSession(), io)
+
+    assert result == EngineResult(rc=0, text=expected)
 
 
 def test_claude_reviewer_argv_has_schema(monkeypatch, tmp_path):

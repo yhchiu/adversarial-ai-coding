@@ -157,6 +157,23 @@ def _write_engine_out(io: EngineIO, text: str) -> None:
     io.engine_out.write_text(text + "\n", encoding="utf-8")
 
 
+def _jq_raw(value: object) -> str:
+    """Render a decoded JSON value like jq -r."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _jq_coalesce_empty(payload: dict[str, object], field: str) -> str:
+    """Render `.field // empty` followed by jq's raw-output conversion."""
+    value = payload.get(field)
+    if value is None or value is False:
+        return ""
+    return _jq_raw(value)
+
+
 def _claude_common_args(settings: Settings) -> list[str]:
     args: list[str] = []
     model = engine_model("claude", settings)
@@ -197,10 +214,17 @@ def _worker_claude(
     except json.JSONDecodeError:
         # Lenient divergence: bash's jq failure degraded to empty fields.
         return EngineResult(0, out)
-    session.worker_session = str(payload.get("session_id") or session.worker_session)
-    cost = payload.get("total_cost_usd")
-    session.last_cost = "" if cost is None else str(cost)
-    return EngineResult(0, str(payload.get("result") or ""))
+    if payload is None:
+        session.worker_session = "null"
+        session.last_cost = ""
+        return EngineResult(0, "")
+    if not isinstance(payload, dict):
+        session.worker_session = ""
+        session.last_cost = ""
+        return EngineResult(5, "")
+    session.worker_session = _jq_raw(payload.get("session_id"))
+    session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
+    return EngineResult(0, _jq_coalesce_empty(payload, "result"))
 
 
 def _reviewer_claude(
@@ -233,6 +257,14 @@ def _reviewer_claude(
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
         return EngineResult(5, "")
+    if payload is None:
+        io.verdict_path.write_text(json.dumps(VERDICT_FALLBACK), encoding="utf-8")
+        session.last_cost = ""
+        return EngineResult(0, "")
+    if not isinstance(payload, dict):
+        io.verdict_path.write_text("", encoding="utf-8")
+        session.last_cost = ""
+        return EngineResult(5, "")
     structured_output = payload.get("structured_output")
     verdict = (
         VERDICT_FALLBACK
@@ -240,9 +272,8 @@ def _reviewer_claude(
         else structured_output
     )
     io.verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
-    cost = payload.get("total_cost_usd")
-    session.last_cost = "" if cost is None else str(cost)
-    return EngineResult(0, str(payload.get("result") or ""))
+    session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
+    return EngineResult(0, _jq_coalesce_empty(payload, "result"))
 
 
 def _codex_model_args(settings: Settings) -> list[str]:
