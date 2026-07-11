@@ -23,6 +23,19 @@ class SettingsError(Exception):
     """A configuration problem the user must fix before the run starts."""
 
 
+class WorkflowAbort(Exception):
+    """Typed workflow stop; cli maps rc to the process exit code.
+
+    rc=1 mirrors bash's human-intervention exits; rc=QUOTA_ABORT_RC (75)
+    mirrors resumable quota aborts. Lives here (the common leaf) so gates,
+    review, and workflow can raise it without import cycles.
+    """
+
+    def __init__(self, message: str, rc: int = 1):
+        super().__init__(message)
+        self.rc = rc
+
+
 def _to_int(name: str, raw: str) -> int:
     try:
         return int(raw)
