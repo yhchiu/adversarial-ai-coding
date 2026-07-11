@@ -85,6 +85,28 @@ def test_archive_snapshot_missing_source_is_noop(tmp_path):
     assert a.archive_snapshot(tmp_path / "absent.txt", "x.txt") is None
 
 
+def test_archive_text_normalizes_newline_and_writes_meta(tmp_path):
+    a = make_archive(tmp_path)
+    dst = a.archive_text(
+        "note.txt",
+        "archived text\n\n",
+        role="reviewer",
+        agent="codex",
+        stage="review",
+        round=2,
+        now=FIXED,
+    )
+    assert dst.name == "001-note.txt"
+    assert dst.read_text(encoding="utf-8") == "archived text\n"
+    meta = json.loads(
+        dst.with_name(dst.name + ".meta.json").read_text(encoding="utf-8")
+    )
+    assert meta["generator_role"] == "reviewer"
+    assert meta["agent"] == "codex"
+    assert meta["stage"] == "review"
+    assert meta["round"] == "2"
+
+
 def test_archive_task_file_kind(tmp_path):
     # helpers.test.sh: "archive_task:saves file task source and resolved text"
     a = make_archive(tmp_path)
