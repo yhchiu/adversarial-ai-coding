@@ -1,0 +1,60 @@
+判定：大部分已修正，三個核心 blocker 都已處理；但仍建議 Request changes（小幅修訂）後再實作。
+
+ 前次 finding                       狀態      判讀
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ C1 args 未進實際 argv              ✅        新增 _arg_sources()／agent_args()，所有 adapter 與 metadata 共用來源，並測實際 argv。docs/
+                                              plans/20260712_custom_impl_agent_v2_opus48xhigh.md:106
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C2 同名 custom session 競態        ✅        custom I 明確禁止與 A/B 同名。docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:54
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C3 固定聯集驗證                    ⚠️        已改成 adapter-specific，但 Claude 規則仍漏一項。
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ H1 built-in 路徑未實測             ✅／⚠️    已補 actual argv、failure closure、offline fake Codex；mid-queue 測試仍有歧義。
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ H2 resume 無法清空                 ✅        已選擇「不可清空、可直接編輯 snapshot」政策並要求文件化。docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:60
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ H3 requested/effective metadata    ⚠️        resolved log、artifact meta、metrics 已補；run metadata 與 log banner 尚未完整。
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ H4 commit／verification            ⚠️        CLI 不再混入 docs commit，但 UV_CACHE_DIR 仍漏掉。
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ M1 session 語意                    ✅        已明訂「換手即丟棄」。docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:163
+─────────────────────────────────  ────────  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ M2 base_slot 複驗                  ✅        已在 agent_model() 再驗證 command name。docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:102
+
+仍需修改：
+
+1. Claude reserved flags 漏了 --no-session-persistence
+
+   本機 Claude help 明確提供此旗標；它會讓 workflow 捕獲的 session ID 無法在下一輪正常 resume。請加入 docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:155，並
+   測試 --flag=value 形式。
+
+2. H3 只修了一半
+
+   docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:207 尚未包含：
+    - write_run_metadata()／write_log_metadata() 的 raw requested impl_agent/model/args
+    - log_section() 的 agent_slot
+
+   Resume 會建立新的 archive 目錄；若 write-code 已完成，新 archive 不會出現 resolved implementation log，因此 run metadata 仍應保留 requested config。
+
+3. Mid-queue resume 測試需明講使用 built-in shim
+
+   docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:288位於 custom fake-agent scenario 下，卻用更換 IMPL_MODEL 作斷言。custom agent 會忽略 IMPL_MODEL，所以必須
+   明訂該 scenario 使用 fake Codex，或改成更換可觀測的 IMPL_AGENT／IMPL_ARGS。
+
+4. Verification 仍不符合本 repo 規則
+
+   docs/plans/20260712_custom_impl_agent_v2_opus48xhigh.md:299應改為：
+
+   unset PYTHONHOME PYTHONPATH
+   export UV_CACHE_DIR="$PWD/.venv/.codex-uv-cache"
+
+   uv run --locked pytest <targeted tests> -q -p no:cacheprovider
+   uv run --locked pytest -q -p no:cacheprovider
+
+   Commit 6 的 test node 也應寫完整路徑：tests/e2e/test_e2e.py::test_fixture_baseline。
+
+另有一項新建議：定義 built-in args 中 model override 的優先順序。現在 generated model 仍位於額外 args 前面；若 CLAUDE_ARGS／IMPL_ARGS 再帶 --model 或 Codex -c
+model=...，實際模型可能與 metadata 的 model 欄不同。
+
+總體而言，v2 已正確吸收主要設計回饋；補完上述項目後即可進入實作。本次為唯讀審查，未修改任何檔案。
+
