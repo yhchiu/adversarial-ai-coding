@@ -46,6 +46,7 @@ def is_builtin_agent(name: str) -> bool:
 class AgentRef:
     slot: str
     name: str
+    base_slot: str = ""
 
 
 def agent_ref(slot: str, settings: Settings) -> AgentRef:
@@ -56,10 +57,29 @@ def agent_ref(slot: str, settings: Settings) -> AgentRef:
     raise ValueError(f"Unknown agent slot:{slot}")
 
 
+def impl_ref(owner: AgentRef, settings: Settings) -> AgentRef:
+    if not (settings.impl_agent or settings.impl_model or settings.impl_args):
+        return owner
+    name = settings.impl_agent or owner.name
+    base_slot = owner.slot if name == owner.name else ""
+    ref = AgentRef(slot="I", name=name, base_slot=base_slot)
+    _validate_impl_args(settings, (ref.name,))
+    return ref
+
+
 def agent_model(ref: AgentRef, settings: Settings) -> str:
     # Custom agents ignore MODEL_A/MODEL_B; they get args via AGENT_*_ARGS.
     if not is_builtin_agent(ref.name):
         return ""
+    if ref.slot == "I":
+        if settings.impl_model:
+            return settings.impl_model
+        if ref.base_slot not in {"A", "B"}:
+            return ""
+        base_ref = agent_ref(ref.base_slot, settings)
+        if ref.name != base_ref.name:
+            return ""
+        return agent_model(base_ref, settings)
     if ref.slot == "A":
         return settings.model_a
     if ref.slot == "B":
@@ -72,6 +92,8 @@ def generic_agent_args(ref: AgentRef, settings: Settings) -> str:
         return settings.agent_a_args
     if ref.slot == "B":
         return settings.agent_b_args
+    if ref.slot == "I":
+        return settings.impl_args
     return ""
 
 
@@ -87,6 +109,10 @@ def _arg_sources(ref: AgentRef, settings: Settings) -> list[tuple[str, str]]:
         sources.append(("AGENT_A_ARGS", generic_agent_args(ref, settings)))
     elif ref.slot == "B":
         sources.append(("AGENT_B_ARGS", generic_agent_args(ref, settings)))
+    elif ref.slot == "I":
+        sources.append(("IMPL_ARGS", generic_agent_args(ref, settings)))
+    if ref.slot == "I" and is_builtin_agent(ref.name):
+        sources.append(("IMPL_ARGS", settings.impl_args))
     return [(variable, raw) for variable, raw in sources if raw]
 
 
@@ -105,24 +131,52 @@ def resolve_model_args(ref: AgentRef, settings: Settings) -> str:
 def validate_agents(
     settings: Settings, which: Callable[[str], str | None] = shutil.which
 ) -> None:
-    for name in (settings.agent_a, settings.agent_b):
+    required = [settings.agent_a, settings.agent_b]
+    if settings.impl_agent:
+        required.append(settings.impl_agent)
+    for name in required:
         if which(name) is None:
             raise SettingsError(f"Missing required command:{name}")
     _validate_reserved_args(settings)
+    _validate_custom_impl_command(settings)
     # Built-in agents resume by exact session IDs. Custom agents still have an
     # unknown session model, so identical custom command names remain blocked.
-    if settings.agent_a == settings.agent_b and settings.agent_a != "claude":
-        if settings.agent_a in {"codex", "agy"}:
-            return
+    if settings.agent_a == settings.agent_b:
         if is_builtin_agent(settings.agent_a):
-            raise SettingsError(
-                f"A and B cannot both use {settings.agent_a} because session "
-                "resume would interfere. Use different agents."
-            )
+            return
         raise SettingsError(
             f"A and B cannot both use custom agent command {settings.agent_a}. "
             "Use separate wrapper command names for worker and reviewer."
         )
+
+
+def _impl_owner_candidates(settings: Settings) -> tuple[str, ...]:
+    if settings.dual_spec:
+        return settings.agent_a, settings.agent_b
+    return (settings.agent_a,)
+
+
+def _custom_impl_conflict(name: str) -> SettingsError:
+    return SettingsError(
+        f"Implementation slot cannot reuse custom agent command {name}. "
+        "Set IMPL_AGENT to a different wrapper command."
+    )
+
+
+def _validate_custom_impl_command(settings: Settings) -> None:
+    if settings.impl_agent:
+        if not is_builtin_agent(settings.impl_agent) and settings.impl_agent in {
+            settings.agent_a,
+            settings.agent_b,
+        }:
+            raise _custom_impl_conflict(settings.impl_agent)
+        return
+
+    if not (settings.impl_model or settings.impl_args):
+        return
+    for name in _impl_owner_candidates(settings):
+        if not is_builtin_agent(name):
+            raise _custom_impl_conflict(name)
 
 
 def _split_cli_args(variable: str, raw: str) -> list[str]:
@@ -217,6 +271,19 @@ def _validate_reserved_args(settings: Settings) -> None:
 
     _split_cli_args("AGENT_A_ARGS", settings.agent_a_args)
     _split_cli_args("AGENT_B_ARGS", settings.agent_b_args)
+    adapters = (
+        (settings.impl_agent,)
+        if settings.impl_agent
+        else _impl_owner_candidates(settings)
+    )
+    _validate_impl_args(settings, adapters)
+
+
+def _validate_impl_args(settings: Settings, adapters: tuple[str, ...]) -> None:
+    tokens = _split_cli_args("IMPL_ARGS", settings.impl_args)
+    for adapter in dict.fromkeys(adapters):
+        if is_builtin_agent(adapter):
+            _validate_builtin_arg_tokens("IMPL_ARGS", adapter, tokens)
 
 
 @dataclass

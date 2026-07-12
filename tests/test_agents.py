@@ -61,6 +61,108 @@ def test_is_builtin_agent():
     assert not is_builtin_agent("custom-agent")
 
 
+def test_agent_ref_two_argument_construction_defaults_base_slot():
+    ref = AgentRef("A", "claude")
+
+    assert getattr(ref, "base_slot", None) == ""
+
+
+def test_impl_ref_with_no_impl_settings_returns_exact_owner_ref():
+    owner = AgentRef("A", "claude")
+
+    assert agents.impl_ref(owner, make()) is owner
+
+
+@pytest.mark.parametrize(
+    ("owner", "env", "expected"),
+    [
+        (
+            AgentRef("A", "claude"),
+            {"IMPL_MODEL": "sonnet"},
+            AgentRef("I", "claude", base_slot="A"),
+        ),
+        (
+            AgentRef("B", "codex"),
+            {"IMPL_ARGS": "--search"},
+            AgentRef("I", "codex", base_slot="B"),
+        ),
+        (
+            AgentRef("A", "claude"),
+            {"IMPL_AGENT": "codex"},
+            AgentRef("I", "codex"),
+        ),
+        (
+            AgentRef("A", "claude"),
+            {"IMPL_AGENT": "claude"},
+            AgentRef("I", "claude", base_slot="A"),
+        ),
+    ],
+)
+def test_impl_ref_resolves_name_and_model_base(owner, env, expected):
+    assert agents.impl_ref(owner, make(env)) == expected
+
+
+@pytest.mark.parametrize(
+    ("owner", "env", "expected"),
+    [
+        (
+            AgentRef("A", "claude"),
+            {"MODEL_A": "opus", "IMPL_ARGS": "--search"},
+            "opus",
+        ),
+        (
+            AgentRef("B", "codex"),
+            {
+                "AGENT_B": "codex",
+                "MODEL_B": "gpt-review",
+                "IMPL_AGENT": "codex",
+            },
+            "gpt-review",
+        ),
+        (
+            AgentRef("A", "claude"),
+            {
+                "MODEL_A": "opus",
+                "IMPL_AGENT": "codex",
+                "IMPL_MODEL": "gpt-impl",
+            },
+            "gpt-impl",
+        ),
+        (
+            AgentRef("A", "claude"),
+            {"MODEL_A": "opus", "IMPL_AGENT": "codex"},
+            "",
+        ),
+    ],
+)
+def test_implementation_agent_model_is_explicit_or_safely_inherited(
+    owner, env, expected
+):
+    settings = make(env)
+
+    assert _agent_model(agents.impl_ref(owner, settings), settings) == expected
+
+
+def test_implementation_agent_model_rejects_mismatched_manual_base_ref():
+    settings = make({"AGENT_A": "claude", "MODEL_A": "opus"})
+    malformed = AgentRef("I", "codex", base_slot="A")
+
+    assert _agent_model(malformed, settings) == ""
+
+
+def test_implementation_agent_model_rejects_unknown_manual_base_slot():
+    settings = make({"AGENT_A": "claude", "MODEL_A": "opus"})
+    malformed = AgentRef("I", "claude", base_slot="unknown")
+
+    assert _agent_model(malformed, settings) == ""
+
+
+def test_custom_implementation_agent_ignores_impl_model():
+    settings = make({"IMPL_AGENT": "wrapper", "IMPL_MODEL": "ignored"})
+
+    assert _agent_model(agents.impl_ref(AgentRef("A", "claude"), settings), settings) == ""
+
+
 def test_agent_model_slot_a_uses_model_a():
     s = make({"AGENT_A": "claude", "AGENT_B": "codex", "MODEL_A": "haiku", "MODEL_B": "mini"})
     assert agent_model("claude", s) == "haiku"
@@ -128,6 +230,25 @@ def test_custom_agent_args_use_slot_when_names_match():
                 "AGENT_B_ARGS": '--profile "review words"',
             },
             [("AGENT_B_ARGS", '--profile "review words"')],
+        ),
+        (
+            AgentRef("I", "claude", base_slot="A"),
+            {
+                "CLAUDE_ARGS": '--append-system-prompt "base words"',
+                "IMPL_ARGS": '--permission-mode "impl mode"',
+            },
+            [
+                ("CLAUDE_ARGS", '--append-system-prompt "base words"'),
+                ("IMPL_ARGS", '--permission-mode "impl mode"'),
+            ],
+        ),
+        (
+            AgentRef("I", "impl-wrapper"),
+            {
+                "IMPL_AGENT": "impl-wrapper",
+                "IMPL_ARGS": '--profile "impl words"',
+            },
+            [("IMPL_ARGS", '--profile "impl words"')],
         ),
         (AgentRef("A", "claude"), {}, []),
     ],
@@ -228,6 +349,8 @@ def test_validate_agents_both_claude_is_allowed():
         ("AGY_ARGS", {"AGENT_A": "agy"}),
         ("AGENT_A_ARGS", {"AGENT_A": "custom-a"}),
         ("AGENT_B_ARGS", {"AGENT_B": "custom-b"}),
+        ("IMPL_ARGS", {}),
+        ("IMPL_ARGS", {"IMPL_AGENT": "impl-wrapper"}),
     ],
 )
 def test_validate_agents_rejects_unclosed_quotes(key, agent_env):
@@ -408,6 +531,205 @@ def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
     validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
+@pytest.mark.parametrize(
+    ("adapter", "value"),
+    [
+        ("claude", "--continue"),
+        ("claude", "--output-format=text"),
+        ("codex", "resume thread-id"),
+        ("codex", "--sandbox=workspace-write"),
+        ("codex", "-c sandbox_mode=workspace-write"),
+        ("agy", "--conversation=conversation-id"),
+        ("agy", "--log-file output.log"),
+    ],
+)
+def test_validate_agents_applies_explicit_impl_adapter_reserved_rules(
+    adapter, value
+):
+    settings = make({"IMPL_AGENT": adapter, "IMPL_ARGS": value})
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize("adapter", ["claude", "codex", "agy"])
+@pytest.mark.parametrize("value", ["--model impl", "-m=impl"])
+def test_validate_agents_rejects_impl_model_flags_for_builtin_adapters(
+    adapter, value
+):
+    settings = make({"IMPL_AGENT": adapter, "IMPL_ARGS": value})
+
+    with pytest.raises(SettingsError) as exc_info:
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+    assert str(exc_info.value) == (
+        "IMPL_ARGS cannot set the model; "
+        "use MODEL_A / MODEL_B / IMPL_MODEL instead"
+    )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "value"),
+    [
+        ("claude", "--sandbox=workspace-write"),
+        ("codex", "--continue"),
+        ("agy", "--json"),
+    ],
+)
+def test_validate_agents_does_not_union_impl_adapter_reserved_rules(
+    adapter, value
+):
+    settings = make({"IMPL_AGENT": adapter, "IMPL_ARGS": value})
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_allows_workflow_tokens_for_custom_impl_agent():
+    settings = make(
+        {
+            "IMPL_AGENT": "impl-wrapper",
+            "IMPL_ARGS": "--model pro resume --json --conversation=id",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_checks_impl_args_against_default_owner_adapter():
+    settings = make({"AGENT_A": "claude", "IMPL_ARGS": "--continue"})
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_checks_impl_args_against_each_dual_owner_candidate():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_uses_only_agent_a_candidate_without_dual_spec():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_impl_ref_revalidates_impl_args_for_resolved_runtime_adapter():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        agents.impl_ref(AgentRef("B", "claude"), settings)
+
+
+def test_validate_agents_requires_explicit_impl_agent_on_path():
+    settings = make({"IMPL_AGENT": "impl-wrapper"})
+
+    def which(name):
+        return None if name == "impl-wrapper" else "C:/fake/" + name
+
+    with pytest.raises(SettingsError, match="Missing required command:impl-wrapper"):
+        validate_agents(settings, which=which)
+
+
+def test_validate_agents_allows_builtin_impl_command_shared_with_slot_b():
+    settings = make(
+        {"AGENT_A": "claude", "AGENT_B": "codex", "IMPL_AGENT": "codex"}
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize("impl_agent", ["worker-wrapper", "review-wrapper"])
+def test_validate_agents_rejects_impl_command_shared_with_custom_slot(
+    impl_agent,
+):
+    settings = make(
+        {
+            "AGENT_A": "worker-wrapper",
+            "AGENT_B": "review-wrapper",
+            "IMPL_AGENT": impl_agent,
+        }
+    )
+
+    with pytest.raises(
+        SettingsError, match=rf"custom agent command {impl_agent}"
+    ):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    ("env", "owner_name"),
+    [
+        (
+            {
+                "AGENT_A": "worker-wrapper",
+                "AGENT_B": "codex",
+                "IMPL_ARGS": "--fast",
+            },
+            "worker-wrapper",
+        ),
+        (
+            {
+                "AGENT_A": "claude",
+                "AGENT_B": "review-wrapper",
+                "DUAL_SPEC": "1",
+                "IMPL_MODEL": "impl-model",
+            },
+            "review-wrapper",
+        ),
+    ],
+)
+def test_validate_agents_requires_explicit_impl_wrapper_for_custom_owner(
+    env, owner_name
+):
+    settings = make(env)
+
+    with pytest.raises(SettingsError, match=rf"custom agent command {owner_name}"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_keeps_zero_impl_custom_slots_valid():
+    settings = make(
+        {"AGENT_A": "worker-wrapper", "AGENT_B": "review-wrapper"}
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_allows_distinct_custom_impl_wrapper():
+    settings = make(
+        {
+            "AGENT_A": "worker-wrapper",
+            "AGENT_B": "review-wrapper",
+            "IMPL_AGENT": "impl-wrapper",
+            "IMPL_ARGS": "--model custom-model resume --json",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
 def make_io(tmp_path, lines=None):
     sink = [] if lines is None else lines
     return AgentIO(
@@ -465,6 +787,183 @@ def test_generic_runner_places_shared_agent_args_before_prompt(monkeypatch, tmp_
     agents._run_generic(AgentRef("A", "wrapper"), "prompt", make(), io)
 
     assert seen["argv"] == ["wrapper", "--shared", "two words", "prompt"]
+
+
+def test_claude_implementation_worker_orders_fresh_and_resume_argv(
+    monkeypatch, tmp_path
+):
+    calls = []
+    session_ids = iter(["claude-session-1", "claude-session-2"])
+
+    def fake_run(argv):
+        calls.append(argv)
+        return 0, json.dumps({"session_id": next(session_ids), "result": "ok"})
+
+    monkeypatch.setattr(agents, "_run_captured", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "MODEL_A": "owner-model",
+            "CLAUDE_ARGS": '--base-claude "base words"',
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": '--impl-claude "impl words"',
+        }
+    )
+    ref = agents.impl_ref(AgentRef("A", "claude"), settings)
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+
+    agents.run_worker(ref, "fresh prompt", settings, session, io)
+    agents.run_worker(ref, "resume prompt", settings, session, io)
+
+    expected_args = [
+        "--model",
+        "impl-model",
+        "--base-claude",
+        "base words",
+        "--impl-claude",
+        "impl words",
+    ]
+    for argv in calls:
+        model_index = argv.index("--model")
+        assert argv[model_index : model_index + len(expected_args)] == expected_args
+    assert "--resume" not in calls[0]
+    assert calls[1][-2:] == ["--resume", "claude-session-1"]
+
+
+def test_codex_implementation_worker_orders_fresh_and_resume_argv(
+    monkeypatch, tmp_path
+):
+    calls = []
+    thread_ids = iter(["codex-thread-1", "codex-thread-1"])
+
+    def fake_run(argv, io):
+        calls.append(argv)
+        return 0, "ok", next(thread_ids)
+
+    monkeypatch.setattr(agents, "_run_codex_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "MODEL_A": "owner-model",
+            "CODEX_ARGS": '--base-codex "base words"',
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": '--impl-codex "impl words"',
+        }
+    )
+    ref = agents.impl_ref(AgentRef("A", "codex"), settings)
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+
+    agents.run_worker(ref, "fresh prompt", settings, session, io)
+    agents.run_worker(ref, "resume prompt", settings, session, io)
+
+    model_and_args = [
+        "-c",
+        'model="impl-model"',
+        "--base-codex",
+        "base words",
+        "--impl-codex",
+        "impl words",
+    ]
+    assert calls[0] == [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        *model_and_args,
+        "fresh prompt",
+    ]
+    assert calls[1] == [
+        "codex",
+        "exec",
+        "resume",
+        "--json",
+        "-c",
+        'sandbox_mode="workspace-write"',
+        *model_and_args,
+        "codex-thread-1",
+        "resume prompt",
+    ]
+
+
+def test_agy_implementation_worker_orders_fresh_and_resume_argv(
+    monkeypatch, tmp_path
+):
+    calls = []
+    conversation_id = "66666666-6666-4666-8666-666666666666"
+
+    def fake_run(argv, io):
+        calls.append(argv)
+        log_path = Path(argv[argv.index("--log-file") + 1])
+        log_path.write_text(
+            f"Created conversation {conversation_id}\n", encoding="utf-8"
+        )
+        return 0, "ok"
+
+    monkeypatch.setattr(agents, "_run_streaming", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "agy",
+            "MODEL_A": "owner-model",
+            "AGY_ARGS": '--base-agy "base words"',
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": '--impl-agy "impl words"',
+        }
+    )
+    ref = agents.impl_ref(AgentRef("A", "agy"), settings)
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+
+    agents.run_worker(ref, "fresh prompt", settings, session, io)
+    agents.run_worker(ref, "resume prompt", settings, session, io)
+
+    expected_args = [
+        "--model",
+        "impl-model",
+        "--base-agy",
+        "base words",
+        "--impl-agy",
+        "impl words",
+    ]
+    for argv in calls:
+        model_index = argv.index("--model")
+        assert argv[model_index : model_index + len(expected_args)] == expected_args
+    assert "--conversation" not in calls[0]
+    assert calls[1][-2:] == ["--conversation", conversation_id]
+
+
+def test_custom_implementation_worker_uses_impl_args_exactly_once(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        agents,
+        "_run_streaming",
+        lambda argv, io: (calls.append(argv), (0, "ok"))[1],
+    )
+    settings = make(
+        {
+            "AGENT_A": "owner-wrapper",
+            "AGENT_A_ARGS": "--owner-only",
+            "IMPL_AGENT": "impl-wrapper",
+            "IMPL_ARGS": '--profile "impl words" --last',
+        }
+    )
+    ref = agents.impl_ref(AgentRef("A", "owner-wrapper"), settings)
+    io, _ = make_io(tmp_path)
+
+    agents.run_worker(ref, "prompt", settings, AgentSession(), io)
+
+    assert calls == [
+        ["impl-wrapper", "--profile", "impl words", "--last", "prompt"]
+    ]
+    assert agents.resolve_model_args(ref, settings) == '--profile "impl words" --last'
 
 
 def test_verdict_schema_matches_bash():
