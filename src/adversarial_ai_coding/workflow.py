@@ -103,6 +103,10 @@ class WorkflowContext:
         return self.wf / "last-agent-output.txt"
 
     @property
+    def raw_out(self) -> Path:
+        return self.wf / "last-agent-cli.raw"
+
+    @property
     def verdict_path(self) -> Path:
         return self.wf / "verdict.json"
 
@@ -126,6 +130,7 @@ class WorkflowContext:
     def agent_io(self) -> AgentIO:
         return AgentIO(
             agent_out=self.agent_out,
+            raw_out=self.raw_out,
             verdict_path=self.verdict_path,
             echo=self.echo,
         )
@@ -135,7 +140,11 @@ class WorkflowContext:
 
 
 def _retry_events(
-    ctx: WorkflowContext, role: str, agent: AgentRef, slug: str
+    ctx: WorkflowContext,
+    role: str,
+    agent: AgentRef,
+    slug: str,
+    io: AgentIO,
 ) -> RetryEvents:
     return RetryEvents(
         archive_attempt=lambda attempt, rc: ctx.archive.archive_agent_attempt(
@@ -145,6 +154,7 @@ def _retry_events(
             attempt,
             rc,
             ctx.agent_out,
+            io.raw_out,
             stage=ctx.cur_stage,
             round=ctx.cur_round,
         ),
@@ -181,7 +191,7 @@ def work(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
         lambda: run_worker(agent, short_prompt, ctx.settings, ctx.session, io),
         agent_out=ctx.agent_out,
         settings=ctx.settings,
-        events=_retry_events(ctx, "worker", agent, slug),
+        events=_retry_events(ctx, "worker", agent, slug, io),
     )
     output_artifact = ctx.archive.art_path(f"{slug}-output.txt")
     output_artifact.write_text(result.text.rstrip("\n") + "\n", encoding="utf-8")

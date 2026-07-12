@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"11111111-1111-4111-8111-111111111111"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Remember token BLUEBIRD."}}
+{"type":"error","message":"You've hit your usage limit.\nPlease try again in 20s."}
+{"type":"turn.failed","error":{"message":"turn failed detail"}}
+{"type":"future.event","details":{"message":"decoded but not echoed"}}
+stderr line that is not JSON
+{"type":"turn.completed","usage":{"input_tokens":42,"output_tokens":7}}

@@ -119,11 +119,11 @@ def test_same_agent_blocked_without_branch_side_effect(
     monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
     rc = cli.main(
         ["task"],
-        {"AGENT_A": "codex", "AGENT_B": "codex"},
+        {"AGENT_A": "agy", "AGENT_B": "agy"},
         stdin_isatty=False,
     )
     assert rc == 1
-    assert "cannot both use codex" in capsys.readouterr().err
+    assert "cannot both use agy" in capsys.readouterr().err
     assert current_branch(new_repo) == "main"
 
 

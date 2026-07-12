@@ -112,7 +112,7 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ),
         agent_out=ctx.agent_out,
         settings=ctx.settings,
-        events=_retry_events(ctx, "reviewer", agent, slug),
+        events=_retry_events(ctx, "reviewer", agent, slug, io),
     )
     output_artifact = ctx.archive.art_path(f"{slug}-output.txt")
     output_artifact.write_text(result.text.rstrip("\n") + "\n", encoding="utf-8")

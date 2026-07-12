@@ -132,10 +132,9 @@ def test_validate_agents_missing_command():
         validate_agents(s, which=lambda name: None)
 
 
-def test_validate_agents_same_builtin_agent_rejected():
+def test_validate_agents_same_codex_agent_allowed():
     s = make({"AGENT_A": "codex", "AGENT_B": "codex"})
-    with pytest.raises(SettingsError, match="cannot both use codex"):
-        validate_agents(s, which=lambda name: "C:/fake/" + name)
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
 def test_validate_agents_same_custom_agent_rejected():
@@ -153,6 +152,7 @@ def make_io(tmp_path, lines=None):
     sink = [] if lines is None else lines
     return AgentIO(
         agent_out=tmp_path / "agent-out.txt",
+        raw_out=tmp_path / "agent-raw.txt",
         verdict_path=tmp_path / "verdict.json",
         echo=sink.append,
     ), sink
@@ -210,6 +210,19 @@ def test_generic_worker_resolves_argv0_with_shutil_which(monkeypatch, tmp_path):
     io, _ = make_io(tmp_path)
     run_worker("fake", "prompt", settings, AgentSession(), io)
     assert calls[0][0] == "C:/resolved/fake.cmd"
+
+
+def test_non_codex_worker_removes_stale_cli_raw(monkeypatch, tmp_path):
+    monkeypatch.setattr(agents, "_run_streaming", lambda argv, io: (0, "ok"))
+    s = Settings.from_env(
+        {"AGENT_A": "custom-agent", "AGENT_B": "codex"}, run_id="r"
+    )
+    io, _ = make_io(tmp_path)
+    io.raw_out.write_text("stale codex jsonl\n", encoding="utf-8")
+
+    run_worker("custom-agent", "prompt", s, AgentSession(), io)
+
+    assert not io.raw_out.exists()
 
 
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
@@ -369,28 +382,30 @@ def test_claude_worker_result_uses_jq_coalesce_and_raw_coercion(
 
 def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
     calls = []
+    ids = iter(["thread-1", "thread-1"])
 
     def fake_stream(argv, io):
         calls.append(argv)
-        return (0, "codex output")
+        return (0, "codex output", next(ids))
 
-    monkeypatch.setattr(agents, "_run_streaming", fake_stream)
+    monkeypatch.setattr(agents, "_run_codex_json", fake_stream)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"MODEL_B": "gpt-5.5", "AGENT_B": "codex",
                            "CODEX_ARGS": "-c model_reasoning_effort=low"}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession()
     run_worker("codex", "p1", s, session, io)
-    assert session.worker_session == "last"
+    assert session.worker_session == "thread-1"
     run_worker("codex", "p2", s, session, io)
     fresh, resumed = calls
-    assert fresh[:4] == ["codex", "exec", "--sandbox", "workspace-write"]
+    assert fresh[:5] == ["codex", "exec", "--json", "--sandbox", "workspace-write"]
     assert '-c' in fresh and 'model="gpt-5.5"' in fresh
     assert "model_reasoning_effort=low" in fresh
     assert fresh[-1] == "p1"
-    assert resumed[:4] == ["codex", "exec", "resume", "--last"]
+    assert resumed[:4] == ["codex", "exec", "resume", "--json"]
+    assert "--last" not in resumed
     assert 'sandbox_mode="workspace-write"' in resumed
-    assert resumed[-1] == "p2"
+    assert resumed[-2:] == ["thread-1", "p2"]
 
 
 def test_agy_worker_continue_flag(monkeypatch, tmp_path):

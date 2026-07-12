@@ -132,6 +132,8 @@ def test_archive_agent_attempt_names_and_placeholder(tmp_path):
     a = make_archive(tmp_path)
     out = tmp_path / "agent-out.txt"
     out.write_text("raw agent output\n", encoding="utf-8")
+    cli_raw = tmp_path / "agent-cli.raw"
+    cli_raw.write_text('{"type":"thread.started"}\n', encoding="utf-8")
     a.archive_agent_attempt(
         "worker",
         agent_ref("A", a.settings),
@@ -139,11 +141,14 @@ def test_archive_agent_attempt_names_and_placeholder(tmp_path):
         1,
         1,
         out,
+        cli_raw,
         stage="stage",
         round=1,
     )
     saved = a.run_dir / "001-worker-stage-r1-attempt-1-rc1.raw"
     assert saved.read_text(encoding="utf-8") == "raw agent output\n"
+    cli_saved = a.run_dir / "002-worker-stage-r1-attempt-1-rc1.cli.raw"
+    assert cli_saved.read_text(encoding="utf-8") == '{"type":"thread.started"}\n'
     meta = json.loads(
         (a.run_dir / "001-worker-stage-r1-attempt-1-rc1.raw.meta.json").read_text(
             encoding="utf-8"
@@ -157,10 +162,11 @@ def test_archive_agent_attempt_names_and_placeholder(tmp_path):
         2,
         1,
         tmp_path / "gone.txt",
+        tmp_path / "gone-cli.txt",
         stage="stage",
         round=1,
     )
-    placeholder = a.run_dir / "002-worker-stage-r1-attempt-2-rc1.raw"
+    placeholder = a.run_dir / "003-worker-stage-r1-attempt-2-rc1.raw"
     assert "agent output was not written" in placeholder.read_text(encoding="utf-8")
 
 

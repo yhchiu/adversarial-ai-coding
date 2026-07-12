@@ -185,6 +185,7 @@ class RunArchive:
         attempt: int,
         rc: int,
         agent_out: Path,
+        raw_out: Path,
         stage: str,
         round: int,
     ) -> None:
@@ -197,6 +198,10 @@ class RunArchive:
                 encoding="utf-8",
             )
         self.write_meta(dst, role, agent, stage, round)
+        if raw_out != agent_out and raw_out.is_file():
+            raw_dst = self.art_path(f"{slug}-attempt-{attempt}-rc{rc}.cli.raw")
+            _shutil.copyfile(raw_out, raw_dst)
+            self.write_meta(raw_dst, role, agent, stage, round)
 
     def write_run_metadata(
         self, *, spec_dir: str, wf: str, now: datetime | None = None

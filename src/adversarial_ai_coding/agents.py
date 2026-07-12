@@ -87,9 +87,12 @@ def validate_agents(
     for name in (settings.agent_a, settings.agent_b):
         if which(name) is None:
             raise SettingsError(f"Missing required command:{name}")
-    # codex and agy resume the most recent session. Custom agents may have
-    # the same limitation, so v1 requires distinct command names (bash :349-358).
+    _validate_reserved_args(settings)
+    # Codex now resumes by exact thread ID. Agy still uses the most recent
+    # conversation until its adapter is upgraded in the next commit.
     if settings.agent_a == settings.agent_b and settings.agent_a != "claude":
+        if settings.agent_a == "codex":
+            return
         if is_builtin_agent(settings.agent_a):
             raise SettingsError(
                 f"A and B cannot both use {settings.agent_a} because session "
@@ -99,6 +102,25 @@ def validate_agents(
             f"A and B cannot both use custom agent command {settings.agent_a}. "
             "Use separate wrapper command names for worker and reviewer."
         )
+
+
+def _validate_reserved_args(settings: Settings) -> None:
+    tokens = settings.codex_args.split()
+    for index, token in enumerate(tokens):
+        normalized = token.strip("'\"")
+        if (
+            normalized in {"--json", "resume", "--sandbox"}
+            or normalized.startswith("--sandbox=")
+        ):
+            raise SettingsError(
+                f"CODEX_ARGS cannot contain session-control argument:{token}"
+            )
+        if normalized == "-c" and index + 1 < len(tokens):
+            value = tokens[index + 1].strip("'\"")
+            if value.startswith("sandbox_mode="):
+                raise SettingsError(
+                    "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
+                )
 
 
 @dataclass
@@ -116,6 +138,7 @@ class AgentSession:
 @dataclass
 class AgentIO:
     agent_out: Path
+    raw_out: Path
     verdict_path: Path
     echo: Callable[[str], None]
 
@@ -167,6 +190,75 @@ def _run_streaming(argv: list[str], io: AgentIO) -> tuple[int, str]:
             io.echo(line)
     rc = proc.wait()
     return rc, "\n".join(lines)
+
+
+def _run_codex_json(argv: list[str], io: AgentIO) -> tuple[int, str, str]:
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    rendered: list[str] = []
+    thread_id = ""
+    assert proc.stdout is not None
+    io.raw_out.parent.mkdir(parents=True, exist_ok=True)
+    io.agent_out.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        io.raw_out.open("w", encoding="utf-8") as raw_file,
+        io.agent_out.open("w", encoding="utf-8") as rendered_file,
+    ):
+        for raw_line in proc.stdout:
+            raw_file.write(raw_line)
+            line = raw_line.rstrip("\r\n")
+            text = ""
+            should_echo = False
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                text = line
+                should_echo = True
+            else:
+                if not isinstance(payload, dict):
+                    text = _jq_raw(payload)
+                else:
+                    event_type = payload.get("type")
+                    if event_type == "thread.started":
+                        parsed_id = payload.get("thread_id")
+                        if isinstance(parsed_id, str) and parsed_id:
+                            thread_id = parsed_id
+                    elif event_type == "item.completed":
+                        item = payload.get("item")
+                        if isinstance(item, dict) and item.get("type") == "agent_message":
+                            text = _jq_raw(item.get("text")) if item.get("text") is not None else ""
+                            should_echo = bool(text)
+                        else:
+                            text = json.dumps(payload, ensure_ascii=False)
+                    elif event_type == "error":
+                        value = payload.get("message")
+                        text = _jq_raw(value) if value is not None else json.dumps(payload, ensure_ascii=False)
+                        should_echo = True
+                    elif event_type == "turn.failed":
+                        error = payload.get("error")
+                        if isinstance(error, dict) and error.get("message") is not None:
+                            text = _jq_raw(error["message"])
+                        elif error is not None:
+                            text = _jq_raw(error)
+                        else:
+                            text = json.dumps(payload, ensure_ascii=False)
+                        should_echo = True
+                    elif event_type != "thread.started":
+                        text = json.dumps(payload, ensure_ascii=False)
+            if text:
+                rendered.append(text)
+                rendered_file.write(text.rstrip("\n") + "\n")
+                if should_echo:
+                    io.echo(text)
+    rc = proc.wait()
+    return rc, "\n".join(rendered), thread_id
 
 
 def _write_agent_out(io: AgentIO, text: str) -> None:
@@ -323,26 +415,34 @@ def _worker_codex(
         argv = [
             _resolve_argv0("codex"),
             "exec",
+            "--json",
             "--sandbox",
             "workspace-write",
             *model_args,
             prompt,
         ]
-        rc, out = _run_streaming(argv, io)
-        session.worker_session = "last"
     else:
         # exec resume has no --sandbox flag, so override config with -c (sh:1072).
         argv = [
             _resolve_argv0("codex"),
             "exec",
             "resume",
-            "--last",
+            "--json",
             "-c",
             'sandbox_mode="workspace-write"',
             *model_args,
+            session.worker_session,
             prompt,
         ]
-        rc, out = _run_streaming(argv, io)
+    rc, out, thread_id = _run_codex_json(argv, io)
+    if thread_id:
+        session.worker_session = thread_id
+    elif not session.worker_session:
+        io.echo(
+            "(warning: codex did not report a thread ID; the next worker call "
+            "will start a fresh session)"
+        )
+    session.last_cost = ""
     return AgentResult(rc, out)
 
 
@@ -356,12 +456,14 @@ def _reviewer_codex(
     argv = [
         _resolve_argv0("codex"),
         "exec",
+        "--json",
         "--sandbox",
         "workspace-write",
         *_codex_model_args(ref, settings),
         prompt,
     ]
-    rc, out = _run_streaming(argv, io)
+    rc, out, _ = _run_codex_json(argv, io)
+    session.last_cost = ""
     return AgentResult(rc, out)
 
 
@@ -438,6 +540,7 @@ def run_worker(
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
+    io.raw_out.unlink(missing_ok=True)
     if ref.name == "claude":
         return _worker_claude(ref, prompt, settings, session, io)
     if ref.name == "codex":
@@ -454,6 +557,7 @@ def run_reviewer(
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
+    io.raw_out.unlink(missing_ok=True)
     if ref.name == "claude":
         return _reviewer_claude(ref, prompt, settings, session, io)
     if ref.name == "codex":
