@@ -67,6 +67,14 @@ def test_agent_ref_two_argument_construction_defaults_base_slot():
     assert getattr(ref, "base_slot", None) == ""
 
 
+def test_agent_session_two_argument_construction_preserves_last_cost():
+    session = AgentSession("worker-id", "1.25")
+
+    assert session.worker_session == "worker-id"
+    assert session.last_cost == "1.25"
+    assert session.owner is None
+
+
 def test_impl_ref_with_no_impl_settings_returns_exact_owner_ref():
     owner = AgentRef("A", "claude")
 
@@ -1071,7 +1079,9 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
         run_id="r",
     )
     io, _ = make_io(tmp_path)
-    session = AgentSession(worker_session="prev-session")
+    session = AgentSession(
+        worker_session="prev-session", owner=AgentRef("A", "claude")
+    )
     run_worker("claude", "the prompt", s, session, io)
     argv = seen["argv"]
     assert argv[:2] == ["claude", "-p"]
@@ -1103,7 +1113,7 @@ def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path)
     monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "not json at all"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = AgentSession(worker_session="keep-me")
+    session = AgentSession(worker_session="keep-me", owner=AgentRef("A", "claude"))
     result = run_worker("claude", "p", s, session, io)
     assert result.rc == 0
     assert result.text == "not json at all"
@@ -1114,12 +1124,18 @@ def test_claude_worker_top_level_null_matches_bash(monkeypatch, tmp_path):
     monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, "null"))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = AgentSession(worker_session="old-session", last_cost="old-cost")
+    session = AgentSession(
+        worker_session="old-session",
+        last_cost="old-cost",
+        owner=AgentRef("A", "claude"),
+    )
 
     result = run_worker("claude", "p", s, session, io)
 
     assert result == AgentResult(rc=0, text="")
-    assert session == AgentSession(worker_session="null", last_cost="")
+    assert session == AgentSession(
+        worker_session="null", last_cost="", owner=AgentRef("A", "claude")
+    )
     assert io.agent_out.read_text(encoding="utf-8") == "null\n"
 
 
@@ -1131,12 +1147,18 @@ def test_claude_worker_non_object_json_matches_bash_jq_failure(
     monkeypatch.setattr(agents, "_run_captured", lambda argv: (0, raw))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = AgentSession(worker_session="old-session", last_cost="old-cost")
+    session = AgentSession(
+        worker_session="old-session",
+        last_cost="old-cost",
+        owner=AgentRef("A", "claude"),
+    )
 
     result = run_worker("claude", "p", s, session, io)
 
     assert result == AgentResult(rc=5, text="")
-    assert session == AgentSession(worker_session="", last_cost="")
+    assert session == AgentSession(
+        worker_session="", last_cost="", owner=AgentRef("A", "claude")
+    )
     assert io.agent_out.read_text(encoding="utf-8") == raw + "\n"
 
 
@@ -1161,7 +1183,9 @@ def test_claude_worker_session_id_uses_jq_raw_coercion(
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
-    session = AgentSession(worker_session="old-session")
+    session = AgentSession(
+        worker_session="old-session", owner=AgentRef("A", "claude")
+    )
 
     run_worker("claude", "p", s, session, io)
 
@@ -1460,7 +1484,13 @@ def test_agy_reviewer_uses_30m_timeout_and_no_continue(monkeypatch, tmp_path):
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
     io, _ = make_io(tmp_path)
-    run_reviewer("agy", "p", s, AgentSession(worker_session="continue"), io)
+    run_reviewer(
+        "agy",
+        "p",
+        s,
+        AgentSession(worker_session="continue", owner=AgentRef("A", "agy")),
+        io,
+    )
     argv = seen["argv"]
     assert "--print-timeout" in argv and "30m" in argv
     assert "--continue" not in argv  # reviewers always start fresh

@@ -288,14 +288,15 @@ def _validate_impl_args(settings: Settings, adapters: tuple[str, ...]) -> None:
 
 @dataclass
 class AgentSession:
-    """Bash WORKER_SESSION/LAST_COST (sh:1036-1038), owned by the workflow.
+    """One active worker session and its full agent-ref owner.
 
-    The workflow resets worker_session at stage boundaries (begin_stage);
-    reviewer calls never read it -- each review round starts fresh.
+    Changing owners discards the stored worker session. The workflow also
+    resets both fields at stage boundaries; reviewer calls never read them.
     """
 
     worker_session: str = ""
     last_cost: str = ""
+    owner: AgentRef | None = None
 
 
 @dataclass
@@ -746,6 +747,9 @@ def run_worker(
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
+    if session.owner != ref:
+        session.worker_session = ""
+        session.owner = ref
     io.raw_out.unlink(missing_ok=True)
     if ref.name == "claude":
         return _worker_claude(ref, prompt, settings, session, io)

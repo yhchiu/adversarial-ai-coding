@@ -96,6 +96,50 @@ def test_codex_worker_uses_exact_thread_id_and_slot_model(monkeypatch, tmp_path)
     assert session.worker_session == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
+def test_worker_session_is_discarded_when_agent_ref_changes(monkeypatch, tmp_path):
+    calls = []
+    thread_ids = iter(
+        [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+        ]
+    )
+
+    def fake_run(argv, io):
+        calls.append(argv)
+        return 0, "ok", next(thread_ids)
+
+    monkeypatch.setattr(agents, "_run_codex_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    s = settings(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "MODEL_A": "owner-model",
+            "IMPL_MODEL": "implementation-model",
+        }
+    )
+    owner = agents.AgentRef("A", "codex")
+    implementation = agents.impl_ref(owner, s)
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+
+    agents.run_worker(owner, "owner first", s, session, io)
+    agents.run_worker(implementation, "implementation", s, session, io)
+    agents.run_worker(owner, "owner again", s, session, io)
+
+    old_ids = {
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    }
+    assert all(call[:3] == ["codex", "exec", "--json"] for call in calls)
+    assert all("resume" not in call for call in calls)
+    assert all(not old_ids.intersection(call) for call in calls[1:])
+    assert session.worker_session == "33333333-3333-4333-8333-333333333333"
+    assert session.owner == owner
+
+
 def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_path):
     monkeypatch.setattr(
         agents, "_run_codex_json", lambda argv, io: (0, "ok", "")
@@ -103,9 +147,10 @@ def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_pa
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = settings({"AGENT_A": "codex", "AGENT_B": "claude"})
     io, _ = make_io(tmp_path)
-    session = agents.AgentSession(worker_session="keep-this-id")
+    ref = agents.AgentRef("A", "codex")
+    session = agents.AgentSession(worker_session="keep-this-id", owner=ref)
 
-    agents.run_worker(agents.AgentRef("A", "codex"), "prompt", s, session, io)
+    agents.run_worker(ref, "prompt", s, session, io)
 
     assert session.worker_session == "keep-this-id"
 
@@ -148,6 +193,7 @@ def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path
     )
     io, _ = make_io(tmp_path)
     session = agents.AgentSession()
+    ref = agents.AgentRef("A", "codex")
     events = RetryEvents(
         archive_attempt=lambda attempt, rc: None,
         log_retry=lambda message: None,
@@ -157,7 +203,7 @@ def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path
 
     result = agent_call(
         lambda: agents.run_worker(
-            agents.AgentRef("A", "codex"), "prompt", s, session, io
+            ref, "prompt", s, session, io
         ),
         agent_out=io.agent_out,
         settings=s,
@@ -167,6 +213,7 @@ def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path
 
     assert result.rc == 0
     assert calls[1][-2:] == ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "prompt"]
+    assert session.owner == ref
 
 
 def test_codex_same_agent_validation_and_reserved_args():

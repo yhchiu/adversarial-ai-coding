@@ -57,11 +57,13 @@ def test_begin_stage_skip_verifies_artifacts(make_ctx, new_repo):
         begin_stage(ctx, "stage-one", new_repo / "missing-artifact.md")
 
 
-def test_begin_stage_resets_worker_session(make_ctx):
+def test_begin_stage_resets_worker_session_and_owner(make_ctx):
     ctx = make_ctx()
     ctx.session.worker_session = "old-session"
+    ctx.session.owner = ctx.ref("A")
     begin_stage(ctx, "next-stage")
     assert ctx.session.worker_session == ""
+    assert ctx.session.owner is None
 
 
 def test_begin_end_without_claimed_state(make_ctx):

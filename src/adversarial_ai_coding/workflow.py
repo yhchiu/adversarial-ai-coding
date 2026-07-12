@@ -305,6 +305,7 @@ def begin_stage(ctx: WorkflowContext, name: str, *artifacts: Path) -> bool:
         return False
     ctx.cur_stage = name
     ctx.session.worker_session = ""
+    ctx.session.owner = None
     ctx.cur_round = 1
     ctx.archive.log_section(
         "stage begin",
