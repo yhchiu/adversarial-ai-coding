@@ -107,6 +107,10 @@ uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 # 交換 agent
 AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 
+# 同一個內建 CLI 放在兩個 slot,各自使用不同模型
+AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
 DUAL_SPEC=1 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 
@@ -163,9 +167,9 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 |---|---|---|
 | `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令 |
 | `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
-| `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型,例 `haiku`、`gpt-5.1-codex-mini`;便宜任務/試跑時控制成本用。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
-| `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;A、B 同為 claude 時以 `MODEL_A` 為準。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent CLI 的額外參數,依空白切割後附加。例:`CODEX_ARGS='-c model_reasoning_effort=low'`(ChatGPT 訂閱帳號無 mini 模型,降 reasoning effort 是主要省錢手段) |
+| `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
+| `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent command 共用的額外參數,依空白切割。session 控制旗標由 workflow 保留,見下節 |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
@@ -274,11 +278,16 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | | claude | codex | agy |
 |---|---|---|---|
 | 非互動執行 | `claude -p` | `codex exec` | `agy --print` |
-| session 續接 | `--resume <id>`(精準) | `resume --last`(取最近一次) | `--continue`(取最近一次) |
+| session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) |
+| id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` |
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) |
 | 費用回報 | 有(metrics.csv) | 無 | 無 |
 
-- **A 與 B 不能同時是 `codex` 或同時是 `agy`**:兩者都以「最近一次 session」續接,互審會讓工作者續接到審查者的對話,workflow 直接擋下。
+- Claude、Codex、Agy 都可同時放在 A/B slot;`MODEL_A`、`MODEL_B` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
+- workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Codex 原始 JSONL 與 Agy log 會存成每 attempt 的 `.cli.raw` artifact。
+- `CODEX_ARGS` 不得包含 `--json`、`resume`、`--sandbox` 或 `sandbox_mode` 覆寫;`AGY_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。這些旗標由 workflow 管理,避免 session ownership 被靜默奪走。
+- Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
+- 自訂 agent 沒有自動 session resume;A/B 使用完全相同的自訂 command 仍會拒絕。若底層 CLI 相同,請用兩個 wrapper command 名稱隔離 session/profile。
 - `codex exec resume` 沒有 `--sandbox` 旗標,workflow 改用 `-c 'sandbox_mode="workspace-write"'`。
 - agy 的 `--print-timeout` 預設僅 5 分鐘,workflow 已調高(工作 60 分、審查 30 分)。
 - 各 CLI 旗標以本機 `--help` 為準(本 workflow 依 2026-07 版本撰寫)。

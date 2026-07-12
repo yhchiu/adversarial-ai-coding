@@ -166,6 +166,13 @@ Swap the worker and reviewer agents:
 AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
 ```
 
+Use the same built-in CLI in both slots with different slot-specific models:
+
+```bash
+AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+```
+
 Use custom agent or wrapper commands:
 
 ```bash
@@ -233,7 +240,9 @@ failure. A custom reviewer must write `.workflow/review.md` and
 `.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom agents
 do not get automatic session resume, and `MODEL_A` / `MODEL_B` are not
 translated into model flags for them. Put model flags in `AGENT_A_ARGS` /
-`AGENT_B_ARGS`.
+`AGENT_B_ARGS`. Identical custom command names remain blocked because the
+workflow cannot determine their session behavior; use two wrapper names when
+both slots share the same underlying custom CLI.
 
 If a custom CLI needs session continuity, handle it in a wrapper script. For
 example, give the worker and reviewer separate profiles, session ids, or cache
@@ -277,9 +286,9 @@ Add `--json` output to the CLI.
 |---|---:|---|
 | `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. |
 | `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
-| `MODEL_A` | CLI default | Model override for built-in worker slots. Custom agents should pass model flags through `AGENT_A_ARGS`. |
-| `MODEL_B` | CLI default | Model override for built-in reviewer slots. Custom agents should pass model flags through `AGENT_B_ARGS`. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in agent commands, split on whitespace and appended to agent calls. |
+| `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
+| `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and split on whitespace. Session-control flags documented below are reserved. |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
@@ -402,6 +411,7 @@ your-project/
 |       |-- NNN-*-prompt.md
 |       |-- NNN-*-output.txt
 |       |-- NNN-*-attempt-*-rc*.raw
+|       |-- NNN-*-attempt-*-rc*.cli.raw
 |       |-- NNN-review-*.md
 |       |-- NNN-verdict-*.json
 |       |-- NNN-*-git-status.txt
@@ -414,6 +424,29 @@ Each archived artifact has a `.meta.json` sidecar with generator, `engine`,
 model, stage, round, run id, and timestamp data. The archive schema keeps the
 stable `engine` field name for backward compatibility; it records the resolved
 agent command/runtime used for the call.
+
+## Agent CLI Session Behavior
+
+| | Claude | Codex | Agy |
+|---|---|---|---|
+| Non-interactive call | `claude -p` | `codex exec --json` | `agy --print` |
+| Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` |
+| ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record |
+| Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` |
+
+Claude, Codex, and Agy may each be used in both slots. Worker sessions resume
+only by their captured ID, while every reviewer call starts fresh. The workflow
+never falls back to Codex `--last` or Agy `--continue`: if a fresh call does not
+yield an ID, it warns and starts fresh again next time; if an established
+session later omits the ID, the known ID is retained. Codex JSONL and Agy logs
+are archived as per-attempt `.cli.raw` artifacts for diagnosis.
+
+`CODEX_ARGS` must not contain `--json`, `resume`, `--sandbox`, or a
+`sandbox_mode` override. `AGY_ARGS` must not contain `--log-file`, `--continue`,
+or `--conversation`. These flags belong to the workflow so user arguments
+cannot redirect session ownership. Agy conversation IDs depend on its current
+log wording; an incompatible Agy upgrade degrades safely to a warning and fresh
+sessions rather than resuming an unrelated conversation.
 
 ## Protected Acceptance Tests
 
@@ -439,9 +472,9 @@ test and update `.workflow/protected-base.sha`, or remove the file from
   worth the extra cost.
 - `DUAL_SPEC=1` intentionally refuses `HUMAN_GATE=0` and non-interactive
   terminals because the workflow requires a human owner decision.
-- `codex`, `agy`, and identical custom agent commands cannot be used as both
-  worker and reviewer at the same time. Use distinct wrapper command names when
-  both slots share the same underlying custom CLI.
+- Identical custom agent commands cannot be used as both worker and reviewer.
+  Use distinct wrapper command names when both slots share the same underlying
+  custom CLI. Identical built-in Claude, Codex, and Agy slots are supported.
 
 ## Testing This Repository
 
