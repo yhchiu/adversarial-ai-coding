@@ -112,23 +112,29 @@ def _validate_reserved_args(settings: Settings) -> None:
     for index, token in enumerate(tokens):
         normalized = token.strip("'\"")
         if (
-            normalized in {"--json", "resume", "--sandbox"}
+            normalized in {"--json", "resume", "--sandbox", "-s"}
             or normalized.startswith("--sandbox=")
+            or normalized.startswith("-s=")
         ):
             raise SettingsError(
                 f"CODEX_ARGS cannot contain session-control argument:{token}"
             )
-        if normalized == "-c" and index + 1 < len(tokens):
+        if normalized in {"-c", "--config"} and index + 1 < len(tokens):
             value = tokens[index + 1].strip("'\"")
             if value.startswith("sandbox_mode="):
                 raise SettingsError(
                     "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
                 )
+        if normalized.startswith("--config=sandbox_mode="):
+            raise SettingsError(
+                "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
+            )
     for token in settings.agy_args.split():
         normalized = token.strip("'\"")
         if (
             normalized in {"--log-file", "--continue", "--conversation"}
             or normalized.startswith("--log-file=")
+            or normalized.startswith("--continue=")
             or normalized.startswith("--conversation=")
         ):
             raise SettingsError(
@@ -494,9 +500,9 @@ _AGY_UUID = (
     r"[0-9a-f]{4}-[0-9a-f]{12}"
 )
 _AGY_CONVERSATION = re.compile(
-    rf"(?:Created conversation\s+|Print mode:\s*conversation=)"
+    rf"^(?:Created conversation\s+|Print mode:\s*conversation=)"
     rf"({_AGY_UUID})(?![0-9a-f-])",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 
 

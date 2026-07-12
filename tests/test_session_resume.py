@@ -173,13 +173,28 @@ def test_codex_same_agent_validation_and_reserved_args():
     same = settings({"AGENT_A": "codex", "AGENT_B": "codex"})
     agents.validate_agents(same, which=lambda name: "C:/fake/" + name)
 
-    for value in ("--json", "resume", "--sandbox workspace-write", '-c sandbox_mode="read-only"'):
+    for value in (
+        "--json",
+        "resume",
+        "--sandbox workspace-write",
+        "--sandbox=workspace-write",
+        "-s workspace-write",
+        "-s=workspace-write",
+        '-c sandbox_mode="read-only"',
+        '--config sandbox_mode="read-only"',
+        '--config=sandbox_mode="read-only"',
+    ):
         invalid = settings({"CODEX_ARGS": value})
         with pytest.raises(SettingsError, match="CODEX_ARGS"):
             agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
 
-    allowed = settings({"CODEX_ARGS": "-c model_reasoning_effort=high"})
-    agents.validate_agents(allowed, which=lambda name: "C:/fake/" + name)
+    for value in (
+        "-c model_reasoning_effort=high",
+        "--config model_reasoning_effort=high",
+        "--config=model_reasoning_effort=high",
+    ):
+        allowed = settings({"CODEX_ARGS": value})
+        agents.validate_agents(allowed, which=lambda name: "C:/fake/" + name)
 
 def test_fake_codex_keeps_worker_thread_separate_from_reviewer(monkeypatch, tmp_path):
     fake = tmp_path / "fake_codex.py"
@@ -268,6 +283,20 @@ def test_parse_agy_conversation_id_is_strict_and_unambiguous(tmp_path):
     )
     assert agents._parse_agy_conversation_id(log) == ""
     assert agents._parse_agy_conversation_id(tmp_path / "missing.log") == ""
+
+
+def test_parse_agy_conversation_id_requires_marker_at_line_start(tmp_path):
+    log = tmp_path / "agy.log"
+    log.write_text(
+        "prompt echoed Created conversation "
+        "11111111-1111-4111-8111-111111111111\n"
+        "Created conversation 22222222-2222-4222-8222-222222222222\n",
+        encoding="utf-8",
+    )
+
+    assert agents._parse_agy_conversation_id(log) == (
+        "22222222-2222-4222-8222-222222222222"
+    )
 
 
 def test_agy_worker_uses_unique_logs_and_exact_conversation(monkeypatch, tmp_path):
@@ -365,6 +394,7 @@ def test_agy_same_agent_validation_and_reserved_args():
         "--log-file output.log",
         "--log-file=output.log",
         "--continue",
+        "--continue=value",
         "--conversation value",
         "--conversation=value",
     ):
