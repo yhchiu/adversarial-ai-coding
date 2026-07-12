@@ -181,6 +181,161 @@ def test_validate_agents_ignores_reserved_words_inside_quoted_values(key, value)
     validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-c",
+        "--continue",
+        "--continue=true",
+        "-r previous-session",
+        "--resume previous-session",
+        "--resume=previous-session",
+        "--session-id session-id",
+        "--session-id=session-id",
+        "--fork-session",
+        "--fork-session=true",
+        "--no-session-persistence",
+        "--no-session-persistence=true",
+        "--from-pr 123",
+        "--from-pr=123",
+        "--output-format text",
+        "--output-format=text",
+        "--json-schema '{}'",
+        "--json-schema={}",
+    ],
+)
+def test_validate_agents_rejects_claude_workflow_owned_args(value):
+    s = make({"CLAUDE_ARGS": value})
+
+    with pytest.raises(SettingsError, match="CLAUDE_ARGS.*workflow-owned"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    ("key", "agent_env"),
+    [
+        ("CLAUDE_ARGS", {}),
+        ("CODEX_ARGS", {}),
+        ("AGY_ARGS", {"AGENT_A": "agy"}),
+    ],
+)
+@pytest.mark.parametrize("value", ["--model pro", "--model=pro", "-m pro", "-m=pro"])
+def test_validate_agents_rejects_builtin_model_args(key, agent_env, value):
+    s = make({**agent_env, key: value})
+
+    with pytest.raises(SettingsError) as exc_info:
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+    assert str(exc_info.value) == (
+        f"{key} cannot set the model; "
+        "use MODEL_A / MODEL_B / IMPL_MODEL instead"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-c model=gpt-5",
+        "-c=model=gpt-5",
+        "--config model=gpt-5",
+        "--config=model=gpt-5",
+    ],
+)
+def test_validate_agents_rejects_codex_model_config(value):
+    s = make({"CODEX_ARGS": value})
+
+    with pytest.raises(SettingsError) as exc_info:
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+    assert str(exc_info.value) == (
+        "CODEX_ARGS cannot set the model; "
+        "use MODEL_A / MODEL_B / IMPL_MODEL instead"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-c model_reasoning_effort=low",
+        "-c=model_reasoning_effort=low",
+        "--config model_reasoning_effort=low",
+        "--config=model_reasoning_effort=low",
+    ],
+)
+def test_validate_agents_allows_non_model_codex_config(value):
+    s = make({"CODEX_ARGS": value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "--json",
+        "resume thread-id",
+        "--sandbox workspace-write",
+        "--sandbox=workspace-write",
+        "-s workspace-write",
+        "-s=workspace-write",
+        "-c sandbox_mode=workspace-write",
+        "--config sandbox_mode=workspace-write",
+        "--config=sandbox_mode=workspace-write",
+    ],
+)
+def test_validate_agents_rejects_codex_workflow_owned_args(value):
+    s = make({"CODEX_ARGS": value})
+
+    with pytest.raises(SettingsError):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "--log-file output.log",
+        "--log-file=output.log",
+        "--continue",
+        "--continue=true",
+        "--conversation conversation-id",
+        "--conversation=conversation-id",
+    ],
+)
+def test_validate_agents_rejects_agy_workflow_owned_args(value):
+    s = make({"AGENT_A": "agy", "AGY_ARGS": value})
+
+    with pytest.raises(SettingsError):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    ("key", "agent_env", "value"),
+    [
+        ("CLAUDE_ARGS", {}, "--json"),
+        ("CODEX_ARGS", {}, "--continue"),
+        ("AGY_ARGS", {"AGENT_A": "agy"}, "--sandbox workspace-write"),
+    ],
+)
+def test_validate_agents_allows_flags_reserved_by_other_builtin_adapters(
+    key, agent_env, value
+):
+    s = make({**agent_env, key: value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
+    s = make(
+        {
+            "AGENT_A": "custom-a",
+            "AGENT_B": "custom-b",
+            "AGENT_A_ARGS": "--model pro resume --json",
+            "AGENT_B_ARGS": "-m reviewer --conversation=id --output-format=json",
+        }
+    )
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
 def make_io(tmp_path, lines=None):
     sink = [] if lines is None else lines
     return AgentIO(

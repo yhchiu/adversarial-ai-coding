@@ -117,44 +117,89 @@ def _split_cli_args(variable: str, raw: str) -> list[str]:
         ) from None
 
 
-def _validate_reserved_args(settings: Settings) -> None:
-    parsed_args = {
-        "CLAUDE_ARGS": _split_cli_args("CLAUDE_ARGS", settings.claude_args),
-        "CODEX_ARGS": _split_cli_args("CODEX_ARGS", settings.codex_args),
-        "AGY_ARGS": _split_cli_args("AGY_ARGS", settings.agy_args),
-        "AGENT_A_ARGS": _split_cli_args("AGENT_A_ARGS", settings.agent_a_args),
-        "AGENT_B_ARGS": _split_cli_args("AGENT_B_ARGS", settings.agent_b_args),
-    }
-    tokens = parsed_args["CODEX_ARGS"]
+def _matches_option(token: str, option: str) -> bool:
+    return token == option or token.startswith(f"{option}=")
+
+
+def _model_conflict(variable: str) -> SettingsError:
+    return SettingsError(
+        f"{variable} cannot set the model; "
+        "use MODEL_A / MODEL_B / IMPL_MODEL instead"
+    )
+
+
+def _validate_builtin_arg_tokens(
+    variable: str, adapter: str, tokens: list[str]
+) -> None:
     for index, token in enumerate(tokens):
-        if (
-            token in {"--json", "resume", "--sandbox", "-s"}
-            or token.startswith("--sandbox=")
-            or token.startswith("-s=")
+        if _matches_option(token, "--model") or _matches_option(token, "-m"):
+            raise _model_conflict(variable)
+
+        if adapter == "claude" and (
+            token in {"-c", "-r"}
+            or any(
+                _matches_option(token, option)
+                for option in {
+                    "--continue",
+                    "--resume",
+                    "--session-id",
+                    "--fork-session",
+                    "--no-session-persistence",
+                    "--from-pr",
+                    "--output-format",
+                    "--json-schema",
+                }
+            )
         ):
             raise SettingsError(
-                f"CODEX_ARGS cannot contain session-control argument:{token}"
+                f"{variable} cannot contain workflow-owned argument:{token}"
             )
-        if token in {"-c", "--config"} and index + 1 < len(tokens):
-            value = tokens[index + 1]
+
+        if adapter == "codex":
+            if (
+                _matches_option(token, "--json")
+                or token == "resume"
+                or _matches_option(token, "--sandbox")
+                or _matches_option(token, "-s")
+            ):
+                raise SettingsError(
+                    f"{variable} cannot contain session-control argument:{token}"
+                )
+
+            value = ""
+            if token in {"-c", "--config"} and index + 1 < len(tokens):
+                value = tokens[index + 1]
+            elif token.startswith("-c="):
+                value = token.removeprefix("-c=")
+            elif token.startswith("--config="):
+                value = token.removeprefix("--config=")
+
+            if value.startswith("model="):
+                raise _model_conflict(variable)
             if value.startswith("sandbox_mode="):
                 raise SettingsError(
-                    "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
+                    f"{variable} cannot override sandbox_mode; the workflow owns it"
                 )
-        if token.startswith("--config=sandbox_mode="):
-            raise SettingsError(
-                "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
-            )
-    for token in parsed_args["AGY_ARGS"]:
-        if (
-            token in {"--log-file", "--continue", "--conversation"}
-            or token.startswith("--log-file=")
-            or token.startswith("--continue=")
-            or token.startswith("--conversation=")
+
+        if adapter == "agy" and any(
+            _matches_option(token, option)
+            for option in {"--log-file", "--continue", "--conversation"}
         ):
             raise SettingsError(
-                f"AGY_ARGS cannot contain session-control argument:{token}"
+                f"{variable} cannot contain session-control argument:{token}"
             )
+
+
+def _validate_reserved_args(settings: Settings) -> None:
+    for variable, adapter, raw in (
+        ("CLAUDE_ARGS", "claude", settings.claude_args),
+        ("CODEX_ARGS", "codex", settings.codex_args),
+        ("AGY_ARGS", "agy", settings.agy_args),
+    ):
+        _validate_builtin_arg_tokens(variable, adapter, _split_cli_args(variable, raw))
+
+    _split_cli_args("AGENT_A_ARGS", settings.agent_a_args)
+    _split_cli_args("AGENT_B_ARGS", settings.agent_b_args)
 
 
 @dataclass
