@@ -148,6 +148,39 @@ def test_validate_agents_both_claude_is_allowed():
     validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
 
 
+@pytest.mark.parametrize(
+    ("key", "agent_env"),
+    [
+        ("CLAUDE_ARGS", {}),
+        ("CODEX_ARGS", {}),
+        ("AGY_ARGS", {"AGENT_A": "agy"}),
+        ("AGENT_A_ARGS", {"AGENT_A": "custom-a"}),
+        ("AGENT_B_ARGS", {"AGENT_B": "custom-b"}),
+    ],
+)
+def test_validate_agents_rejects_unclosed_quotes(key, agent_env):
+    s = make({**agent_env, key: '--flag "unterminated'})
+
+    with pytest.raises(SettingsError, match=rf"{key}.*quoting"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        (
+            "CODEX_ARGS",
+            '--config developer_instructions="mention --sandbox safely"',
+        ),
+        ("AGY_ARGS", '--append-system-prompt "mention --continue safely"'),
+    ],
+)
+def test_validate_agents_ignores_reserved_words_inside_quoted_values(key, value):
+    s = make({key: value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
 def make_io(tmp_path, lines=None):
     sink = [] if lines is None else lines
     return AgentIO(
@@ -178,7 +211,11 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
         encoding="utf-8",
     )
     s = Settings.from_env(
-        {"AGENT_A": sys.executable, "AGENT_A_ARGS": f"{fake} --flag value", "AGENT_B": "codex"},
+        {
+            "AGENT_A": sys.executable,
+            "AGENT_A_ARGS": f"'{fake}' --flag \"two words\"",
+            "AGENT_B": "codex",
+        },
         run_id="r",
     )
     io, sink = make_io(tmp_path)
@@ -187,10 +224,10 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
     assert result.rc == 0
     captured = capture.read_text(encoding="utf-8")
     # The interpreter consumes fake.py as sys.argv[0]. The custom agent sees
-    # the whitespace-split slot args followed by the prompt as the final arg.
+    # the POSIX-quoted slot args followed by the prompt as the final arg.
     assert "argc=3" in captured
     assert "arg1=--flag" in captured
-    assert "arg2=value" in captured
+    assert "arg2=two words" in captured
     assert "arg3=hello prompt" in captured
     assert io.agent_out.read_text(encoding="utf-8").strip() == "custom agent ran"
     assert sink and sink[-1].strip() == "custom agent ran"
@@ -251,7 +288,12 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
     monkeypatch.setattr(agents, "_run_captured", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env(
-        {"MODEL_A": "haiku", "CLAUDE_ARGS": "--fast", "TOOLS": "Bash(git *)"}, run_id="r"
+        {
+            "MODEL_A": "haiku",
+            "CLAUDE_ARGS": '--append-system-prompt "two words"',
+            "TOOLS": "Bash(git *)",
+        },
+        run_id="r",
     )
     io, _ = make_io(tmp_path)
     session = AgentSession(worker_session="prev-session")
@@ -263,7 +305,8 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
     assert "--allowedTools" in argv
     assert argv[argv.index("--allowedTools") + 1] == "Bash(git *)"
     assert argv[argv.index("--model") + 1] == "haiku"
-    assert "--fast" in argv
+    prompt_index = argv.index("--append-system-prompt")
+    assert argv[prompt_index + 1] == "two words"
     assert argv[argv.index("--resume") + 1] == "prev-session"
 
 
@@ -390,8 +433,17 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
 
     monkeypatch.setattr(agents, "_run_codex_json", fake_stream)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
-    s = Settings.from_env({"MODEL_B": "gpt-5.5", "AGENT_B": "codex",
-                           "CODEX_ARGS": "-c model_reasoning_effort=low"}, run_id="r")
+    s = Settings.from_env(
+        {
+            "MODEL_B": "gpt-5.5",
+            "AGENT_B": "codex",
+            "CODEX_ARGS": (
+                "-c model_reasoning_effort=low "
+                "--config 'developer_instructions=\"two words\"'"
+            ),
+        },
+        run_id="r",
+    )
     io, _ = make_io(tmp_path)
     session = AgentSession()
     run_worker("codex", "p1", s, session, io)
@@ -401,6 +453,7 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
     assert fresh[:5] == ["codex", "exec", "--json", "--sandbox", "workspace-write"]
     assert '-c' in fresh and 'model="gpt-5.5"' in fresh
     assert "model_reasoning_effort=low" in fresh
+    assert 'developer_instructions="two words"' in fresh
     assert fresh[-1] == "p1"
     assert resumed[:4] == ["codex", "exec", "resume", "--json"]
     assert "--last" not in resumed
@@ -422,7 +475,14 @@ def test_agy_worker_conversation_flag(monkeypatch, tmp_path):
 
     monkeypatch.setattr(agents, "_run_streaming", fake_stream)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
-    s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
+    s = Settings.from_env(
+        {
+            "AGENT_A": "agy",
+            "AGENT_B": "codex",
+            "AGY_ARGS": '--append-system-prompt "two words"',
+        },
+        run_id="r",
+    )
     io, _ = make_io(tmp_path)
     session = AgentSession()
     run_worker("agy", "p1", s, session, io)
@@ -434,6 +494,8 @@ def test_agy_worker_conversation_flag(monkeypatch, tmp_path):
     assert calls[1][index + 1] == "66666666-6666-4666-8666-666666666666"
     assert calls[0][:3] == ["agy", "--print", "p1"]
     assert "--dangerously-skip-permissions" in calls[0]
+    prompt_index = calls[0].index("--append-system-prompt")
+    assert calls[0][prompt_index + 1] == "two words"
 
 
 def test_claude_reviewer_writes_verdict_from_structured_output(monkeypatch, tmp_path):

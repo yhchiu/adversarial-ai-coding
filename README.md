@@ -288,8 +288,8 @@ Add `--json` output to the CLI.
 | `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
 | `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and split on whitespace. Session-control flags documented below are reserved. |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, split on whitespace and appended before the prompt-file instruction argument. |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and parsed with POSIX shell quoting. Session-control flags documented below are reserved. |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, parsed with POSIX shell quoting and appended before the prompt-file instruction argument. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
@@ -441,12 +441,18 @@ yield an ID, it warns and starts fresh again next time; if an established
 session later omits the ID, the known ID is retained. Codex JSONL and Agy logs
 are archived as per-attempt `.cli.raw` artifacts for diagnosis.
 
-`CODEX_ARGS` must not contain `--json`, `resume`, `--sandbox`, or a
-`sandbox_mode` override. `AGY_ARGS` must not contain `--log-file`, `--continue`,
-or `--conversation`. These flags belong to the workflow so user arguments
-cannot redirect session ownership. Agy conversation IDs depend on its current
-log wording; an incompatible Agy upgrade degrades safely to a warning and fresh
-sessions rather than resuming an unrelated conversation.
+`CODEX_ARGS` must not contain `--json`, `resume`, `--sandbox` / `-s`, or a
+`sandbox_mode` override through `-c` / `--config`. `AGY_ARGS` must not contain
+`--log-file`, `--continue`, or `--conversation`. These flags belong to the
+workflow so user arguments cannot redirect session ownership. Agy conversation
+IDs depend on its current log wording; an incompatible Agy upgrade degrades
+safely to a warning and fresh sessions rather than resuming an unrelated
+conversation.
+
+All built-in and custom agent argument variables use POSIX shell quoting on
+every platform. Quote values to preserve embedded spaces. On Windows, quote
+paths containing backslashes or write them with `/`; unquoted backslashes have
+their POSIX escape meaning.
 
 ## Protected Acceptance Tests
 

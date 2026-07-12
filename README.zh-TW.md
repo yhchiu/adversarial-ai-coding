@@ -169,8 +169,8 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent command 共用的額外參數,依空白切割。session 控制旗標由 workflow 保留,見下節 |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依空白切割後加在 prompt-file instruction 前 |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent command 共用的額外參數,依 POSIX shell quoting 解析。session 控制旗標由 workflow 保留,見下節 |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依 POSIX shell quoting 解析後加在 prompt-file instruction 前 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
@@ -285,7 +285,8 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 - Claude、Codex、Agy 都可同時放在 A/B slot;`MODEL_A`、`MODEL_B` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
 - workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Codex 原始 JSONL 與 Agy log 會存成每 attempt 的 `.cli.raw` artifact。
-- `CODEX_ARGS` 不得包含 `--json`、`resume`、`--sandbox` 或 `sandbox_mode` 覆寫;`AGY_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。這些旗標由 workflow 管理,避免 session ownership 被靜默奪走。
+- `CODEX_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。這些旗標由 workflow 管理,避免 session ownership 被靜默奪走。
+- 所有內建與自訂 agent 的額外參數在各平台都採 POSIX shell quoting;含空白的值必須引用。Windows 反斜線路徑必須引用或改用 `/`,未引用的反斜線會套用 POSIX escape 語意。
 - Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
 - 自訂 agent 沒有自動 session resume;A/B 使用完全相同的自訂 command 仍會拒絕。若底層 CLI 相同,請用兩個 wrapper command 名稱隔離 session/profile。
 - `codex exec resume` 沒有 `--sandbox` 旗標,workflow 改用 `-c 'sandbox_mode="workspace-write"'`。

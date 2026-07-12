@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -107,35 +108,49 @@ def validate_agents(
         )
 
 
+def _split_cli_args(variable: str, raw: str) -> list[str]:
+    try:
+        return shlex.split(raw, posix=True)
+    except ValueError as exc:
+        raise SettingsError(
+            f"{variable} contains invalid shell quoting: {exc}"
+        ) from None
+
+
 def _validate_reserved_args(settings: Settings) -> None:
-    tokens = settings.codex_args.split()
+    parsed_args = {
+        "CLAUDE_ARGS": _split_cli_args("CLAUDE_ARGS", settings.claude_args),
+        "CODEX_ARGS": _split_cli_args("CODEX_ARGS", settings.codex_args),
+        "AGY_ARGS": _split_cli_args("AGY_ARGS", settings.agy_args),
+        "AGENT_A_ARGS": _split_cli_args("AGENT_A_ARGS", settings.agent_a_args),
+        "AGENT_B_ARGS": _split_cli_args("AGENT_B_ARGS", settings.agent_b_args),
+    }
+    tokens = parsed_args["CODEX_ARGS"]
     for index, token in enumerate(tokens):
-        normalized = token.strip("'\"")
         if (
-            normalized in {"--json", "resume", "--sandbox", "-s"}
-            or normalized.startswith("--sandbox=")
-            or normalized.startswith("-s=")
+            token in {"--json", "resume", "--sandbox", "-s"}
+            or token.startswith("--sandbox=")
+            or token.startswith("-s=")
         ):
             raise SettingsError(
                 f"CODEX_ARGS cannot contain session-control argument:{token}"
             )
-        if normalized in {"-c", "--config"} and index + 1 < len(tokens):
-            value = tokens[index + 1].strip("'\"")
+        if token in {"-c", "--config"} and index + 1 < len(tokens):
+            value = tokens[index + 1]
             if value.startswith("sandbox_mode="):
                 raise SettingsError(
                     "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
                 )
-        if normalized.startswith("--config=sandbox_mode="):
+        if token.startswith("--config=sandbox_mode="):
             raise SettingsError(
                 "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
             )
-    for token in settings.agy_args.split():
-        normalized = token.strip("'\"")
+    for token in parsed_args["AGY_ARGS"]:
         if (
-            normalized in {"--log-file", "--continue", "--conversation"}
-            or normalized.startswith("--log-file=")
-            or normalized.startswith("--continue=")
-            or normalized.startswith("--conversation=")
+            token in {"--log-file", "--continue", "--conversation"}
+            or token.startswith("--log-file=")
+            or token.startswith("--continue=")
+            or token.startswith("--conversation=")
         ):
             raise SettingsError(
                 f"AGY_ARGS cannot contain session-control argument:{token}"
@@ -308,7 +323,7 @@ def _claude_common_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
-    args += settings.claude_args.split()
+    args += _split_cli_args("CLAUDE_ARGS", settings.claude_args)
     return args
 
 
@@ -418,7 +433,7 @@ def _codex_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["-c", f'model="{model}"']
-    args += settings.codex_args.split()
+    args += _split_cli_args("CODEX_ARGS", settings.codex_args)
     return args
 
 
@@ -491,7 +506,7 @@ def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
-    args += settings.agy_args.split()
+    args += _split_cli_args("AGY_ARGS", settings.agy_args)
     return args
 
 
@@ -588,7 +603,9 @@ def _run_generic(
 ) -> AgentResult:
     argv = [
         _resolve_argv0(ref.name),
-        *generic_agent_args(ref, settings).split(),
+        *_split_cli_args(
+            f"AGENT_{ref.slot}_ARGS", generic_agent_args(ref, settings)
+        ),
         prompt,
     ]
     rc, out = _run_streaming(argv, io)
