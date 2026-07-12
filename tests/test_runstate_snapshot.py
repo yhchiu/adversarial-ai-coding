@@ -6,6 +6,8 @@ import pytest
 
 from adversarial_ai_coding.config import Settings
 from adversarial_ai_coding.runstate import (
+    IMMUTABLE_KEYS,
+    SNAPSHOT_KEYS,
     RunStateError,
     check_immutable,
     load_snapshot,
@@ -113,6 +115,33 @@ def test_snapshot_feeds_settings_from_env():
     assert values["max_rounds"] == "5"
     assert values["auto_branch"] == "1"
     assert values["use_worktree"] == "0"
+
+
+def test_impl_settings_are_snapshot_keys_but_not_immutable():
+    assert {"impl_agent", "impl_model", "impl_args"} <= set(SNAPSHOT_KEYS)
+    assert {"IMPL_AGENT", "IMPL_MODEL", "IMPL_ARGS"}.isdisjoint(IMMUTABLE_KEYS)
+
+
+def test_snapshot_values_includes_impl_settings():
+    s = make_settings(
+        {
+            "IMPL_AGENT": "custom-impl",
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": "--impl-flag value",
+        }
+    )
+    values = snapshot_values(
+        s,
+        branch="b",
+        gate_cmd="",
+        build_gate_cmd="",
+        task_arg="",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+    assert values["impl_agent"] == "custom-impl"
+    assert values["impl_model"] == "impl-model"
+    assert values["impl_args"] == "--impl-flag value"
 
 
 def test_plan_gate_survives_resume_without_the_env_var(tmp_path):

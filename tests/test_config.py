@@ -17,6 +17,9 @@ def test_defaults_match_bash():
     s = make()
     assert s.agent_a == "claude"
     assert s.agent_b == "codex"
+    assert s.impl_agent == ""
+    assert s.impl_model == ""
+    assert s.impl_args == ""
     assert s.model_a == ""
     assert s.model_b == ""
     assert s.max_rounds == 3
@@ -58,6 +61,67 @@ def test_custom_agent_args():
     # helpers.test.sh: "agent aliases:custom agent uses AGENT_A_ARGS"
     s = make({"AGENT_A": "custom-agent", "AGENT_A_ARGS": "--model custom --flag"})
     assert s.agent_a_args == "--model custom --flag"
+
+
+def test_impl_settings_read_environment_values():
+    s = make(
+        {
+            "IMPL_AGENT": "custom-impl",
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": "--impl-flag value",
+        }
+    )
+    assert s.impl_agent == "custom-impl"
+    assert s.impl_model == "impl-model"
+    assert s.impl_args == "--impl-flag value"
+
+
+def test_impl_settings_resume_from_snapshot():
+    s = make(
+        {},
+        snapshot={
+            "IMPL_AGENT": "snapshot-agent",
+            "IMPL_MODEL": "snapshot-model",
+            "IMPL_ARGS": "--snapshot-flag",
+        },
+    )
+    assert s.impl_agent == "snapshot-agent"
+    assert s.impl_model == "snapshot-model"
+    assert s.impl_args == "--snapshot-flag"
+
+
+def test_non_empty_impl_environment_values_override_snapshot():
+    snapshot = {
+        "IMPL_AGENT": "snapshot-agent",
+        "IMPL_MODEL": "snapshot-model",
+        "IMPL_ARGS": "--snapshot-flag",
+    }
+    s = make(
+        {
+            "IMPL_AGENT": "env-agent",
+            "IMPL_MODEL": "env-model",
+            "IMPL_ARGS": "--env-flag",
+        },
+        snapshot=snapshot,
+    )
+    assert s.impl_agent == "env-agent"
+    assert s.impl_model == "env-model"
+    assert s.impl_args == "--env-flag"
+
+
+def test_empty_impl_environment_values_do_not_clear_snapshot():
+    snapshot = {
+        "IMPL_AGENT": "snapshot-agent",
+        "IMPL_MODEL": "snapshot-model",
+        "IMPL_ARGS": "--snapshot-flag",
+    }
+    s = make(
+        {"IMPL_AGENT": "", "IMPL_MODEL": "", "IMPL_ARGS": ""},
+        snapshot=snapshot,
+    )
+    assert s.impl_agent == "snapshot-agent"
+    assert s.impl_model == "snapshot-model"
+    assert s.impl_args == "--snapshot-flag"
 
 
 def test_snapshot_supplies_resumed_defaults_and_env_wins():

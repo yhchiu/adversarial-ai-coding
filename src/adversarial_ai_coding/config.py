@@ -47,6 +47,9 @@ def _to_int(name: str, raw: str) -> int:
 class Settings:
     agent_a: str
     agent_b: str
+    impl_agent: str
+    impl_model: str
+    impl_args: str
     model_a: str
     model_b: str
     claude_args: str
@@ -86,6 +89,9 @@ class Settings:
         return cls(
             agent_a=persisted("AGENT_A", "claude"),
             agent_b=persisted("AGENT_B", "codex"),
+            impl_agent=persisted("IMPL_AGENT", ""),
+            impl_model=persisted("IMPL_MODEL", ""),
+            impl_args=persisted("IMPL_ARGS", ""),
             model_a=persisted("MODEL_A", ""),
             model_b=persisted("MODEL_B", ""),
             claude_args=persisted("CLAUDE_ARGS", ""),
