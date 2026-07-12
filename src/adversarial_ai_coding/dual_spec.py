@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .agents import AgentRef
 from .config import WorkflowAbort
 from .prompts import render_prompt
 from .review import review_loop, run_review
@@ -40,8 +41,8 @@ def dual_spec_owner_slot(decision: str) -> str | None:
     }.get(decision)
 
 
-def agent_for_slot(ctx: WorkflowContext, slot: str) -> str:
-    return ctx.settings.agent_a if slot == "A" else ctx.settings.agent_b
+def agent_for_slot(ctx: WorkflowContext, slot: str) -> AgentRef:
+    return ctx.ref(slot)
 
 
 def reviewer_slot_for_owner_slot(slot: str) -> str:
@@ -129,7 +130,7 @@ def merge_request_has_content(ctx: WorkflowContext) -> bool:
 
 def run_candidate_spec_review(
     ctx: WorkflowContext,
-    reviewer: str,
+    reviewer: AgentRef,
     scope: str,
     review_out: Path,
     verdict_out: Path,
@@ -202,7 +203,7 @@ def write_spec_comparison_index(ctx: WorkflowContext) -> None:
         comparison,
         "spec-comparison.md",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
     )
@@ -216,9 +217,9 @@ def write_dual_spec_decision_file(ctx: WorkflowContext, decision: str) -> None:
         "# Dual Spec Decision\n\n"
         f"- decision: {decision}\n"
         f"- selected owner slot: {owner_slot}\n"
-        f"- selected owner agent: {agent_for_slot(ctx, owner_slot)}\n"
+        f"- selected owner agent: {agent_for_slot(ctx, owner_slot).name}\n"
         f"- reviewer slot: {reviewer_slot}\n"
-        f"- reviewer agent: {agent_for_slot(ctx, reviewer_slot)}\n"
+        f"- reviewer agent: {agent_for_slot(ctx, reviewer_slot).name}\n"
         f"- candidate A: {ctx.spec_dir / 'spec-a.md'}\n"
         f"- candidate B: {ctx.spec_dir / 'spec-b.md'}\n\n"
         f"The selected owner produces or owns the final {ctx.spec_dir / 'spec.md'}.\n"
@@ -229,7 +230,7 @@ def write_dual_spec_decision_file(ctx: WorkflowContext, decision: str) -> None:
         decision_file,
         "spec-decision.md",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
     )
@@ -239,7 +240,7 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
     ctx.archive.log_section(
         "dual spec human selection",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
         echo=ctx.echo,
@@ -291,7 +292,7 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
             ctx.wf / "spec-merge-request.md",
             "spec-merge-request.md",
             "workflow",
-            "workflow",
+            None,
             ctx.cur_stage,
             ctx.cur_round,
         )
@@ -330,7 +331,7 @@ def restore_dual_spec_decision(ctx: WorkflowContext) -> None:
     set_spec_roles_from_slot(ctx, slot)
     ctx.echo_err(
         f"(restored dual-spec decision: {decision}; owner "
-        f"{ctx.spec_roles.owner_slot}={ctx.spec_roles.owner_agent})"
+        f"{ctx.spec_roles.owner_slot}={ctx.spec_roles.owner_agent.name})"
     )
 
 
@@ -377,7 +378,7 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
     if begin_stage(ctx, "write-spec-a", spec_a):
         work(
             ctx,
-            ctx.settings.agent_a,
+            ctx.ref("A"),
             render_prompt(
                 ctx.prompts_dir,
                 "dual-spec-write-candidate",
@@ -389,7 +390,7 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
     if begin_stage(ctx, "write-spec-b", spec_b):
         work(
             ctx,
-            ctx.settings.agent_b,
+            ctx.ref("B"),
             render_prompt(
                 ctx.prompts_dir,
                 "dual-spec-write-candidate",
@@ -406,7 +407,7 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
             "review-scope-candidate-spec",
             {"SPEC_FILE": str(spec_a), "CANDIDATE": "A", "OTHER_CANDIDATE": "B"},
         )
-        run_candidate_spec_review(ctx, ctx.settings.agent_b, scope, review_a, verdict_a)
+        run_candidate_spec_review(ctx, ctx.ref("B"), scope, review_a, verdict_a)
         end_stage(ctx)
 
     review_b = ctx.spec_dir / "spec-b.review-by-a.md"
@@ -417,10 +418,10 @@ def run_dual_spec_spec_stage(ctx: WorkflowContext, task: str) -> None:
             "review-scope-candidate-spec",
             {"SPEC_FILE": str(spec_b), "CANDIDATE": "B", "OTHER_CANDIDATE": "A"},
         )
-        run_candidate_spec_review(ctx, ctx.settings.agent_a, scope, review_b, verdict_b)
+        run_candidate_spec_review(ctx, ctx.ref("A"), scope, review_b, verdict_b)
         end_stage(ctx)
 
-    for slot, agent in (("a", ctx.settings.agent_a), ("b", ctx.settings.agent_b)):
+    for slot, agent in (("a", ctx.ref("A")), ("b", ctx.ref("B"))):
         comparison = ctx.spec_dir / f"spec-comparison-{slot}.md"
         if begin_stage(ctx, f"compare-specs-{slot}", comparison):
             work(

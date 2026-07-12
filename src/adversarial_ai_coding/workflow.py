@@ -14,7 +14,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .agents import AgentIO, AgentSession, notify as agents_notify, run_worker
+from .agents import (
+    AgentIO,
+    AgentRef,
+    AgentSession,
+    agent_ref,
+    notify as agents_notify,
+    run_worker,
+)
 from .archive import RunArchive, safe_slug
 from .config import Settings, WorkflowAbort
 from .gitops import protected_violations
@@ -56,8 +63,8 @@ def _default_ask(prompt: str) -> str:
 class SpecRoles:
     owner_slot: str = "A"
     reviewer_slot: str = "B"
-    owner_agent: str = ""
-    reviewer_agent: str = ""
+    owner_agent: AgentRef | None = None
+    reviewer_agent: AgentRef | None = None
 
 
 @dataclass
@@ -85,8 +92,11 @@ class WorkflowContext:
 
     def __post_init__(self) -> None:
         if not self.spec_roles.owner_agent:
-            self.spec_roles.owner_agent = self.settings.agent_a
-            self.spec_roles.reviewer_agent = self.settings.agent_b
+            self.spec_roles.owner_agent = self.ref("A")
+            self.spec_roles.reviewer_agent = self.ref("B")
+
+    def ref(self, slot: str) -> AgentRef:
+        return agent_ref(slot, self.settings)
 
     @property
     def agent_out(self) -> Path:
@@ -125,7 +135,7 @@ class WorkflowContext:
 
 
 def _retry_events(
-    ctx: WorkflowContext, role: str, agent: str, slug: str
+    ctx: WorkflowContext, role: str, agent: AgentRef, slug: str
 ) -> RetryEvents:
     return RetryEvents(
         archive_attempt=lambda attempt, rc: ctx.archive.archive_agent_attempt(
@@ -144,7 +154,7 @@ def _retry_events(
     )
 
 
-def work(ctx: WorkflowContext, agent: str, instruction: str) -> None:
+def work(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
     started = time.monotonic()
     ctx.session.last_cost = ""
     ctx.archive.log_section(
@@ -155,7 +165,7 @@ def work(ctx: WorkflowContext, agent: str, instruction: str) -> None:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    ctx.echo(f">>> Worker({agent}) is running...")
+    ctx.echo(f">>> Worker({agent.name}) is running...")
     slug = f"worker-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
     prompt_artifact = ctx.archive.archive_text(
         f"{slug}-prompt.md",
@@ -214,7 +224,7 @@ def work(ctx: WorkflowContext, agent: str, instruction: str) -> None:
         check_protected(ctx, agent)
 
 
-def check_protected(ctx: WorkflowContext, agent: str) -> None:
+def check_protected(ctx: WorkflowContext, agent: AgentRef) -> None:
     protected_file = ctx.wf / "protected-tests.txt"
     base_file = ctx.wf / "protected-base.sha"
     if not (protected_file.is_file() and base_file.is_file()):
@@ -222,7 +232,7 @@ def check_protected(ctx: WorkflowContext, agent: str) -> None:
     ctx.archive.log_section(
         "protected check",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
         echo=ctx.echo,
@@ -266,10 +276,8 @@ def set_spec_roles_from_slot(ctx: WorkflowContext, slot: str) -> None:
     ctx.spec_roles = SpecRoles(
         owner_slot=slot,
         reviewer_slot=reviewer,
-        owner_agent=(ctx.settings.agent_a if slot == "A" else ctx.settings.agent_b),
-        reviewer_agent=(
-            ctx.settings.agent_a if reviewer == "A" else ctx.settings.agent_b
-        ),
+        owner_agent=ctx.ref(slot),
+        reviewer_agent=ctx.ref(reviewer),
     )
 
 
@@ -291,7 +299,7 @@ def begin_stage(ctx: WorkflowContext, name: str, *artifacts: Path) -> bool:
     ctx.archive.log_section(
         "stage begin",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
         echo=ctx.echo,
@@ -308,7 +316,7 @@ def end_stage(ctx: WorkflowContext) -> None:
     ctx.state.record_stage(ctx.cur_stage, head_sha(ctx.workspace))
 
 
-def commit_work(ctx: WorkflowContext, agent: str, description: str) -> None:
+def commit_work(ctx: WorkflowContext, agent: AgentRef, description: str) -> None:
     from .gitops import ensure_committed
 
     ctx.archive.log_section(
@@ -321,7 +329,7 @@ def commit_work(ctx: WorkflowContext, agent: str, description: str) -> None:
     ensure_committed(ctx.workspace, ctx.cur_stage, ctx.echo_err)
 
 
-def commit_if_dirty(ctx: WorkflowContext, agent: str, description: str) -> None:
+def commit_if_dirty(ctx: WorkflowContext, agent: AgentRef, description: str) -> None:
     from .gitops import status_porcelain
 
     if not status_porcelain(ctx.workspace):
@@ -335,7 +343,7 @@ def _human_approval(
     ctx.archive.log_section(
         "human gate",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
         echo=ctx.echo,
@@ -433,7 +441,7 @@ def finish(
     ctx.archive.log_section(
         "finish",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
         echo=ctx.echo,
@@ -447,8 +455,8 @@ def finish(
         f"- Implementation plan:`{ctx.spec_dir}/plan.md`\n\n"
         "Generated by adversarial-ai-coding, with original slots "
         f"A={ctx.settings.agent_a} and B={ctx.settings.agent_b}.\n"
-        f"Final spec owner/worker: {roles.owner_slot}={roles.owner_agent}. "
-        f"Reviewer: {roles.reviewer_slot}={roles.reviewer_agent}.\n"
+        f"Final spec owner/worker: {roles.owner_slot}={roles.owner_agent.name}. "
+        f"Reviewer: {roles.reviewer_slot}={roles.reviewer_agent.name}.\n"
         "Each stage passed deterministic quality gates and cross-review. "
         "Acceptance tests were written by the reviewer and protected against "
         "worker edits.\n",
@@ -469,7 +477,7 @@ def finish(
         ctx.wf / "pr-body.md",
         "pr-body.md",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
     )
@@ -477,7 +485,7 @@ def finish(
         ctx.suggestions_path,
         "suggestions.md",
         "workflow",
-        "workflow",
+        None,
         ctx.cur_stage,
         ctx.cur_round,
     )
@@ -647,7 +655,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             protected_list,
             "protected-tests.txt",
             "workflow",
-            "workflow",
+            None,
             ctx.cur_stage,
             ctx.cur_round,
         )
@@ -655,7 +663,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             protected_base,
             "protected-base.sha",
             "workflow",
-            "workflow",
+            None,
             ctx.cur_stage,
             ctx.cur_round,
         )

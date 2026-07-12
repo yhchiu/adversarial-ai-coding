@@ -10,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from .agents import run_reviewer
+from .agents import AgentRef, run_reviewer
 from .archive import safe_slug
 from .config import WorkflowAbort
 from .gates import gate_loop
@@ -35,10 +35,10 @@ def verdict_approved(path: Path) -> bool:
 
 
 def compose_review_prompt(
-    agent: str, scope: str, prompts_dir: Path, wf: Path
+    agent: AgentRef, scope: str, prompts_dir: Path, wf: Path
 ) -> str:
     prompt = render_prompt(prompts_dir, "review", {"SCOPE": scope, "WF": str(wf)})
-    if agent == "claude":
+    if agent.name == "claude":
         return prompt
     instruction = render_prompt(
         prompts_dir, "verdict-file-instruction", {"WF": str(wf)}
@@ -77,7 +77,7 @@ def show_blockers(ctx: WorkflowContext) -> None:
         ctx.log(f"  - {blocker}")
 
 
-def run_review(ctx: WorkflowContext, agent: str, scope: str) -> bool:
+def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
     started = time.monotonic()
     ctx.session.last_cost = ""
     ctx.archive.log_section(
@@ -88,7 +88,7 @@ def run_review(ctx: WorkflowContext, agent: str, scope: str) -> bool:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    ctx.echo(f">>> Reviewer({agent}) is reviewing...")
+    ctx.echo(f">>> Reviewer({agent.name}) is reviewing...")
     slug = f"reviewer-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
     prompt = compose_review_prompt(agent, scope, ctx.prompts_dir, ctx.wf)
     prompt_artifact = ctx.archive.archive_text(
@@ -173,8 +173,8 @@ def run_review(ctx: WorkflowContext, agent: str, scope: str) -> bool:
 
 def review_loop(
     ctx: WorkflowContext,
-    reviewer: str,
-    worker: str,
+    reviewer: AgentRef,
+    worker: AgentRef,
     scope: str,
     gate_cmd: str = "",
 ) -> None:

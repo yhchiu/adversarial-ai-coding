@@ -78,7 +78,7 @@ def test_commit_work_ensures_commit(make_ctx, new_repo, monkeypatch):
     (new_repo / "dirty.txt").write_text("x\n", encoding="utf-8")
     prompts = []
     monkeypatch.setattr(wf_mod, "work", lambda ctx, agent, prompt: prompts.append(prompt))
-    commit_work(ctx, "claude", "Task done")
+    commit_work(ctx, ctx.ref("A"), "Task done")
     assert prompts and "Task done" in prompts[0]
     from adversarial_ai_coding.gitops import status_porcelain
 
@@ -92,7 +92,7 @@ def test_commit_if_dirty_skips_clean_tree(make_ctx, monkeypatch):
         "work",
         lambda ctx, agent, prompt: pytest.fail("clean tree: no AI call"),
     )
-    commit_if_dirty(ctx, "claude", "nothing")
+    commit_if_dirty(ctx, ctx.ref("A"), "nothing")
 
 
 def test_human_gate_disabled_passes(make_ctx):
@@ -140,8 +140,8 @@ def test_set_spec_roles_from_slot(make_ctx):
         {"AGENT_A": "claude", "AGENT_B": "codex", "RETRY_ON_LIMIT": "0"}
     )
     set_spec_roles_from_slot(ctx, "B")
-    assert ctx.spec_roles.owner_agent == "codex"
-    assert ctx.spec_roles.reviewer_agent == "claude"
+    assert ctx.spec_roles.owner_agent == ctx.ref("B")
+    assert ctx.spec_roles.reviewer_agent == ctx.ref("A")
     assert ctx.spec_roles.owner_slot == "B"
     assert ctx.spec_roles.reviewer_slot == "A"
 

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from adversarial_ai_coding import review as review_mod
-from adversarial_ai_coding.agents import AgentResult
+from adversarial_ai_coding.agents import AgentRef, AgentResult
 from adversarial_ai_coding.config import WorkflowAbort
 from adversarial_ai_coding.prompts import default_prompts_dir
 from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC
@@ -36,10 +36,14 @@ def test_verdict_approved_cases(tmp_path):
 
 
 def test_compose_review_prompt_verdict_instruction(tmp_path):
-    claude = compose_review_prompt("claude", "scope", PROMPTS, tmp_path / ".workflow")
-    codex = compose_review_prompt("codex", "scope", PROMPTS, tmp_path / ".workflow")
+    claude = compose_review_prompt(
+        AgentRef("A", "claude"), "scope", PROMPTS, tmp_path / ".workflow"
+    )
+    codex = compose_review_prompt(
+        AgentRef("B", "codex"), "scope", PROMPTS, tmp_path / ".workflow"
+    )
     custom = compose_review_prompt(
-        "custom-agent", "scope", PROMPTS, tmp_path / ".workflow"
+        AgentRef("B", "custom-agent"), "scope", PROMPTS, tmp_path / ".workflow"
     )
     assert "Finally write the verdict" not in claude
     assert "Finally write the verdict" in codex
@@ -72,7 +76,7 @@ def test_run_review_archives_and_approves(make_ctx, monkeypatch):
         return AgentResult(0, "review text")
 
     monkeypatch.setattr(review_mod, "run_reviewer", fake_reviewer)
-    assert run_review(ctx, "codex", "FULL_PROMPT_SENTINEL review scope") is True
+    assert run_review(ctx, ctx.ref("B"), "FULL_PROMPT_SENTINEL review scope") is True
     assert "Read the full workflow prompt" in seen["prompt"]
     assert "reviewer-review-r2-prompt.md" in seen["prompt"]
     assert "FULL_PROMPT_SENTINEL" not in seen["prompt"]
@@ -91,7 +95,7 @@ def test_run_review_prewrites_failed_sentinel(make_ctx, monkeypatch):
         return AgentResult(0, "prose only")
 
     monkeypatch.setattr(review_mod, "run_reviewer", silent_reviewer)
-    assert run_review(ctx, "codex", "scope") is False
+    assert run_review(ctx, ctx.ref("B"), "scope") is False
     verdict = json.loads(ctx.verdict_path.read_text(encoding="utf-8"))
     assert verdict["approved"] is False
     assert verdict["blockers"] == ["reviewer did not write a verdict"]
@@ -106,7 +110,7 @@ def test_run_review_quota_abort(make_ctx, monkeypatch):
 
     monkeypatch.setattr(review_mod, "run_reviewer", limited_reviewer)
     with pytest.raises(WorkflowAbort) as exc:
-        run_review(ctx, "codex", "scope")
+        run_review(ctx, ctx.ref("B"), "scope")
     assert exc.value.rc == QUOTA_ABORT_RC
 
 
@@ -120,12 +124,12 @@ def test_run_review_collects_suggestions(make_ctx, monkeypatch):
             {"approved": True, "blockers": [], "suggestions": ["tighten naming"]}
         ),
     )
-    run_review(ctx, "codex", "scope")
+    run_review(ctx, ctx.ref("B"), "scope")
     text = ctx.suggestions_path.read_text(encoding="utf-8")
     assert "## write-spec(round 1)" in text
     assert "- tighten naming" in text
     ctx.collect_review_suggestions = False
-    run_review(ctx, "codex", "scope")
+    run_review(ctx, ctx.ref("B"), "scope")
     assert text == ctx.suggestions_path.read_text(encoding="utf-8")
 
 

@@ -11,21 +11,47 @@ from adversarial_ai_coding.config import Settings, SettingsError
 from adversarial_ai_coding.agents import (
     VERDICT_SCHEMA,
     AgentIO,
+    AgentRef,
     AgentResult,
     AgentSession,
-    agent_model,
-    generic_agent_args,
+    agent_model as _agent_model,
+    generic_agent_args as _generic_agent_args,
     is_builtin_agent,
     notify,
-    resolve_model_args,
-    run_reviewer,
-    run_worker,
+    resolve_model_args as _resolve_model_args,
+    run_reviewer as _run_reviewer,
+    run_worker as _run_worker,
     validate_agents,
 )
 
 
 def make(env=None):
     return Settings.from_env(env or {}, run_id="20260711-000000")
+
+
+def ref_for_name(name, settings):
+    slot = "A" if name == settings.agent_a else "B"
+    return AgentRef(slot, name)
+
+
+def agent_model(name, settings):
+    return _agent_model(ref_for_name(name, settings), settings)
+
+
+def resolve_model_args(name, settings):
+    return _resolve_model_args(ref_for_name(name, settings), settings)
+
+
+def generic_agent_args(name, settings):
+    return _generic_agent_args(ref_for_name(name, settings), settings)
+
+
+def run_worker(name, prompt, settings, session, io):
+    return _run_worker(ref_for_name(name, settings), prompt, settings, session, io)
+
+
+def run_reviewer(name, prompt, settings, session, io):
+    return _run_reviewer(ref_for_name(name, settings), prompt, settings, session, io)
 
 
 def test_is_builtin_agent():
@@ -39,6 +65,34 @@ def test_agent_model_slot_a_uses_model_a():
     s = make({"AGENT_A": "claude", "AGENT_B": "codex", "MODEL_A": "haiku", "MODEL_B": "mini"})
     assert agent_model("claude", s) == "haiku"
     assert agent_model("codex", s) == "mini"
+
+
+def test_agent_model_uses_slot_when_both_slots_share_agent_name():
+    s = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "codex",
+            "MODEL_A": "gpt-a",
+            "MODEL_B": "gpt-b",
+        }
+    )
+
+    assert agents.agent_model(agents.AgentRef("A", "codex"), s) == "gpt-a"
+    assert agents.agent_model(agents.AgentRef("B", "codex"), s) == "gpt-b"
+
+
+def test_custom_agent_args_use_slot_when_names_match():
+    s = make(
+        {
+            "AGENT_A": "wrapper",
+            "AGENT_B": "wrapper",
+            "AGENT_A_ARGS": "--profile a",
+            "AGENT_B_ARGS": "--profile b",
+        }
+    )
+
+    assert agents.resolve_model_args(agents.AgentRef("A", "wrapper"), s) == "--profile a"
+    assert agents.resolve_model_args(agents.AgentRef("B", "wrapper"), s) == "--profile b"
 
 
 def test_agent_model_unset_is_empty_for_cli_default():

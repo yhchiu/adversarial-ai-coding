@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from adversarial_ai_coding.archive import RunArchive, establish_run_archive
+from adversarial_ai_coding.agents import agent_ref
 from adversarial_ai_coding.config import Settings
 
 FIXED = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=8)))
@@ -53,7 +54,7 @@ def test_write_meta_matches_bash_fields(tmp_path):
         src,
         "snap.txt",
         role="worker",
-        agent="claude",
+        agent=agent_ref("A", a.settings),
         stage="stage",
         round=3,
         now=FIXED,
@@ -91,7 +92,7 @@ def test_archive_text_normalizes_newline_and_writes_meta(tmp_path):
         "note.txt",
         "archived text\n\n",
         role="reviewer",
-        agent="codex",
+        agent=agent_ref("B", a.settings),
         stage="review",
         round=2,
         now=FIXED,
@@ -133,7 +134,7 @@ def test_archive_agent_attempt_names_and_placeholder(tmp_path):
     out.write_text("raw agent output\n", encoding="utf-8")
     a.archive_agent_attempt(
         "worker",
-        "claude",
+        agent_ref("A", a.settings),
         "worker-stage-r1",
         1,
         1,
@@ -151,7 +152,7 @@ def test_archive_agent_attempt_names_and_placeholder(tmp_path):
     assert meta["generator_role"] == "worker" and meta["agent"] == "claude"
     a.archive_agent_attempt(
         "worker",
-        "claude",
+        agent_ref("A", a.settings),
         "worker-stage-r1",
         2,
         1,
@@ -173,8 +174,8 @@ def test_metric_header_and_rows(tmp_path):
             "CODEX_ARGS": '-c model="x,y" --flag "quoted value"',
         },
     )
-    a.metric("worker", "claude", 1, 12, "0.05", stage="stage1")
-    a.metric("reviewer", "codex", 2, 30, "", stage="stage1")
+    a.metric("worker", agent_ref("A", a.settings), 1, 12, "0.05", stage="stage1")
+    a.metric("reviewer", agent_ref("B", a.settings), 2, 30, "", stage="stage1")
     lines = a.metrics_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 3
     assert lines[0] == (
@@ -193,7 +194,7 @@ def test_log_section_banner(tmp_path):
     a.log_section(
         "AI call",
         "worker",
-        "claude",
+        agent_ref("A", a.settings),
         "stage",
         2,
         echo=echoed.append,
@@ -221,3 +222,35 @@ def test_run_and_log_metadata(tmp_path):
         )
     )
     assert log_meta["generator_role"] == "workflow"
+
+
+def test_same_agent_slots_keep_slot_specific_models_in_all_metadata(tmp_path):
+    a = make_archive(
+        tmp_path,
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "codex",
+            "MODEL_A": "gpt-a",
+            "MODEL_B": "gpt-b",
+        },
+    )
+    ref_b = agent_ref("B", a.settings)
+    artifact = a.archive_text(
+        "b-output.txt", "done", role="worker", agent=ref_b, stage="code"
+    )
+    a.log_section("AI call", "worker", ref_b, "code", 1, echo=lambda _: None)
+    a.metric("worker", ref_b, 1, 2, "", stage="code")
+    a.write_run_metadata(spec_dir="specs/test", wf=".workflow")
+
+    meta = json.loads(
+        artifact.with_name(artifact.name + ".meta.json").read_text(encoding="utf-8")
+    )
+    assert meta["agent"] == "codex" and meta["model"] == "gpt-b"
+    assert "agent=codex model=gpt-b" in a.log_path.read_text(encoding="utf-8")
+    metrics = list(csv.reader(a.metrics_path.read_text(encoding="utf-8").splitlines()))
+    assert metrics[1][3] == "codex" and metrics[1][7] == "gpt-b"
+    run_metadata = json.loads(
+        next(a.run_dir.glob("*-run-metadata.json")).read_text(encoding="utf-8")
+    )
+    assert run_metadata["model_a"] == "gpt-a"
+    assert run_metadata["model_b"] == "gpt-b"

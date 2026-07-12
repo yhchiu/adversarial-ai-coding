@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Sequence
 
-from .agents import agent_model, resolve_model_args
+from .agents import AgentRef, agent_model, agent_ref, resolve_model_args
 from .config import Settings
 
 METRICS_HEADER = [
@@ -110,7 +110,7 @@ class RunArchive:
         self,
         artifact: Path,
         role: str = "workflow",
-        agent: str = "workflow",
+        agent: AgentRef | None = None,
         stage: str = "startup",
         round: int = 0,
         now: datetime | None = None,
@@ -118,9 +118,11 @@ class RunArchive:
         payload = {
             "generated_at": generated_at(now),
             "generator_role": role,
-            "agent": agent,
-            "model": agent_model(agent, self.settings),
-            "model_args": resolve_model_args(agent, self.settings),
+            "agent": agent.name if agent is not None else "workflow",
+            "model": agent_model(agent, self.settings) if agent is not None else "",
+            "model_args": (
+                resolve_model_args(agent, self.settings) if agent is not None else ""
+            ),
             "stage": stage,
             "round": str(round),
             "run_id": self.run_id,
@@ -134,7 +136,7 @@ class RunArchive:
         src: Path,
         name: str,
         role: str = "workflow",
-        agent: str = "workflow",
+        agent: AgentRef | None = None,
         stage: str = "startup",
         round: int = 0,
         now: datetime | None = None,
@@ -151,7 +153,7 @@ class RunArchive:
         name: str,
         text: str,
         role: str = "workflow",
-        agent: str = "workflow",
+        agent: AgentRef | None = None,
         stage: str = "startup",
         round: int = 0,
         now: datetime | None = None,
@@ -178,7 +180,7 @@ class RunArchive:
     def archive_agent_attempt(
         self,
         role: str,
-        agent: str,
+        agent: AgentRef,
         slug: str,
         attempt: int,
         rc: int,
@@ -201,6 +203,8 @@ class RunArchive:
     ) -> None:
         dst = self.art_path("run-metadata.json")
         settings = self.settings
+        ref_a = agent_ref("A", settings)
+        ref_b = agent_ref("B", settings)
         payload = {
             "generated_at": generated_at(now),
             "run_id": self.run_id,
@@ -211,11 +215,11 @@ class RunArchive:
             "log": str(self.log_path),
             "metrics": str(self.metrics_path),
             "agent_a": settings.agent_a,
-            "model_a": agent_model(settings.agent_a, settings),
-            "args_a": resolve_model_args(settings.agent_a, settings),
+            "model_a": agent_model(ref_a, settings),
+            "args_a": resolve_model_args(ref_a, settings),
             "agent_b": settings.agent_b,
-            "model_b": agent_model(settings.agent_b, settings),
-            "args_b": resolve_model_args(settings.agent_b, settings),
+            "model_b": agent_model(ref_b, settings),
+            "args_b": resolve_model_args(ref_b, settings),
             "dual_spec": "1" if settings.dual_spec else "0",
             "max_rounds": str(settings.max_rounds),
             "auto_branch": "1" if settings.auto_branch else "0",
@@ -226,17 +230,19 @@ class RunArchive:
     def write_log_metadata(self, now: datetime | None = None) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         settings = self.settings
+        ref_a = agent_ref("A", settings)
+        ref_b = agent_ref("B", settings)
         payload = {
             "generated_at": generated_at(now),
             "generator_role": "workflow",
             "run_id": self.run_id,
             "log_path": str(self.log_path),
             "agent_a": settings.agent_a,
-            "model_a": agent_model(settings.agent_a, settings),
-            "args_a": resolve_model_args(settings.agent_a, settings),
+            "model_a": agent_model(ref_a, settings),
+            "args_a": resolve_model_args(ref_a, settings),
             "agent_b": settings.agent_b,
-            "model_b": agent_model(settings.agent_b, settings),
-            "args_b": resolve_model_args(settings.agent_b, settings),
+            "model_b": agent_model(ref_b, settings),
+            "args_b": resolve_model_args(ref_b, settings),
             "dual_spec": "1" if settings.dual_spec else "0",
         }
         meta_path = self.log_path.with_name(self.log_path.name + ".meta.json")
@@ -246,7 +252,7 @@ class RunArchive:
         self,
         title: str,
         role: str = "workflow",
-        agent: str = "workflow",
+        agent: AgentRef | None = None,
         stage: str = "startup",
         round: int = 0,
         echo: Callable[[str], None] = print,
@@ -257,9 +263,10 @@ class RunArchive:
             "\n"
             + "-" * 80
             + "\n"
-            f"[{generated_at(now)}] {title} | role={role} agent={agent} "
-            f"model={agent_model(agent, self.settings)} "
-            f"args={resolve_model_args(agent, self.settings)} "
+            f"[{generated_at(now)}] {title} | role={role} "
+            f"agent={agent.name if agent is not None else 'workflow'} "
+            f"model={agent_model(agent, self.settings) if agent is not None else ''} "
+            f"args={resolve_model_args(agent, self.settings) if agent is not None else ''} "
             f"stage={stage} round={round}\n"
             + "-" * 80
         )
@@ -270,7 +277,7 @@ class RunArchive:
     def metric(
         self,
         role: str,
-        agent: str,
+        agent: AgentRef,
         round: int,
         seconds: int,
         cost: str,
@@ -289,7 +296,7 @@ class RunArchive:
                 self.run_id,
                 stage,
                 role,
-                agent,
+                agent.name,
                 round,
                 seconds,
                 cost,
@@ -302,7 +309,7 @@ class RunArchive:
     def archive_git_state(
         self,
         role: str = "worker",
-        agent: str = "workflow",
+        agent: AgentRef | None = None,
         slug: str = "git-state",
         stage: str = "startup",
         round: int = 0,

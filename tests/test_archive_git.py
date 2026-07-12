@@ -3,6 +3,7 @@
 import subprocess
 
 from adversarial_ai_coding.archive import establish_run_archive
+from adversarial_ai_coding.agents import agent_ref
 from adversarial_ai_coding.config import Settings
 
 
@@ -40,7 +41,7 @@ def test_archive_git_state_no_side_effects_and_untracked_content(new_repo):
     before = porcelain(new_repo)
     archive.archive_git_state(
         "worker",
-        "claude",
+        agent_ref("A", settings),
         "worker-code-r2",
         stage="code",
         round=2,
@@ -63,6 +64,11 @@ def test_archive_git_state_outside_repo_is_noop(tmp_path):
     settings = Settings.from_env({}, run_id="test")
     archive = establish_run_archive(tmp_path / "runs", "test", settings)
     archive.archive_git_state(
-        "worker", "claude", "slug", stage="s", round=1, cwd=tmp_path
+        "worker",
+        agent_ref("A", settings),
+        "slug",
+        stage="s",
+        round=1,
+        cwd=tmp_path,
     )
     assert not list(archive.run_dir.glob("*git-status*"))

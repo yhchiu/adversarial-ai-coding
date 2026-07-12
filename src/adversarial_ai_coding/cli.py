@@ -193,9 +193,7 @@ def main(
         (wf / "latest-run.txt").write_text(
             str(archive.run_dir) + "\n", encoding="utf-8"
         )
-        archive.log_section(
-            "startup settings", "workflow", "workflow", "startup", 0
-        )
+        archive.log_section("startup settings", "workflow", None, "startup", 0)
 
         bootstrap_agents_md(
             workspace,

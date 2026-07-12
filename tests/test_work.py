@@ -19,7 +19,7 @@ def test_work_archives_prompt_and_sends_file_reference(make_ctx, monkeypatch):
         return AgentResult(0, "worker output")
 
     monkeypatch.setattr(wf_mod, "run_worker", fake_worker)
-    work(ctx, "claude", "FULL_PROMPT_SENTINEL for worker")
+    work(ctx, ctx.ref("A"), "FULL_PROMPT_SENTINEL for worker")
 
     assert "Read the full workflow prompt" in seen["prompt"]
     assert "worker-stage-r1-prompt.md" in seen["prompt"]
@@ -43,7 +43,7 @@ def test_work_quota_abort_raises_resumable(make_ctx, monkeypatch):
 
     monkeypatch.setattr(wf_mod, "run_worker", limited_worker)
     with pytest.raises(WorkflowAbort) as exc:
-        work(ctx, "claude", "prompt")
+        work(ctx, ctx.ref("A"), "prompt")
     assert exc.value.rc == QUOTA_ABORT_RC
 
 
@@ -55,7 +55,7 @@ def test_work_ordinary_agent_failure_does_not_raise(make_ctx, monkeypatch):
         return AgentResult(1, "build error")
 
     monkeypatch.setattr(wf_mod, "run_worker", failing_worker)
-    work(ctx, "claude", "prompt")
+    work(ctx, ctx.ref("A"), "prompt")
 
 
 def test_check_protected_repairs_then_stops(make_ctx, monkeypatch):

@@ -31,8 +31,17 @@ def test_owner_slot_and_roles(make_ctx):
     assert ds.dual_spec_owner_slot("adopt-a") == "A"
     assert ds.dual_spec_owner_slot("merge-b") == "B"
     assert ds.dual_spec_owner_slot("bogus") is None
-    assert ds.agent_for_slot(ctx, "B") == "codex"
+    assert ds.agent_for_slot(ctx, "B") == ctx.ref("B")
     assert ds.reviewer_slot_for_owner_slot("A") == "B"
+
+
+def test_decision_file_serializes_agent_names_not_refs(make_ctx):
+    ctx = dual_ctx(make_ctx)
+    ds.write_dual_spec_decision_file(ctx, "adopt-b")
+    text = (ctx.spec_dir / "spec-decision.md").read_text(encoding="utf-8")
+    assert "selected owner agent: codex" in text
+    assert "reviewer agent: claude" in text
+    assert "AgentRef(" not in text
 
 
 def test_preflight_requires_human_gate_and_tty(make_ctx):
@@ -102,7 +111,7 @@ def test_apply_adopt_reviews_and_gates(make_ctx, monkeypatch):
     )
     ds.apply_dual_spec_decision(ctx, "adopt-a", "task text")
     assert (ctx.spec_dir / "spec.md").read_text(encoding="utf-8") == "candidate A\n"
-    assert calls == [("review", "codex", "claude"), ("human",)]
+    assert calls == [("review", ctx.ref("B"), ctx.ref("A")), ("human",)]
 
 
 def test_apply_merge_calls_owner_then_reviews(make_ctx, monkeypatch):
@@ -127,8 +136,8 @@ def test_apply_merge_calls_owner_then_reviews(make_ctx, monkeypatch):
     monkeypatch.setattr(ds, "work", fake_work)
     ds.apply_dual_spec_decision(ctx, "merge-b", "task text")
     assert (ctx.spec_dir / "spec.md").read_text(encoding="utf-8") == "merged B\n"
-    assert calls[0] == ("work", "codex")
-    assert calls[1][0:3] == ("review", "claude", "codex")
+    assert calls[0] == ("work", ctx.ref("B"))
+    assert calls[1][0:3] == ("review", ctx.ref("A"), ctx.ref("B"))
     assert "block approval" in calls[1][3]
     assert calls[2] == ("human",)
 
@@ -141,8 +150,8 @@ def test_restore_decision_adopt_b(make_ctx):
     )
     ds.restore_dual_spec_decision(ctx)
     assert ctx.dual_spec_decision == "adopt-b"
-    assert ctx.spec_roles.owner_agent == "codex"
-    assert ctx.spec_roles.reviewer_agent == "claude"
+    assert ctx.spec_roles.owner_agent == ctx.ref("B")
+    assert ctx.spec_roles.reviewer_agent == ctx.ref("A")
 
 
 def test_restore_merge_requires_merge_request(make_ctx):
@@ -155,7 +164,7 @@ def test_restore_merge_requires_merge_request(make_ctx):
     (ctx.wf / "spec-merge-request.md").write_text("adopt item\n", encoding="utf-8")
     ds.restore_dual_spec_decision(ctx)
     assert ctx.dual_spec_decision == "merge-b"
-    assert ctx.spec_roles.owner_agent == "codex"
+    assert ctx.spec_roles.owner_agent == ctx.ref("B")
 
 
 def test_restore_invalid_or_missing_decision(make_ctx):
@@ -172,10 +181,10 @@ def test_restore_invalid_or_missing_decision(make_ctx):
 def test_restore_existing_decision_left_alone(make_ctx):
     ctx = dual_ctx(make_ctx)
     ctx.dual_spec_decision = "adopt-a"
-    ctx.spec_roles.owner_agent = "claude"
+    ctx.spec_roles.owner_agent = ctx.ref("A")
     ds.restore_dual_spec_decision(ctx)
     assert ctx.dual_spec_decision == "adopt-a"
-    assert ctx.spec_roles.owner_agent == "claude"
+    assert ctx.spec_roles.owner_agent == ctx.ref("A")
 
 
 def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):

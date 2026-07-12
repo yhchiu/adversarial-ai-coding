@@ -38,31 +38,45 @@ def is_builtin_agent(name: str) -> bool:
     return name in BUILTIN_AGENTS
 
 
-def agent_model(name: str, settings: Settings) -> str:
+@dataclass(frozen=True)
+class AgentRef:
+    slot: str
+    name: str
+
+
+def agent_ref(slot: str, settings: Settings) -> AgentRef:
+    if slot == "A":
+        return AgentRef(slot="A", name=settings.agent_a)
+    if slot == "B":
+        return AgentRef(slot="B", name=settings.agent_b)
+    raise ValueError(f"Unknown agent slot:{slot}")
+
+
+def agent_model(ref: AgentRef, settings: Settings) -> str:
     # Custom agents ignore MODEL_A/MODEL_B; they get args via AGENT_*_ARGS.
-    if not is_builtin_agent(name):
+    if not is_builtin_agent(ref.name):
         return ""
-    if name == settings.agent_a and settings.model_a:
+    if ref.slot == "A":
         return settings.model_a
-    if name == settings.agent_b and settings.model_b:
+    if ref.slot == "B":
         return settings.model_b
     return ""
 
 
-def resolve_model_args(name: str, settings: Settings) -> str:
-    if name == "claude":
+def resolve_model_args(ref: AgentRef, settings: Settings) -> str:
+    if ref.name == "claude":
         return settings.claude_args
-    if name == "codex":
+    if ref.name == "codex":
         return settings.codex_args
-    if name == "agy":
+    if ref.name == "agy":
         return settings.agy_args
-    return generic_agent_args(name, settings)
+    return generic_agent_args(ref, settings)
 
 
-def generic_agent_args(name: str, settings: Settings) -> str:
-    if name == settings.agent_a:
+def generic_agent_args(ref: AgentRef, settings: Settings) -> str:
+    if ref.slot == "A":
         return settings.agent_a_args
-    if name == settings.agent_b:
+    if ref.slot == "B":
         return settings.agent_b_args
     return ""
 
@@ -124,6 +138,7 @@ def _run_captured(argv: list[str]) -> tuple[int, str]:
         argv,
         capture_output=False,
         stdout=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -137,6 +152,7 @@ def _run_streaming(argv: list[str], io: AgentIO) -> tuple[int, str]:
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -176,9 +192,9 @@ def _jq_coalesce_empty(payload: dict[str, object], field: str) -> str:
     return _jq_raw(value)
 
 
-def _claude_common_args(settings: Settings) -> list[str]:
+def _claude_common_args(ref: AgentRef, settings: Settings) -> list[str]:
     args: list[str] = []
-    model = agent_model("claude", settings)
+    model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
     args += settings.claude_args.split()
@@ -186,7 +202,11 @@ def _claude_common_args(settings: Settings) -> list[str]:
 
 
 def _worker_claude(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
     argv = [
         _resolve_argv0("claude"),
@@ -199,7 +219,7 @@ def _worker_claude(
         "--allowedTools",
         settings.tools,
     ]
-    argv += _claude_common_args(settings)
+    argv += _claude_common_args(ref, settings)
     if session.worker_session:
         argv += ["--resume", session.worker_session]
     rc, out = _run_captured(argv)
@@ -230,10 +250,14 @@ def _worker_claude(
 
 
 def _reviewer_claude(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
     argv = [_resolve_argv0("claude"), "-p", prompt]
-    argv += _claude_common_args(settings)
+    argv += _claude_common_args(ref, settings)
     argv += [
         "--output-format",
         "json",
@@ -278,9 +302,9 @@ def _reviewer_claude(
     return AgentResult(0, _jq_coalesce_empty(payload, "result"))
 
 
-def _codex_model_args(settings: Settings) -> list[str]:
+def _codex_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     args: list[str] = []
-    model = agent_model("codex", settings)
+    model = agent_model(ref, settings)
     if model:
         args += ["-c", f'model="{model}"']
     args += settings.codex_args.split()
@@ -288,9 +312,13 @@ def _codex_model_args(settings: Settings) -> list[str]:
 
 
 def _worker_codex(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
-    model_args = _codex_model_args(settings)
+    model_args = _codex_model_args(ref, settings)
     if not session.worker_session:
         argv = [
             _resolve_argv0("codex"),
@@ -319,23 +347,27 @@ def _worker_codex(
 
 
 def _reviewer_codex(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
     argv = [
         _resolve_argv0("codex"),
         "exec",
         "--sandbox",
         "workspace-write",
-        *_codex_model_args(settings),
+        *_codex_model_args(ref, settings),
         prompt,
     ]
     rc, out = _run_streaming(argv, io)
     return AgentResult(rc, out)
 
 
-def _agy_model_args(settings: Settings) -> list[str]:
+def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     args: list[str] = []
-    model = agent_model("agy", settings)
+    model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
     args += settings.agy_args.split()
@@ -343,7 +375,11 @@ def _agy_model_args(settings: Settings) -> list[str]:
 
 
 def _worker_agy(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
     # --dangerously-skip-permissions approves every tool action; prefer an
     # isolated branch, worktree, or container when using agy (sh:1078-1079).
@@ -355,7 +391,7 @@ def _worker_agy(
         "60m",
         "--dangerously-skip-permissions",
     ]
-    argv += _agy_model_args(settings)
+    argv += _agy_model_args(ref, settings)
     if session.worker_session:
         argv += ["--continue"]
     rc, out = _run_streaming(argv, io)
@@ -364,7 +400,11 @@ def _worker_agy(
 
 
 def _reviewer_agy(
-    prompt: str, settings: Settings, session: AgentSession, io: AgentIO
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
 ) -> AgentResult:
     argv = [
         _resolve_argv0("agy"),
@@ -374,49 +414,53 @@ def _reviewer_agy(
         "30m",
         "--dangerously-skip-permissions",
     ]
-    argv += _agy_model_args(settings)
+    argv += _agy_model_args(ref, settings)
     rc, out = _run_streaming(argv, io)
     return AgentResult(rc, out)
 
 
 def _run_generic(
-    name: str, prompt: str, settings: Settings, io: AgentIO
+    ref: AgentRef, prompt: str, settings: Settings, io: AgentIO
 ) -> AgentResult:
-    argv = [_resolve_argv0(name), *generic_agent_args(name, settings).split(), prompt]
+    argv = [
+        _resolve_argv0(ref.name),
+        *generic_agent_args(ref, settings).split(),
+        prompt,
+    ]
     rc, out = _run_streaming(argv, io)
     return AgentResult(rc, out)
 
 
 def run_worker(
-    name: str,
+    ref: AgentRef,
     prompt: str,
     settings: Settings,
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
-    if name == "claude":
-        return _worker_claude(prompt, settings, session, io)
-    if name == "codex":
-        return _worker_codex(prompt, settings, session, io)
-    if name == "agy":
-        return _worker_agy(prompt, settings, session, io)
-    return _run_generic(name, prompt, settings, io)
+    if ref.name == "claude":
+        return _worker_claude(ref, prompt, settings, session, io)
+    if ref.name == "codex":
+        return _worker_codex(ref, prompt, settings, session, io)
+    if ref.name == "agy":
+        return _worker_agy(ref, prompt, settings, session, io)
+    return _run_generic(ref, prompt, settings, io)
 
 
 def run_reviewer(
-    name: str,
+    ref: AgentRef,
     prompt: str,
     settings: Settings,
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
-    if name == "claude":
-        return _reviewer_claude(prompt, settings, session, io)
-    if name == "codex":
-        return _reviewer_codex(prompt, settings, session, io)
-    if name == "agy":
-        return _reviewer_agy(prompt, settings, session, io)
-    return _run_generic(name, prompt, settings, io)
+    if ref.name == "claude":
+        return _reviewer_claude(ref, prompt, settings, session, io)
+    if ref.name == "codex":
+        return _reviewer_codex(ref, prompt, settings, session, io)
+    if ref.name == "agy":
+        return _reviewer_agy(ref, prompt, settings, session, io)
+    return _run_generic(ref, prompt, settings, io)
 
 
 def notify(settings: Settings, message: str) -> None:

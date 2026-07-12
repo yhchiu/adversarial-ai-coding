@@ -31,6 +31,7 @@ def test_finish_reports_existing_pr_instead_of_recreating(make_ctx):
     )
     assert any("PR already exists: https://example.com/pr/1" in line for line in lines)
     assert (ctx.wf / "pr-body.md").is_file()
+    assert "AgentRef(" not in (ctx.wf / "pr-body.md").read_text(encoding="utf-8")
 
 
 def test_finish_creates_pr_when_missing(make_ctx):
