@@ -1,0 +1,57 @@
+● Code review(xhigh · 11 findings)
+  ⎿  ●src/adversarial_ai_coding/agen[correctne— The AGY_ARGS blocklist misses agy's documented short alias `-c` for `--continue` (verified via `agy --help`: '-c
+      ts.py:150                     ss]       Short alias for --continue'), so a single innocuous token reintroduces global recency resume — the exact hazard this
+                                              feature set exists to eliminate.
+     ●src/adversarial_ai_coding/agent[correctnes— CLAUDE_ARGS has no reserved-flag guard at all, yet the claude CLI has the same session-control flags (verified
+      s.py:120                       s]         via `claude --help`: -c/--continue, -r/--resume, --session-id, --fork-session), and the README row added in this
+                                                diff claims session-control flags are reserved for CLAUDE_ARGS too.
+     ●src/adversarial_ai_coding/agen[correctnes— The CODEX_ARGS guard still misses three clap-accepted spellings, all empirically verified against the local codex
+      ts.py:131                     s]         CLI: glued short options `-s<value>` and `-c<key>=<value>`, and the separator form `-c=<key>=<value>` (the guard
+                                               blocks `-s=` but has no `-c=` counterpart).
+     ●src/adversarial_ai_coding/agen[correctnes— _validate_reserved_args now eagerly shlex-parses all five *_ARGS variables regardless of which agents are
+      ts.py:121                     s]         configured, so a stale variable belonging to an unused agent aborts the entire run at startup — the round-1
+                                               'unconditional validation' finding, unfixed and with a widened blast radius.
+     ●src/adversarial_ai_coding/agen[correctne— The shlex migration turns any unquoted apostrophe in previously-working *_ARGS values into a hard startup failure
+      ts.py:113                     ss]       (verified: shlex.split("don't") raises 'No closing quotation'; old str.split() passed it through verbatim).
+     ●src/adversarial_ai_coding/agents.[correctness— shlex posix-mode silently eats unquoted backslashes, so Windows paths in *_ARGS are corrupted with no error at
+      py:114                           ]           any boundary (verified: shlex.split(r'--flag=C:\Users\x') → ['--flag=C:Usersx']), unlike the apostrophe case
+                                                   which at least fails loudly.
+     ●src/adversarial_ai_coding/agen[correctnes— notify() still splices the user-supplied NOTIFY_CMD with str.split(), missed by the shlex migration that converted
+      ts.py:652                     s]         every other user argv variable, and it gets no preflight quoting validation either.
+     ●src/adversarial_ai_coding/agen[correctnes— shlex now consumes quote characters that codex `-c key="value"` TOML overrides previously received literally,
+      ts.py:436                     s]         silently changing the value's TOML type for configs written in the codebase's own internal convention (the file
+                                               itself builds f'model="{model}"' with embedded quotes).
+     ●src/adversarial_ai_coding/agent[altitude— This is the second round of enumerating reserved-flag spellings and it is still incomplete (findings above), which
+      s.py:130                       ]        is empirical evidence the blocklist approach is not converging; a structural fix would neutralize unknown spellings
+                                              instead of chasing them.
+     ●src/adversarial_ai_coding/agen[simplificat— _validate_reserved_args accumulates four small cleanups: the CODEX and AGY loops are the same loop-and-raise
+      ts.py:120                     ion]        skeleton written twice, the sandbox_mode SettingsError message is duplicated in two raise sites, three of the five
+                                                parsed_args dict entries exist only for a hidden quoting side effect, and chained startswith calls could use the
+                                                tuple form.
+     ●src/adversarial_ai_coding/conf[altitude— The *_ARGS fields remain raw str on Settings and are re-parsed with _split_cli_args independently at preflight and
+      ig.py:52                      ]        at four runtime splice sites; parsing once into list[str] at Settings construction would make preflight/runtime
+                                             divergence impossible by construction.
+
+● Code review 完成,11 個 findings 已回報(上方清單),其中前三項都經真實 CLI 實測確認。
+
+總體結論
+
+三個修正本身都有落地、測試紮實:黏著在被點名拼法上的封鎖都有效且有測試;regex 錨定與計畫記載的實測 agy log 格式一致(marker 確實在行首),並有防 mid-line echo
+的新測試;shlex 遷移涵蓋五個 agent args 變數、雙語 README、parity 文件各補一筆。逐 commit 安全也過了實證檢驗——finder agent 把 e182d3e 單獨 checkout 跑全套 315
+個測試全綠。
+
+但這輪 review 的核心結論是:guard 的加固目標實際上仍未達成。 我對三個 CLI 實測確認了新的繞過路徑,全部 CONFIRMED:
+
+1. agy 的 -c 就是 --continue 的短別名(agy --help 明列)——AGY_ARGS='-c' 一個 token 就重回 recency resume,而且錯誤的 conversation id 會被 log 解析收編、永久接錯
+session。這是最嚴重的一個。
+2. claude 完全沒有 guard,但 claude CLI 有整組 session 旗標(-c/--continue、-r/--resume、--session-id、--fork-session),而 AGENT_A=claude
+是預設值;reviewer「每輪全新」的約定可被 CLAUDE_ARGS='--continue' 直接打破。
+3. codex 還有三種拼法漏網:黏著形式 -sVALUE、-cKEY=VALUE,以及 -c=KEY=VALUE(guard 擋了 -s= 卻沒擋 -c=)——三種我都跑過真實 codex 確認會被解析。
+
+這已是第二輪「補拼法」仍然漏,我的建議是下一輪不要再枚舉:改成結構性中和(workflow 自己的 sandbox/session 旗標移到 user args 之後,用 last-wins
+讓未知拼法失效,需先實測一次 codex 重複旗標的優先序),blocklist 只留給會破壞 argv 形狀的 token(resume、--json),並把三個 CLI 的保留旗標改成一張表機械式展開
+exact/=/黏著三種拼法——現在的雙迴圈複製結構正是這些漏洞滋生的地方(codex 補了 -s= 而 agy 漏了 -c,就是複製發散的直接證據)。
+
+shlex 遷移另有幾個升級可見的邊角:apostrophe(don't)現在會在啟動時硬失敗、未引用的 Windows 反斜線路徑會被靜默吃掉(建議 preflight 對裸反斜線給警告)、NOTIFY_CMD
+是唯一漏掉遷移的 argv 字串,以及五個變數不分使用與否都會被 eager 驗證(第一輪的舊發現,這輪反而擴大了範圍)。細節都在 findings 清單裡。
+
