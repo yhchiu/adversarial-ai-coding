@@ -181,11 +181,6 @@ def test_codex_same_agent_validation_and_reserved_args():
     allowed = settings({"CODEX_ARGS": "-c model_reasoning_effort=high"})
     agents.validate_agents(allowed, which=lambda name: "C:/fake/" + name)
 
-    same_agy = settings({"AGENT_A": "agy", "AGENT_B": "agy"})
-    with pytest.raises(SettingsError, match="cannot both use agy"):
-        agents.validate_agents(same_agy, which=lambda name: "C:/fake/" + name)
-
-
 def test_fake_codex_keeps_worker_thread_separate_from_reviewer(monkeypatch, tmp_path):
     fake = tmp_path / "fake_codex.py"
     calls = tmp_path / "calls.jsonl"
@@ -246,3 +241,193 @@ def test_fake_codex_keeps_worker_thread_separate_from_reviewer(monkeypatch, tmp_
     assert 'model="gpt-b"' in recorded[1]
     assert "resume" not in recorded[1]
     assert recorded[2][-2] == "11111111-1111-4111-8111-111111111111"
+
+
+def test_parse_agy_conversation_id_is_strict_and_unambiguous(tmp_path):
+    log = tmp_path / "agy.log"
+    log.write_text(
+        "Created conversation ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF\n"
+        "Print mode: conversation=abcdefab-cdef-4abc-8def-abcdefabcdef\n",
+        encoding="utf-8",
+    )
+    assert agents._parse_agy_conversation_id(log) == (
+        "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    )
+
+    log.write_text(
+        "Created conversation 11111111-1111-4111-8111-111111111111\n"
+        "Print mode: conversation=22222222-2222-4222-8222-222222222222\n",
+        encoding="utf-8",
+    )
+    assert agents._parse_agy_conversation_id(log) == ""
+
+    log.write_text(
+        "Created conversation 11111111-1111-4111-8111-111111111111-extra\n"
+        "Created conversation 11111111-1111-4111-8111-11111111111\n",
+        encoding="utf-8",
+    )
+    assert agents._parse_agy_conversation_id(log) == ""
+    assert agents._parse_agy_conversation_id(tmp_path / "missing.log") == ""
+
+
+def test_agy_worker_uses_unique_logs_and_exact_conversation(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_stream(argv, io):
+        calls.append(argv)
+        log_path = Path(argv[argv.index("--log-file") + 1])
+        if len(calls) == 1:
+            log_path.write_text(
+                "Created conversation 33333333-3333-4333-8333-333333333333\n",
+                encoding="utf-8",
+            )
+        else:
+            log_path.write_text("resume produced no id\n", encoding="utf-8")
+        io.agent_out.write_text("ok\n", encoding="utf-8")
+        return 0, "ok"
+
+    monkeypatch.setattr(agents, "_run_streaming", fake_stream)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    s = settings({"AGENT_A": "agy", "AGENT_B": "claude", "MODEL_A": "agy-a"})
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+
+    agents.run_worker(agents.AgentRef("A", "agy"), "first", s, session, io)
+    first_log = Path(calls[0][calls[0].index("--log-file") + 1])
+    agents.run_worker(agents.AgentRef("A", "agy"), "second", s, session, io)
+    second_log = Path(calls[1][calls[1].index("--log-file") + 1])
+
+    assert first_log != second_log
+    assert "--continue" not in calls[0] and "--continue" not in calls[1]
+    assert "--conversation" not in calls[0]
+    conversation = calls[1].index("--conversation")
+    assert calls[1][conversation + 1] == "33333333-3333-4333-8333-333333333333"
+    assert session.worker_session == "33333333-3333-4333-8333-333333333333"
+    assert io.raw_out == second_log
+
+
+def test_agy_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_stream(argv, io):
+        calls.append(argv)
+        log_path = Path(argv[argv.index("--log-file") + 1])
+        if len(calls) == 1:
+            log_path.write_text(
+                "Created conversation 44444444-4444-4444-8444-444444444444\n",
+                encoding="utf-8",
+            )
+            io.agent_out.write_text("rate limit; try again in 0s\n", encoding="utf-8")
+            return 1, "rate limit"
+        log_path.write_text("resumed\n", encoding="utf-8")
+        io.agent_out.write_text("ok\n", encoding="utf-8")
+        return 0, "ok"
+
+    monkeypatch.setattr(agents, "_run_streaming", fake_stream)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    s = settings(
+        {
+            "AGENT_A": "agy",
+            "AGENT_B": "claude",
+            "RETRY_BASE_WAIT": "0",
+            "RETRY_MAX": "1",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=lambda message: None,
+        notify=lambda message: None,
+        sleep=lambda seconds: None,
+    )
+
+    result = agent_call(
+        lambda: agents.run_worker(
+            agents.AgentRef("A", "agy"), "prompt", s, session, io
+        ),
+        agent_out=io.agent_out,
+        settings=s,
+        events=events,
+        now=lambda: 0,
+    )
+
+    assert result.rc == 0
+    index = calls[1].index("--conversation")
+    assert calls[1][index + 1] == "44444444-4444-4444-8444-444444444444"
+
+
+def test_agy_same_agent_validation_and_reserved_args():
+    same = settings({"AGENT_A": "agy", "AGENT_B": "agy"})
+    agents.validate_agents(same, which=lambda name: "C:/fake/" + name)
+
+    for value in (
+        "--log-file output.log",
+        "--log-file=output.log",
+        "--continue",
+        "--conversation value",
+        "--conversation=value",
+    ):
+        invalid = settings({"AGY_ARGS": value})
+        with pytest.raises(SettingsError, match="AGY_ARGS"):
+            agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
+
+
+def test_fake_agy_keeps_worker_conversation_separate_from_reviewer(
+    monkeypatch, tmp_path
+):
+    fake = tmp_path / "fake_agy.py"
+    calls = tmp_path / "agy-calls.jsonl"
+    fake.write_text(
+        "import json, os, pathlib, sys\n"
+        "args = sys.argv[1:]\n"
+        "prompt = args[args.index('--print') + 1]\n"
+        "with open(os.environ['FAKE_AGY_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(args) + '\\n')\n"
+        "if '--log-file' in args:\n"
+        "    log = pathlib.Path(args[args.index('--log-file') + 1])\n"
+        "    if '--conversation' in args:\n"
+        "        conversation = args[args.index('--conversation') + 1]\n"
+        "    else:\n"
+        "        conversation = '55555555-5555-4555-8555-555555555555'\n"
+        "    log.write_text('Print mode: conversation=' + conversation + '\\n', "
+        "encoding='utf-8')\n"
+        "print('agy completed ' + prompt)\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "agy-bin"
+    bin_dir.mkdir()
+    if os.name == "nt":
+        wrapper = bin_dir / "agy.cmd"
+        wrapper.write_text(
+            f'@echo off\r\n"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        wrapper = bin_dir / "agy"
+        wrapper.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8"
+        )
+        wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("FAKE_AGY_CALLS", str(calls))
+    s = settings(
+        {
+            "AGENT_A": "agy",
+            "AGENT_B": "agy",
+            "MODEL_A": "agy-a",
+            "MODEL_B": "agy-b",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+
+    agents.run_worker(agents.AgentRef("A", "agy"), "worker one", s, session, io)
+    agents.run_reviewer(agents.AgentRef("B", "agy"), "reviewer call", s, session, io)
+    agents.run_worker(agents.AgentRef("A", "agy"), "worker two", s, session, io)
+
+    recorded = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
+    assert recorded[0][recorded[0].index("--model") + 1] == "agy-a"
+    assert recorded[1][recorded[1].index("--model") + 1] == "agy-b"
+    assert "--conversation" not in recorded[1]
+    index = recorded[2].index("--conversation")
+    assert recorded[2][index + 1] == "55555555-5555-4555-8555-555555555555"

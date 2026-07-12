@@ -408,18 +408,30 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
     assert resumed[-2:] == ["thread-1", "p2"]
 
 
-def test_agy_worker_continue_flag(monkeypatch, tmp_path):
+def test_agy_worker_conversation_flag(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(agents, "_run_streaming", lambda argv, io: (calls.append(argv), (0, "x"))[1])
+
+    def fake_stream(argv, io):
+        calls.append(argv)
+        log_path = Path(argv[argv.index("--log-file") + 1])
+        log_path.write_text(
+            "Created conversation 66666666-6666-4666-8666-666666666666\n",
+            encoding="utf-8",
+        )
+        return 0, "x"
+
+    monkeypatch.setattr(agents, "_run_streaming", fake_stream)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession()
     run_worker("agy", "p1", s, session, io)
-    assert session.worker_session == "continue"
+    assert session.worker_session == "66666666-6666-4666-8666-666666666666"
     run_worker("agy", "p2", s, session, io)
-    assert "--continue" not in calls[0]
-    assert "--continue" in calls[1]
+    assert "--continue" not in calls[0] and "--continue" not in calls[1]
+    assert "--conversation" not in calls[0]
+    index = calls[1].index("--conversation")
+    assert calls[1][index + 1] == "66666666-6666-4666-8666-666666666666"
     assert calls[0][:3] == ["agy", "--print", "p1"]
     assert "--dangerously-skip-permissions" in calls[0]
 

@@ -8,9 +8,12 @@ Port of adversarial-ai-coding.sh:341-359 (validate_engines), 400-422
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -88,10 +91,10 @@ def validate_agents(
         if which(name) is None:
             raise SettingsError(f"Missing required command:{name}")
     _validate_reserved_args(settings)
-    # Codex now resumes by exact thread ID. Agy still uses the most recent
-    # conversation until its adapter is upgraded in the next commit.
+    # Built-in agents resume by exact session IDs. Custom agents still have an
+    # unknown session model, so identical custom command names remain blocked.
     if settings.agent_a == settings.agent_b and settings.agent_a != "claude":
-        if settings.agent_a == "codex":
+        if settings.agent_a in {"codex", "agy"}:
             return
         if is_builtin_agent(settings.agent_a):
             raise SettingsError(
@@ -121,6 +124,16 @@ def _validate_reserved_args(settings: Settings) -> None:
                 raise SettingsError(
                     "CODEX_ARGS cannot override sandbox_mode; the workflow owns it"
                 )
+    for token in settings.agy_args.split():
+        normalized = token.strip("'\"")
+        if (
+            normalized in {"--log-file", "--continue", "--conversation"}
+            or normalized.startswith("--log-file=")
+            or normalized.startswith("--conversation=")
+        ):
+            raise SettingsError(
+                f"AGY_ARGS cannot contain session-control argument:{token}"
+            )
 
 
 @dataclass
@@ -476,6 +489,39 @@ def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     return args
 
 
+_AGY_UUID = (
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12}"
+)
+_AGY_CONVERSATION = re.compile(
+    rf"(?:Created conversation\s+|Print mode:\s*conversation=)"
+    rf"({_AGY_UUID})(?![0-9a-f-])",
+    re.IGNORECASE,
+)
+
+
+def _parse_agy_conversation_id(log_path: Path) -> str:
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    matches = [match.lower() for match in _AGY_CONVERSATION.findall(text)]
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else ""
+
+
+def _new_agy_attempt_log(io: AgentIO) -> Path:
+    io.raw_out.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_path = tempfile.mkstemp(
+        prefix="agy-attempt-", suffix=".log", dir=io.raw_out.parent
+    )
+    os.close(fd)
+    log_path = Path(raw_path)
+    log_path.unlink(missing_ok=True)
+    io.raw_out = log_path
+    return log_path
+
+
 def _worker_agy(
     ref: AgentRef,
     prompt: str,
@@ -485,6 +531,7 @@ def _worker_agy(
 ) -> AgentResult:
     # --dangerously-skip-permissions approves every tool action; prefer an
     # isolated branch, worktree, or container when using agy (sh:1078-1079).
+    log_path = _new_agy_attempt_log(io)
     argv = [
         _resolve_argv0("agy"),
         "--print",
@@ -494,10 +541,19 @@ def _worker_agy(
         "--dangerously-skip-permissions",
     ]
     argv += _agy_model_args(ref, settings)
+    argv += ["--log-file", str(log_path)]
     if session.worker_session:
-        argv += ["--continue"]
+        argv += ["--conversation", session.worker_session]
     rc, out = _run_streaming(argv, io)
-    session.worker_session = "continue"
+    conversation_id = _parse_agy_conversation_id(log_path)
+    if conversation_id:
+        session.worker_session = conversation_id
+    elif not session.worker_session:
+        io.echo(
+            "(warning: agy did not report a conversation ID; the next worker "
+            "call will start a fresh session)"
+        )
+    session.last_cost = ""
     return AgentResult(rc, out)
 
 
