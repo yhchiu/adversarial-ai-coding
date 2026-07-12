@@ -95,6 +95,78 @@ def test_custom_agent_args_use_slot_when_names_match():
     assert agents.resolve_model_args(agents.AgentRef("B", "wrapper"), s) == "--profile b"
 
 
+@pytest.mark.parametrize(
+    ("ref", "env", "expected"),
+    [
+        (
+            AgentRef("A", "claude"),
+            {"CLAUDE_ARGS": '--append-system-prompt "claude words"'},
+            [("CLAUDE_ARGS", '--append-system-prompt "claude words"')],
+        ),
+        (
+            AgentRef("B", "codex"),
+            {"CODEX_ARGS": "-c model_reasoning_effort=low"},
+            [("CODEX_ARGS", "-c model_reasoning_effort=low")],
+        ),
+        (
+            AgentRef("A", "agy"),
+            {"AGY_ARGS": '--append-system-prompt "agy words"'},
+            [("AGY_ARGS", '--append-system-prompt "agy words"')],
+        ),
+        (
+            AgentRef("A", "worker-wrapper"),
+            {
+                "AGENT_A": "worker-wrapper",
+                "AGENT_A_ARGS": '--profile "worker words"',
+            },
+            [("AGENT_A_ARGS", '--profile "worker words"')],
+        ),
+        (
+            AgentRef("B", "review-wrapper"),
+            {
+                "AGENT_B": "review-wrapper",
+                "AGENT_B_ARGS": '--profile "review words"',
+            },
+            [("AGENT_B_ARGS", '--profile "review words"')],
+        ),
+        (AgentRef("A", "claude"), {}, []),
+    ],
+)
+def test_arg_sources_select_non_empty_adapter_args(ref, env, expected):
+    assert agents._arg_sources(ref, make(env)) == expected
+
+
+def test_shared_sources_keep_runtime_and_metadata_order(monkeypatch):
+    sources = [
+        ("CLAUDE_ARGS", '--first "two words"'),
+        ("AGENT_A_ARGS", "--second final"),
+    ]
+    monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
+    ref = AgentRef("A", "claude")
+    settings = make()
+
+    assert agents.agent_args(ref, settings) == [
+        "--first",
+        "two words",
+        "--second",
+        "final",
+    ]
+    assert agents.resolve_model_args(ref, settings) == (
+        '--first "two words" --second final'
+    )
+
+
+def test_agent_args_attributes_quoting_error_to_each_source(monkeypatch):
+    sources = [
+        ("CLAUDE_ARGS", "--first valid"),
+        ("AGENT_A_ARGS", '--second "unterminated'),
+    ]
+    monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
+
+    with pytest.raises(SettingsError, match=r"AGENT_A_ARGS.*quoting"):
+        agents.agent_args(AgentRef("A", "claude"), make())
+
+
 def test_agent_model_unset_is_empty_for_cli_default():
     s = make({"AGENT_A": "claude", "AGENT_B": "codex"})
     assert agent_model("claude", s) == ""
@@ -344,6 +416,55 @@ def make_io(tmp_path, lines=None):
         verdict_path=tmp_path / "verdict.json",
         echo=sink.append,
     ), sink
+
+
+@pytest.mark.parametrize(
+    ("builder", "ref", "expected"),
+    [
+        (
+            agents._claude_common_args,
+            AgentRef("A", "claude"),
+            ["--model", "model-a", "--shared", "two words"],
+        ),
+        (
+            agents._codex_model_args,
+            AgentRef("B", "codex"),
+            ["-c", 'model="model-b"', "--shared", "two words"],
+        ),
+        (
+            agents._agy_model_args,
+            AgentRef("B", "agy"),
+            ["--model", "model-b", "--shared", "two words"],
+        ),
+    ],
+)
+def test_builtin_model_arg_builders_append_shared_agent_args(
+    monkeypatch, builder, ref, expected
+):
+    monkeypatch.setattr(
+        agents, "agent_args", lambda ref, settings: ["--shared", "two words"]
+    )
+    settings = make({"MODEL_A": "model-a", "MODEL_B": "model-b"})
+
+    assert builder(ref, settings) == expected
+
+
+def test_generic_runner_places_shared_agent_args_before_prompt(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(
+        agents, "agent_args", lambda ref, settings: ["--shared", "two words"]
+    )
+    monkeypatch.setattr(agents, "_resolve_argv0", lambda name: name)
+    monkeypatch.setattr(
+        agents,
+        "_run_streaming",
+        lambda argv, io: (seen.update(argv=argv), (0, "ok"))[1],
+    )
+    io, _ = make_io(tmp_path)
+
+    agents._run_generic(AgentRef("A", "wrapper"), "prompt", make(), io)
+
+    assert seen["argv"] == ["wrapper", "--shared", "two words", "prompt"]
 
 
 def test_verdict_schema_matches_bash():

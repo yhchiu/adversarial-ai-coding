@@ -2,8 +2,12 @@
 
 import csv
 import json
+import shlex
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from adversarial_ai_coding import agents
 from adversarial_ai_coding.archive import RunArchive, establish_run_archive
 from adversarial_ai_coding.agents import agent_ref
 from adversarial_ai_coding.config import Settings
@@ -79,6 +83,53 @@ def test_write_meta_matches_bash_fields(tmp_path):
         "run_id",
         "artifact",
     ]
+
+
+@pytest.mark.parametrize(
+    ("env", "slot", "expected_tokens"),
+    [
+        (
+            {
+                "AGENT_A": "codex",
+                "CODEX_ARGS": (
+                    "-c model_reasoning_effort=low "
+                    "--config 'developer_instructions=\"two words\"'"
+                ),
+            },
+            "A",
+            [
+                "-c",
+                "model_reasoning_effort=low",
+                "--config",
+                'developer_instructions="two words"',
+            ],
+        ),
+        (
+            {
+                "AGENT_A": "worker-wrapper",
+                "AGENT_A_ARGS": '--profile "two words" --last',
+            },
+            "A",
+            ["--profile", "two words", "--last"],
+        ),
+    ],
+)
+def test_archive_model_args_match_builtin_and_custom_runtime_tokens(
+    tmp_path, env, slot, expected_tokens
+):
+    archive = make_archive(tmp_path, env)
+    ref = agent_ref(slot, archive.settings)
+    artifact = archive.archive_text(
+        "agent-output.txt", "done", role="worker", agent=ref, stage="code"
+    )
+    metadata = json.loads(
+        artifact.with_name(artifact.name + ".meta.json").read_text(encoding="utf-8")
+    )
+
+    runtime_tokens = agents.agent_args(ref, archive.settings)
+    assert metadata["model_args"] == agents.resolve_model_args(ref, archive.settings)
+    assert runtime_tokens == expected_tokens
+    assert runtime_tokens == shlex.split(metadata["model_args"], posix=True)
 
 
 def test_archive_snapshot_missing_source_is_noop(tmp_path):

@@ -67,22 +67,39 @@ def agent_model(ref: AgentRef, settings: Settings) -> str:
     return ""
 
 
-def resolve_model_args(ref: AgentRef, settings: Settings) -> str:
-    if ref.name == "claude":
-        return settings.claude_args
-    if ref.name == "codex":
-        return settings.codex_args
-    if ref.name == "agy":
-        return settings.agy_args
-    return generic_agent_args(ref, settings)
-
-
 def generic_agent_args(ref: AgentRef, settings: Settings) -> str:
     if ref.slot == "A":
         return settings.agent_a_args
     if ref.slot == "B":
         return settings.agent_b_args
     return ""
+
+
+def _arg_sources(ref: AgentRef, settings: Settings) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    if ref.name == "claude":
+        sources.append(("CLAUDE_ARGS", settings.claude_args))
+    elif ref.name == "codex":
+        sources.append(("CODEX_ARGS", settings.codex_args))
+    elif ref.name == "agy":
+        sources.append(("AGY_ARGS", settings.agy_args))
+    elif ref.slot == "A":
+        sources.append(("AGENT_A_ARGS", generic_agent_args(ref, settings)))
+    elif ref.slot == "B":
+        sources.append(("AGENT_B_ARGS", generic_agent_args(ref, settings)))
+    return [(variable, raw) for variable, raw in sources if raw]
+
+
+def agent_args(ref: AgentRef, settings: Settings) -> list[str]:
+    return [
+        token
+        for variable, raw in _arg_sources(ref, settings)
+        for token in _split_cli_args(variable, raw)
+    ]
+
+
+def resolve_model_args(ref: AgentRef, settings: Settings) -> str:
+    return " ".join(raw for _, raw in _arg_sources(ref, settings))
 
 
 def validate_agents(
@@ -368,7 +385,7 @@ def _claude_common_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
-    args += _split_cli_args("CLAUDE_ARGS", settings.claude_args)
+    args += agent_args(ref, settings)
     return args
 
 
@@ -478,7 +495,7 @@ def _codex_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["-c", f'model="{model}"']
-    args += _split_cli_args("CODEX_ARGS", settings.codex_args)
+    args += agent_args(ref, settings)
     return args
 
 
@@ -551,7 +568,7 @@ def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     model = agent_model(ref, settings)
     if model:
         args += ["--model", model]
-    args += _split_cli_args("AGY_ARGS", settings.agy_args)
+    args += agent_args(ref, settings)
     return args
 
 
@@ -648,9 +665,7 @@ def _run_generic(
 ) -> AgentResult:
     argv = [
         _resolve_argv0(ref.name),
-        *_split_cli_args(
-            f"AGENT_{ref.slot}_ARGS", generic_agent_args(ref, settings)
-        ),
+        *agent_args(ref, settings),
         prompt,
     ]
     rc, out = _run_streaming(argv, io)
