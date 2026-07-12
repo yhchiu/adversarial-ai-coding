@@ -1,0 +1,148 @@
+● Code review(xhigh · 13 findings)
+  ⎿  ●src/adversarial_ai_coding/agen[correctne— The reserved-args preflight only blocks the '-c sandbox_mode=' and '--sandbox' spellings, but the codex CLI
+      ts.py:121                     ss]       also accepts '--config <key=value>' and '-s <mode>' (verified via `codex exec --help`), so session/sandbox
+                                              control can still be stolen through CODEX_ARGS; AGY_ARGS similarly misses a possible '--continue=<value>' form.
+     ●src/adversarial_ai_coding/agen[correctnes— _AGY_CONVERSATION matches its markers anywhere in the log with no line anchoring, so marker-shaped text echoed
+      ts.py:548                     s]         into the log (from the prompt or the agent's own transcript) can be adopted as the conversation id.
+     ●src/adversarial_ai_coding/agen[correctnes— _validate_reserved_args tokenizes with str.split() plus token.strip('\'"'), so a reserved word at the end of a
+      ts.py:111                     s]         quoted free-text value is misread as a standalone flag and a valid configuration is rejected.
+     ●src/adversarial_ai_coding/agent[correctnes— _validate_reserved_args runs unconditionally, validating CODEX_ARGS/AGY_ARGS even when neither slot uses
+      s.py:94                        s]         codex or agy, so previously-working environments now fail startup.
+     ●src/adversarial_ai_coding/agen[resource-le— Every agy worker call mints an agy-attempt-*.log in the persistent .workflow directory via
+      ts.py:513                     ak]         _new_agy_attempt_log, and nothing ever deletes the final attempt's file after archiving.
+     ●src/adversarial_ai_coding/agent[altitude— _new_agy_attempt_log smuggles the per-attempt log path to the archive machinery by mutating the caller-owned
+      s.py:521                       ]        io.raw_out field, an implicit timing contract with ratelimit.agent_call's attempt→archive ordering rather than an
+                                              explicit return value.
+     ●src/adversarial_ai_coding/agent[simplificati— In _run_codex_json the trailing `elif event_type != "thread.started":` is dead logic — the first branch of
+      s.py:266                       on]          the same chain already consumed thread.started, so the condition is always true and should be a plain
+                                                  `else:`.
+     ●src/adversarial_ai_coding/age[simplificati— validate_agents whitelists id-resume support as the literal set {"codex", "agy"}, which together with the
+      nts.py:97                    on]          outer != "claude" check makes the following `if is_builtin_agent(...): raise` branch unreachable dead code
+                                                (BUILTIN_AGENTS is exactly claude/codex/agy).
+     ●tests/test_agents.py[test-coverag— The ref_for_name shim infers the slot as 'A' whenever the name matches settings.agent_a, so under same-name A/B
+      :32                 e]           settings — the exact scenario this feature adds — shim-based tests can only ever exercise slot A.
+     ●tests/test_session_resume.[reuse]— The os.name=='nt' .cmd/POSIX-shebang fake-CLI wrapper builder is hand-rolled twice in this file (codex and agy
+      py:206                           variants) while tests/test_resume_integration.py:12 already has the same helper as _make_wrapper, and the plan
+                                       explicitly asked to reuse the tests/fake_agent.py pattern.
+     ●src/adversarial_ai_coding/archi[simplificati— The three-way ternary triple (agent.name / agent_model / resolve_model_args with the None→'workflow'/''
+      ve.py:121                      on]          fallback) is duplicated verbatim between write_meta and log_section, and the Optional-vs-required AgentRef
+                                                  contract is inconsistent across sibling RunArchive methods (metric and archive_agent_attempt require a real
+                                                  ref).
+     ●src/adversarial_ai_coding/agen[simplificati— session.last_cost is reset both by the callers (work()/run_review() before the call) and inside
+      ts.py:458                     on]          _worker_codex/_reviewer_codex/_worker_agy after it, while the structurally identical _reviewer_agy has no
+                                                 self-reset — the ownership convention is duplicated and inconsistently applied.
+     ●src/adversarial_ai_coding/agen[efficienc— _parse_agy_conversation_id reads the entire attempt log into memory with read_text() on every agy worker call
+      ts.py:504                     y]        just to find one short marker that agy writes near the start.
+
+● Code review 完成,共回報 13 個經驗證的 findings(上方清單)。
+
+總體結論
+
+實作完整性:完整。 對照計畫逐項檢查後,四個 commit 都落實了計畫內容,沒有遺漏:
+
+- 不可違反的 invariants 全數成立:已知 uuid 只升級不降級(codex/agy 的 elif 結構正確,四條 state machine 路徑各有測試)、全程無 --last/--continue、archive/log/metrics
+全線吃 AgentRef 且序列化時才取 .name(src 內所有 call sites 我逐一 grep 過,無漏網字串)、agent_out 是 decode 後可讀文字(fixture 測試驗證 parse_reset_wait 的
+20s+30s buffer=50 換算正確)。
+- 逐 commit 安全(invariant 5):我 checkout 檢查了三個中間 commit 的 validate_agents —— 0ecbcaa 仍全拒同名、085d750 只放行 codex、5d05304 才放行 agy,且 085d750 的
+preflight 只含 codex 檢查,完全符合計畫的 commit 切分。
+- README 雙語、parity 文件、retry-resume 測試、offline fake-CLI 整合測試都齊。
+
+最重要的發現是第 1 項:preflight 保留旗標檢查可用 --config sandbox_mode=... 和 -s(--sandbox 的短旗標,我用 codex exec --help 實際確認存在)繞過,guard 想擋的「奪走
+sandbox/session 控制權」仍擋不住。第 2 項(agy log 標記無行首錨定,可能吸收 echo 進 log 的假 id)是唯一可能違反「絕不接錯 session」invariant
+的路徑,但觸發條件苛刻。其餘多是中低嚴重度:preflight 誤殺與過度檢查、agy attempt log 累積不清理、io.raw_out 變異的隱式時序契約,以及幾個 cleanup。
+
+沒有發現 release-blocker 等級的 session 錯接 bug —— 核心功能(A/B 同 agent 不同模型互審、id 定址 resume)的實作是正確的。
+
+補充兩點:(1) CODEX_ARGS 等用 .split() 切割導致含空白的引號值會被切碎是既有行為(bash 版同樣語意),非本次引入,故未列入 findings;(2) 流程說明——10 個 finder agents 中
+4 個正確性角度因 subagent session limit 中途失敗(9:40 重置),我改為 inline 自行完成那些角度與全部驗證,每個 finding 的 verdict 都是讀過現行原始碼(或實測
+CLI)後裁定的。
+
+✻ Churned for 7m 29s
+
+❯ 你提到的兩項重要發現有需要修嗎? 「CODEX_ARGS 等用 .split() 切割導致含空白的引號值會被切碎」有需要修嗎? 請提供你的建議
+
+● 三項都值得修,但優先級與修法不同。以下是我的評估與建議:
+
+1. Preflight 繞過(--config / -s)— 建議修,優先級最高
+
+這個 guard 不是安全邊界(CODEX_ARGS 是使用者自己設的),但它存在的目的就是擋「使用者 args 靜默奪走 sandbox/session 控制權」這個 footgun,而 --config 是 codex
+官方文件裡 -c 的等價長旗標、-s 是 --sandbox 的短旗標——使用者寫出這兩種拼法完全自然,guard 卻剛好漏掉,等於沒達成設計目的。修法便宜:
+
+- codex blocklist 加上 -s、--config(含 --config= 前綴),且 sandbox_mode= 的 follower 檢查同時涵蓋 -c 與 --config。
+- agy 加 --continue= 前綴(防禦性,一行)。
+- 可選的縱深防禦:把 workflow 自己的 -c sandbox_mode="workspace-write" 移到 user args 之後,用「後者優先」讓 workflow 天然勝出、不依賴 blocklist 窮舉。但這依賴
+codex 對重複 -c 同 key 的優先序語意,動手前要先用真實 CLI smoke 一次確認。
+
+要接受的現實是這種 blocklist 永遠不可能窮舉(例如 --profile 指向一個設了 sandbox_mode 的 config profile
+也能繞),所以建議修掉這兩個明顯拼法即可,不要追求滴水不漏,README 已寫明這些旗標保留給 workflow,維持「best-effort footgun 防護」的定位。
+
+2. agy log 標記無行首錨定 — 建議修,便宜的一行保險
+
+觸發條件雖苛刻,但它是唯一可能違反「絕不接錯 session」這條核心 invariant 的路徑,而修法幾乎零成本:regex 加 ^ 錨定 + re.MULTILINE。前提是先對照一份真實 agy log 確認
+Created conversation / Print mode: 確實在行首(你 smoke test 留下的 log 可以直接查);如果 agy 行首有時間戳前綴就改成允許固定前綴的錨定。錨定後,殘餘風險(整行被原樣
+echo 到行首)由既有的 unique-match 規則和「resume 缺 match 保留舊 id」兜底,我認為就足夠了。
+
+3. .split() 切碎含空白的引號值 — 建議修,但理由不是「修 bug」而是「解鎖需求」
+
+現狀是 bash parity 的刻意結果(bash 版 unquoted expansion 同樣切碎),所以它不是退化。要不要修取決於一個問題:使用者會不會需要含空白的參數值?
+我認為會——AGY_ARGS='--append-system-prompt "two words"' 正是這類旗標的典型用法,現狀下這種需求完全做不到,而且是靜默切碎(codex/agy 收到畸形 argv),不是明確報錯。
+
+建議的修法是一次到位:
+
+- 四個 splice 點(claude_args / codex_args / agy_args / agent_*_args)全部改 shlex.split()。
+- _validate_reserved_args 改成對 shlex token 檢查,並移除 strip("'\"") hack——這會順帶把 finding 3(引號值誤殺)真正修掉,而不是打補丁。
+- 依專案慣例在 docs/python-port-parity.md 記一筆刻意分歧(bash 用 word-splitting、Python 用 shell quoting 規則),並註明 Windows 上也採 POSIX quoting 規則(args 是以
+list 直接進 Popen,不經 shell,所以可行)。
+- 遷移風險很低:現有文件範例(-c model_reasoning_effort=low)無引號、不受影響;寫 -c model="x" 的使用者在 shlex 下 codex 會收到 model=x,這其實才是 shell
+使用者的預期行為,且 codex 兩種形式都接受(workflow 內部自己就是用帶引號形式在跑的)。
+
+反過來說,如果你決定不修 .split(),那 finding 3 的誤殺場景也就幾乎不存在(引號多字值本來就不可用),此時只需在 README 註明「參數值不可含空白」即可。
+
+總結:1 和 2 是小修,建議一起做成一個 fix(agents) commit;3 是小型行為變更,建議獨立一個 commit(shlex + validation 重寫 + parity 文件 + 測試)。需要我動手的話說一聲。
+
+❯ 請說明為什麼應該要擋 codex  --sandbox  and agy --continue=<value>
+
+● 好問題,兩者被擋的理由不同——--sandbox 是「會弄壞 argv 且動搖 workflow 的執行前提」,--continue= 是「同一個危險旗標的另一種拼法」。分開說明:
+
+為什麼擋 codex --sandbox
+
+1. exec resume 根本不接受這個旗標,會讓 run 跑到一半才炸。
+Workflow 有兩種 argv 形狀:fresh 用 codex exec --sandbox workspace-write ...,resume 用 codex exec resume -c sandbox_mode="..." ...——之所以 resume 改用 -c,正是因為
+resume 子命令沒有 --sandbox 旗標(計畫與 bash 版註解都記了這點)。如果放行 CODEX_ARGS='--sandbox read-only',第一輪 fresh call 也許能跑,但第二輪起的每個 resume call
+都會因為未知旗標直接 CLI error。這種錯誤最糟的地方是延遲引爆:燒完第一輪昂貴的 AI call 之後才死,而且死狀是難以歸因的 agent failure。Preflight
+在啟動時就擋下、給明確訊息,是拿「立刻可修的錯誤」換「跑一半的莫名失敗」。
+
+2. Fresh call 上會跟 workflow 自己的 --sandbox workspace-write 重複。
+重複旗標的下場二選一:CLI 報「不可重複」錯誤(又是難歸因的失敗),或後者靜默覆蓋前者。後者更糟——sandbox 模式是 workflow 正確性的前提:worker 必須能寫 workspace(否則 review
+loop 會在「worker 說做完了但沒有任何變更」的狀態空轉);反方向若被覆蓋成 danger-full-access,實際執行的安全邊界跟 README 和 archive metadata
+宣稱的完全不同,而且沒有任何紀錄顯示這件事發生了。
+
+3. 原則層面:這是 workflow 的功能參數,不是 agent 的口味參數。
+CODEX_ARGS 的定位是「調整 agent 行為」(模型、reasoning effort 等),而 sandbox 模式決定的是 workflow 自身的運作前提。如果真有「我想用不同 sandbox
+政策」的需求,正確做法是開一個顯式的 workflow 設定(例如未來加 SANDBOX= 環境變數),讓它同時套用到 fresh 和 resume 兩種 argv 形狀、寫進 metadata——而不是從 pass-through
+args 偷渡進去,因為 pass-through 有一半的呼叫路徑(resume)根本表達不了它。
+
+為什麼擋 agy --continue=<value>
+
+1. --continue 的語意正是這整個計畫要消滅的東西。
+--continue 是「續接最近一次 conversation」——全域 recency resume。計畫的 invariant 2 明文禁止它,因為互審流程中 worker 和 reviewer 交錯執行,「最近一次」在 review
+輪之後指向的是 reviewer 的 conversation。若使用者把它塞進 AGY_ARGS(而 AGY_ARGS 是按命令共用、worker 和 reviewer 的每一次呼叫都會帶上):
+
+- worker 的 fresh call 會靜默接上 reviewer 的舊對話——正是這個 feature 要根除的 cross-contamination;更糟的是 workflow 接著從 log 解析出的 id 就是 reviewer 的
+conversation id,依「已知 id 只升級」規則永久收編,之後每一輪都精準地 resume 到錯的 session。
+- worker 的 resume call 會同時帶 workflow 的 --conversation <uuid> 和使用者的 --continue,兩者衝突、優先序未定義,exact-id 保證直接作廢。
+- reviewer call 帶上 --continue 則讓本應每輪全新、獨立的 reviewer 繼承 worker 的對話脈絡,破壞互審的對抗性前提。
+
+2. = 形式只是同一個旗標的另一種拼法,不擋等於白擋。
+現有 blocklist 是字串比對:--continue=true 不等於 --continue,所以直接漏過。程式碼其實已經意識到這個問題——它對 --log-file= 和 --conversation= 都擋了前綴形式,唯獨漏了
+--continue=,這是同一道 guard 內部的不一致。許多 CLI parser 同時接受 --flag value 和 --flag=value 兩種寫法;只要 agy(或它未來的版本)接受 = 形式,上面第 1
+點的所有後果原封不動地發生。
+
+3. 擋它的成本是零。
+--continue 本體已被保留,所以 --continue=<anything> 在 AGY_ARGS 裡不存在任何合法用途——不會誤殺任何人。就算 agy 實際上不接受 =
+形式(我沒有實測確認這點),擋下它也只是把「跑到一半 agy
+報未知旗標」提前成「啟動時給明確訊息」,依然是純收益。這就是為什麼我把它歸在「防禦性、一行」:不是因為確定有人會踩,而是補齊同一道 guard 的對稱性,順便對 agy 升版免疫。
+
+共同的判準:這道 preflight 擋的不是「使用者不該調的參數」,而是「會奪走 workflow 賴以維持保證的控制通道」——session 定址(resume/--continue/--conversation)、id
+解析來源(--log-file)、輸出格式(--json)、執行邊界(--sandbox/sandbox_mode)。--sandbox 和 --continue= 各踩其中一條,所以都該擋。
+
