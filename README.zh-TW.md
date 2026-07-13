@@ -11,7 +11,7 @@ for work in "訂規格" "規劃實作計畫" "撰寫程式碼" "整體review" "�
 done
 ```
 
-其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI** 或 **Antigravity CLI**,透過各家的 headless(非互動)模式驅動。
+其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI**、**Antigravity CLI** 或自訂 wrapper,透過各家的 headless(非互動)模式驅動。Stage 5 還可使用獨立的實作 slot I。
 
 ## 流程
 
@@ -24,7 +24,7 @@ flowchart TD
     plan["<b>3 · 規劃實作計畫</b><br/>A 寫 checkbox 任務清單 · B 審 ⟳"]
     plangate{"人工核准 plan?<br/>(選用:HUMAN_GATE_PLAN=1)"}
     tests["<b>4 · 撰寫驗收測試</b>(角色互換)<br/>B 作 · A 審 ⟳"]
-    task["<b>5 · 實作下一個任務</b><br/>A 實作 · 輕量編譯關卡 · 受保護測試檢查 · commit"]
+    task["<b>5 · 實作下一個任務</b><br/>I(預設為 owner)實作 · 輕量編譯關卡 · 受保護測試檢查 · commit"]
     more{"還有任務?"}
     branch["<b>6 · 完整關卡 + 整體審查</b><br/>workflow 跑 GATE_CMD · B 審整體 diff ⟳"]
     final["<b>7 · 最終 review 與修正</b><br/>A 自我 review · B 最終驗收 ⟳"]
@@ -62,7 +62,7 @@ flowchart LR
 2. **人工核准**:最高槓桿的人工檢查點——人核准 spec(可先直接編輯,改動會一併 commit)後,才開始花大錢實作。無人值守用 `HUMAN_GATE=0` 跳過。
 3. **規劃實作計畫**:`plan.md` 必須是「- [ ] 」checkbox 任務清單,一個任務對應一個 commit。`HUMAN_GATE_PLAN=1` 可在此加第二個人工檢查點:AI 互審後、commit 之前暫停——plan 就是後續實作的任務佇列,這是開始燒錢前最後一個便宜的介入點。預設關閉;與 spec gate 一樣可先直接編輯 `plan.md`,改動會一併 commit。
 4. **撰寫驗收測試**:對抗式 TDD 讓出題者與答題者分離,所以角色互換:B 寫測試、A 只負責審。測試檔隨後受保護,之後每次工作者動作後 workflow 都用 `git diff` 硬性檢查;此階段紅燈是預期的(TDD red phase)。詳細機制與「測試真的錯了怎麼辦」見[受保護測試的逃生口](#受保護測試的逃生口)。
-5. **逐任務實作**:一個 checkbox 任務一個 commit,審查與回退都容易。逐任務只跑輕量的 `BUILD_GATE_CMD`(只驗編譯);所有任務完成前,驗收測試允許紅燈。
+5. **逐任務實作**:一個 checkbox 任務一個 commit,審查與回退都容易。實作 slot 負責整個逐任務迴圈:實作該任務、修復 `BUILD_GATE_CMD` 失敗、修復受保護測試違規,以及建立該任務的 commit。三個 `IMPL_*` 都未設定時,實作 slot 就是 owner,行為完全不變。逐任務只跑輕量關卡(只驗編譯),因此所有任務完成前驗收測試允許紅燈。迴圈結束後恢復一般 owner/reviewer 配對:完整 `GATE_CMD` 修復、branch-review 修正與 final-review 修正由 owner 處理,reviewer 仍負責 branch review 與最終驗收。
 6. **完整關卡 + 整體審查**:workflow 親自跑 `GATE_CMD`,此時驗收測試必須全綠;接著 B 審整條 branch 的完整 diff。
 7. **最終 review 與修正**:A 逐條處理累積的 `.workflow/suggestions.md` 與自我 review 發現,B 做最終驗收。
 8. **收尾**:印出 `git push` / `gh pr create` 指令與執行統計;`OPEN_PR=1` 才自動執行。
@@ -72,12 +72,12 @@ flowchart LR
 ## 核心設計(為什麼這樣做)
 
 - **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 workflow 自己跑,失敗輸出直接餵回給工作者修;AI 的「測試通過」回報只當參考。
-- **對抗式測試完整性**:驗收測試由審查方(B)依規格撰寫、工作方(A)審查;實作階段 A 禁改這些測試檔,workflow 在**每次工作者動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
+- **對抗式測試完整性**:驗收測試由 reviewer 依規格撰寫、owner 審查;進入受保護階段後,任何 worker 呼叫(包含實作 slot I 與後續 owner 修正)都禁止修改這些測試檔。Workflow 在**每次 worker 動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
 - **人工檢查點在最高槓桿處**:spec 通過 AI 互審後、開始花大錢實作前,暫停等人核准(可先直接編輯 spec 再繼續);流程終點是「等人 merge 的 PR」,不是靜默結束。
 - **分級裁決**:`verdict.json` 為 `{approved, blockers[], suggestions[]}`,只有 blocker 擋關;suggestions 累積到 `.workflow/suggestions.md`,收尾階段逐條評估,避免審查者拿小事擋關或不好意思擋而放水。
 - **小批次**:一個 checkbox 任務一個 commit,審查與回退都容易。
 - **產物落地成檔案**:A/B 之間靠 `specs/` 檔案與 git diff 溝通,不靠 stdout 傳遞長內容——這是 SDD 的天然優勢。
-- **A 同 stage 續 session、B 每輪全新 context**:A 修改時記得自己為什麼那樣寫;B 不被前一輪結論定錨——這也是 A/B 用不同廠牌模型互審的價值(盲點不同)。
+- **同一個 worker ref 在迴圈內續 session、reviewer 每輪全新 context**:同一個 worker ref 修改時保留脈絡;切換 ref 會依下方規則丟棄 session。Reviewer 不被前一輪結論定錨——這也是不同廠牌模型互審的價值(盲點不同)。
 
 ## 前置需求
 
@@ -85,6 +85,7 @@ flowchart LR
 - [Astral uv](https://docs.astral.sh/uv/)
 - `git`
 - 會用到的 AI CLI 已安裝並登入:`claude`(Claude Code)、`codex`(Codex CLI)、`agy`(Antigravity CLI,選用)
+- 透過 `AGENT_A`、`AGENT_B` 或 `IMPL_AGENT` 設定的自訂 command / wrapper 可在 `PATH` 中找到
 - **在目標專案的 git repo 根目錄執行**(workflow 會檢查)。不需要 Bash 或 `jq`
 
 ## 快速開始
@@ -120,6 +121,31 @@ uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 
 若目標就是 workflow checkout 本身,可使用簡寫:`uv run adversarial-ai-coding task.md`。
 
+## 強模型規劃、便宜模型實作
+
+寫 spec、規劃、撰寫驗收測試與對抗式審查最需要強模型;重複性高的 stage-5 任務迴圈則可換成較便宜的模型或不同 CLI,而後續完整關卡與審查仍交回原本的 owner/reviewer 配對。
+
+保留 owner 的 command,只降低實作模型:
+
+```bash
+AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+```
+
+或由 Claude 規劃、Codex 實作 checkbox 任務:
+
+```bash
+AGENT_A=claude MODEL_A=opus \
+AGENT_B=codex MODEL_B=gpt-5.5 \
+IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
+IMPL_ARGS='-c model_reasoning_effort="low"' \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+```
+
+三個 `IMPL_*` 都為空時,實作 slot 解析成選定的 owner,完全沿用既有行為。`IMPL_MODEL` 為空時,只有實作 command 與 owner command 相同,才繼承 owner slot 的 `MODEL_A` 或 `MODEL_B`;若換了 command 卻沒有設定 `IMPL_MODEL`,就使用該 CLI 自己的預設模型,絕不把一個 CLI 的模型名稱帶到另一個 CLI。
+
+內建 command 可在 A、B、I 間同名,因為 workflow 只會用精準捕捉的 session ID 續接。不同 custom slot 不得共用 command 名稱,workflow 無法判斷 wrapper 是否暗中沿用 session。自訂實作 wrapper 必須同時與 A、B 不同名。若選定的 owner 是 custom agent,只要要設定任何 `IMPL_*` 客製化,就必須明確設定另一個 `IMPL_AGENT` wrapper;三個值全空時仍直接使用 owner,不會建立不同角色。
+
 ## 雙 spec 模式
 
 設定 `DUAL_SPEC=1` 後,規格階段會改成:
@@ -142,7 +168,7 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 - `ma`:以 A 為 base,編輯 `.workflow/spec-merge-request.md`,要求 A 明確採納 B 的指定項目
 - `mb`:以 B 為 base,編輯 `.workflow/spec-merge-request.md`,要求 B 明確採納 A 的指定項目
 
-被選中的 owner 後續負責 plan、實作與自我 review;另一方成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
+被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
 ### 任務怎麼寫
 
@@ -167,10 +193,13 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 |---|---|---|
 | `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令 |
 | `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
+| `IMPL_AGENT` | 選定 owner 的 command | Stage-5 逐任務實作迴圈使用的 command。內建 command 可與 A/B 同名;自訂實作 wrapper 必須與兩者都不同名 |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
+| `IMPL_MODEL` | 繼承或 CLI 預設 | 內建實作 slot 的模型。未設定時,只有 command 與 owner 相同才繼承 owner 模型;自訂實作 agent 會忽略此值,請改用 `IMPL_ARGS` |
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent command 共用的額外參數,依 POSIX shell quoting 解析。session 控制旗標由 workflow 保留,見下節 |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依 POSIX shell quoting 解析後加在 prompt-file instruction 前 |
+| `IMPL_ARGS` | (空) | 實作 slot 的額外參數,依 POSIX shell quoting 解析。內建實作 agent 會接在該 command 的共用 args 後;自訂實作 wrapper 的模型旗標也放這裡 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
@@ -210,6 +239,8 @@ RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-
 ```bash
 AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
+
+持久化的 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `.workflow/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-1 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
 
 `SPEC_DIR`、`DUAL_SPEC`、`AUTO_BRANCH`、`USE_WORKTREE` 跨續跑不可變:它們決定 stage 圖與產物位置,衝突的覆寫會被拒絕。`NOTIFY_CMD` 刻意不持久化,每次 attempt 重新提供。
 
@@ -283,9 +314,11 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) |
 | 費用回報 | 有(metrics.csv) | 無 | 無 |
 
-- Claude、Codex、Agy 都可同時放在 A/B slot;`MODEL_A`、`MODEL_B` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
+- Claude、Codex、Agy 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
+- 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
 - workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Codex 原始 JSONL 與 Agy log 會存成每 attempt 的 `.cli.raw` artifact。
-- `CODEX_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。這些旗標由 workflow 管理,避免 session ownership 被靜默奪走。
+- 內建 agent 的 session、輸出、sandbox 與 log 旗標由 workflow 管理。`CLAUDE_ARGS`(以及 I 解析成 Claude 時的 `IMPL_ARGS`)不得包含 `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`,也不得用 `--output-format` 或 `--json-schema` 覆寫結構化輸出契約。`CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 與 Agy 的 `IMPL_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。
+- 內建 args 也不得用 `--model`、`-m` 或 Codex 的 `-c model=` / `--config model=` 指定模型;必須使用 `MODEL_A`、`MODEL_B` 或 `IMPL_MODEL`,確保實際呼叫與 archive metadata 一致。Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 - 所有內建與自訂 agent 的額外參數在各平台都採 POSIX shell quoting;含空白的值必須引用。Windows 反斜線路徑必須引用或改用 `/`,未引用的反斜線會套用 POSIX escape 語意。
 - Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
 - 自訂 agent 沒有自動 session resume;A/B 使用完全相同的自訂 command 仍會拒絕。若底層 CLI 相同,請用兩個 wrapper command 名稱隔離 session/profile。
@@ -295,7 +328,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 受保護測試的逃生口
 
-工作者(A)對驗收測試有異議時,只能把異議寫進 spec 的「假設與未決問題」,不能改測試。若測試**真的**錯了,由人工介入:直接編輯測試檔(人不受 workflow 限制,下一輪檢查比對的是「工作者動作後」的 diff——但注意人工改動會讓比對基準失真,建議改完後把新內容 commit 並更新 `.workflow/protected-base.sha` 為新的 commit SHA),或從 `.workflow/protected-tests.txt` 移除該檔。
+驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `.workflow/protected-tests.txt` 列出的檔案。若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工處理:直接編輯測試檔、commit 新內容並把 `.workflow/protected-base.sha` 更新成新的 commit SHA,或從 `.workflow/protected-tests.txt` 移除該檔。
 
 ## 安全性注意事項
 

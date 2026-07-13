@@ -15,8 +15,9 @@ The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
 ## How It Works
 
-The workflow drives two agent slots through a staged pipeline: `A` is the worker
-agent and `B` is the reviewer agent. They can be different agents:
+The workflow drives two owner/reviewer slots through a staged pipeline: `A` is
+the worker agent and `B` is the reviewer agent. Stage 5 can also use a separate
+implementation slot, `I`. Any slot can resolve to:
 
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
@@ -36,7 +37,7 @@ flowchart TD
     plan["<b>3 · Write plan</b><br/>A writes the checkbox task list · B reviews ⟳"]
     plangate{"Human approves the plan?<br/>(optional: HUMAN_GATE_PLAN=1)"}
     tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
-    task["<b>5 · Implement next task</b><br/>A codes · build gate (compile only) · protected-test check · commit"]
+    task["<b>5 · Implement next task</b><br/>I (owner by default) codes · build gate (compile only) · protected-test check · commit"]
     more{"Tasks left?"}
     branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · B reviews diff ⟳"]
     final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
@@ -96,8 +97,14 @@ Stage notes:
    [Protected Acceptance Tests](#protected-acceptance-tests) for details and
    the escape hatch when a protected test is wrong.
 5. **Implement tasks**: one checkbox task per commit keeps review and rollback
-   small. The per-task gate is the lightweight `BUILD_GATE_CMD` (compile
-   only); acceptance tests may stay red until all tasks are done.
+   small. The implementation slot handles the whole per-task loop: implementing
+   the task, repairing `BUILD_GATE_CMD` failures, repairing protected-test
+   violations, and making that task's commit. With no `IMPL_*` setting, this
+   slot is exactly the owner and behavior is unchanged. The per-task gate is
+   lightweight (compile only), so acceptance tests may stay red until all tasks
+   are done. After the loop, the normal owner/reviewer pairing resumes: the
+   owner handles full-`GATE_CMD` repairs, branch-review fixes, and final-review
+   fixes, while the reviewer performs branch review and final acceptance.
 6. **Full gate + branch review**: the workflow itself runs `GATE_CMD` — the AI's
    own "tests pass" claim is never trusted — and acceptance tests must pass
    now. B then reviews the complete branch diff.
@@ -122,8 +129,8 @@ be polite.
   - `claude`
   - `codex`
   - `agy` is optional
-- Any custom agent or wrapper commands you configure through `AGENT_A` or
-  `AGENT_B`, available on `PATH`.
+- Any custom agent or wrapper commands you configure through `AGENT_A`,
+  `AGENT_B`, or `IMPL_AGENT`, available on `PATH`.
 - Run the workflow from the root of the target Git repository. Bash and `jq`
   are not required.
 
@@ -193,6 +200,36 @@ Print the agent rules template for manual merging into an existing `AGENTS.md`:
 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 ```
 
+## Strong Model Plans, Cheap Model Implements
+
+Spec writing, planning, acceptance tests, and adversarial review benefit most
+from a strong model. The repetitive stage-5 task loop can use a cheaper model
+or a different CLI without weakening the complete gate and reviews that follow.
+
+Keep the owner's command and change only the implementation model:
+
+```bash
+AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+```
+
+Or plan with Claude and implement the checkbox tasks with Codex:
+
+```bash
+AGENT_A=claude MODEL_A=opus \
+AGENT_B=codex MODEL_B=gpt-5.5 \
+IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
+IMPL_ARGS='-c model_reasoning_effort="low"' \
+  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+```
+
+If all three `IMPL_*` variables are empty, the implementation slot resolves to
+the selected owner with exactly the previous behavior. If `IMPL_MODEL` is
+empty, the implementation slot inherits `MODEL_A` or `MODEL_B` only when its
+command is the same as the owner's command. Changing the command without also
+setting `IMPL_MODEL` uses that CLI's default model; a model name is never
+carried across different CLIs.
+
 ## Dual Spec Mode
 
 Set `DUAL_SPEC=1` to make both slots write independent candidate specs before
@@ -218,31 +255,40 @@ Decision commands:
 - `mb`: use Candidate B as base, edit `.workflow/spec-merge-request.md`, and
   require B to adopt selected items from Candidate A
 
-After selection, the chosen owner remains the worker for planning,
-implementation, and self-review. The other slot becomes the reviewer and writes
-the protected acceptance tests. Dual spec mode requires an interactive terminal
-and `HUMAN_GATE=1`; unattended runs should leave it disabled.
+After selection, the chosen owner remains responsible for planning, complete
+gate and review repairs, and self-review. The optional implementation slot runs
+only the per-task loop described above. The other A/B slot becomes the reviewer
+and writes the protected acceptance tests. Dual spec mode requires an
+interactive terminal and `HUMAN_GATE=1`; unattended runs should leave it
+disabled.
 
 ## Custom Agent Commands
 
-If `AGENT_A` or `AGENT_B` is not `claude`, `codex`, or `agy`, the workflow
-treats it as a custom agent command. The command is run with the slot-specific
-args followed by a short prompt-file instruction as the final argument:
+If `AGENT_A`, `AGENT_B`, or `IMPL_AGENT` is not `claude`, `codex`, or `agy`,
+the workflow treats it as a custom agent command. The command is run with the
+slot-specific args followed by a short prompt-file instruction as the final
+argument:
 
 ```bash
 $AGENT_A $AGENT_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
 $AGENT_B $AGENT_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
+$IMPL_AGENT $IMPL_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
 ```
 
 Custom commands must be agentic: they need to read the referenced prompt file,
 inspect and edit the repository as needed, and exit non-zero on execution
 failure. A custom reviewer must write `.workflow/review.md` and
 `.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom agents
-do not get automatic session resume, and `MODEL_A` / `MODEL_B` are not
-translated into model flags for them. Put model flags in `AGENT_A_ARGS` /
-`AGENT_B_ARGS`. Identical custom command names remain blocked because the
-workflow cannot determine their session behavior; use two wrapper names when
-both slots share the same underlying custom CLI.
+do not get automatic session resume, and `MODEL_A`, `MODEL_B`, and `IMPL_MODEL`
+are not translated into model flags for them. Put model flags in
+`AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS`. Built-in command names may be
+shared across A, B, and I because the workflow resumes only exact captured
+session IDs. Distinct custom slots may not share a command name because the
+workflow cannot determine a wrapper's hidden session behavior. A custom
+implementation wrapper must therefore differ from both A and B. If the selected
+owner is custom, setting any `IMPL_*` customization requires an explicit,
+different `IMPL_AGENT` wrapper; leaving all `IMPL_*` values empty keeps the
+owner itself and does not create a distinct slot.
 
 If a custom CLI needs session continuity, handle it in a wrapper script. For
 example, give the worker and reviewer separate profiles, session ids, or cache
@@ -286,10 +332,13 @@ Add `--json` output to the CLI.
 |---|---:|---|
 | `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. |
 | `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
+| `IMPL_AGENT` | selected owner command | Command for the stage-5 per-task implementation loop. Built-ins may match A or B; a custom implementation wrapper must differ from both. |
 | `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
+| `IMPL_MODEL` | inherited or CLI default | Model override for a built-in implementation slot. When omitted, inherits the owner's model only if the implementation and owner commands match; custom implementation agents ignore it and use `IMPL_ARGS`. |
 | `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and parsed with POSIX shell quoting. Session-control flags documented below are reserved. |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, parsed with POSIX shell quoting and appended before the prompt-file instruction argument. |
+| `IMPL_ARGS` | empty | Extra implementation-slot arguments, parsed with POSIX shell quoting. For a built-in, these follow its command-wide args; for a custom implementation wrapper, include its model flag here. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
@@ -342,6 +391,14 @@ use case is swapping an agent whose quota ran out:
 ```bash
 AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
 ```
+
+The persisted `IMPL_AGENT`, `IMPL_MODEL`, and `IMPL_ARGS` values follow the
+same non-empty override rule. A non-empty value on the resume command replaces
+the snapshot for that attempt, but an empty environment value cannot clear a
+saved value. To clear one, edit the corresponding lowercase key in
+`.workflow/state/<run-id>/settings.json`, keep it as valid schema-1 JSON, and
+then resume. For example, set `"impl_model": ""` to return to the inheritance
+rule.
 
 `SPEC_DIR`, `DUAL_SPEC`, `AUTO_BRANCH`, and `USE_WORKTREE` are immutable
 across resume: they decide the stage graph and artifact locations, so a
@@ -434,20 +491,42 @@ agent command/runtime used for the call.
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` |
 
-Claude, Codex, and Agy may each be used in both slots. Worker sessions resume
-only by their captured ID, while every reviewer call starts fresh. The workflow
-never falls back to Codex `--last` or Agy `--continue`: if a fresh call does not
-yield an ID, it warns and starts fresh again next time; if an established
-session later omits the ID, the known ID is retained. Codex JSONL and Agy logs
-are archived as per-attempt `.cli.raw` artifacts for diagnosis.
+Claude, Codex, and Agy may each be used in A, B, and I. Worker calls resume only
+by their captured ID, while every reviewer call starts fresh. There is one
+active worker session, not one saved session per slot. Calls with the same full
+agent ref can resume within a loop; any handoff to a different agent ref, such
+as changing the slot or command, discards the captured ID and starts fresh.
+Changing only the model does not itself discard the active session because
+model values are not part of `AgentRef`; discard happens only when slot/command
+ref identity changes (or when a stage boundary resets the session).
+Thus I starts fresh on entry, accumulates context during the per-task loop, and
+is discarded when the workflow returns to the owner for the complete gate. The
+old owner session is not restored either. Stage boundaries also clear the
+active session. Workflow prompts point to complete archived prompt files, so
+these handoffs do not depend on retained chat context.
 
-`CODEX_ARGS` must not contain `--json`, `resume`, `--sandbox` / `-s`, or a
-`sandbox_mode` override through `-c` / `--config`. `AGY_ARGS` must not contain
-`--log-file`, `--continue`, or `--conversation`. These flags belong to the
-workflow so user arguments cannot redirect session ownership. Agy conversation
-IDs depend on its current log wording; an incompatible Agy upgrade degrades
-safely to a warning and fresh sessions rather than resuming an unrelated
-conversation.
+The workflow never falls back to Codex `--last` or Agy `--continue`: if a fresh
+call does not yield an ID, it warns and starts fresh again next time; if an
+established session later omits the ID, the known ID is retained. Codex JSONL
+and Agy logs are archived as per-attempt `.cli.raw` artifacts for diagnosis.
+
+Built-in session, output, sandbox, and log flags belong to the workflow.
+`CLAUDE_ARGS` (and `IMPL_ARGS` when I resolves to Claude) must not contain
+`-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`,
+`--no-session-persistence`, or `--from-pr`, and must not override the structured
+output contract through `--output-format` or `--json-schema`.
+`CODEX_ARGS` and Codex-targeted `IMPL_ARGS` must not contain `--json`, `resume`,
+`--sandbox` / `-s`, or a `sandbox_mode` override through `-c` / `--config`.
+`AGY_ARGS` and Agy-targeted `IMPL_ARGS` must not contain `--log-file`,
+`--continue`, or `--conversation`. Built-in argument variables also cannot set
+a model with `--model`, `-m`, or Codex `-c model=` / `--config model=`; use
+`MODEL_A`, `MODEL_B`, or `IMPL_MODEL` so actual calls and archived metadata
+agree. Custom argument variables are passed through instead, so custom model
+and session flags may be supplied there.
+
+Agy conversation IDs depend on its current log wording; an incompatible Agy
+upgrade degrades safely to a warning and fresh sessions rather than resuming an
+unrelated conversation.
 
 All built-in and custom agent argument variables use POSIX shell quoting on
 every platform. Quote values to preserve embedded spaces. On Windows, quote
