@@ -140,6 +140,126 @@ def test_worker_session_is_discarded_when_agent_ref_changes(monkeypatch, tmp_pat
     assert session.owner == owner
 
 
+def test_fake_codex_impl_model_args_and_handoffs_use_real_argv(
+    monkeypatch, tmp_path
+):
+    calls_path = tmp_path / "codex-calls.jsonl"
+    emitter = tmp_path / "fake_codex.py"
+    emitter.write_text(
+        "import json, os, pathlib, sys\n"
+        "calls_path = pathlib.Path(os.environ['FAKE_CODEX_CALLS'])\n"
+        "previous = (calls_path.read_text(encoding='utf-8').splitlines() "
+        "if calls_path.is_file() else [])\n"
+        "args = sys.argv[1:]\n"
+        "with calls_path.open('a', encoding='utf-8') as calls:\n"
+        "    calls.write(json.dumps(args) + '\\n')\n"
+        "thread_id = [\n"
+        "    '11111111-1111-4111-8111-111111111111',\n"
+        "    '22222222-2222-4222-8222-222222222222',\n"
+        "    '33333333-3333-4333-8333-333333333333',\n"
+        "    '44444444-4444-4444-8444-444444444444',\n"
+        "][len(previous)]\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': thread_id}))\n"
+        "print(json.dumps({\n"
+        "    'type': 'item.completed',\n"
+        "    'item': {'type': 'agent_message', 'text': 'fake codex completed'},\n"
+        "}))\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "codex-bin"
+    bin_dir.mkdir()
+    if os.name == "nt":
+        shim = bin_dir / "codex.cmd"
+        shim.write_text(
+            f'@"{sys.executable}" "{emitter}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        shim = bin_dir / "codex"
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{emitter}" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    )
+    monkeypatch.setenv("FAKE_CODEX_CALLS", str(calls_path))
+
+    base_env = {
+        "AGENT_A": "codex",
+        "AGENT_B": "claude",
+        "MODEL_A": "owner-model",
+        "IMPL_MODEL": "implementation-model-v1",
+        "IMPL_ARGS": '-c model_reasoning_effort="high" --skip-git-repo-check',
+    }
+    first_settings = settings(base_env)
+    owner = agents.AgentRef("A", "codex")
+    implementation = agents.impl_ref(owner, first_settings)
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+    emitted_batches = []
+
+    agents.run_worker(owner, "owner first", first_settings, session, io)
+    emitted_batches.append(io.raw_out.read_text(encoding="utf-8").splitlines())
+    agents.run_worker(
+        implementation, "implementation first", first_settings, session, io
+    )
+    emitted_batches.append(io.raw_out.read_text(encoding="utf-8").splitlines())
+
+    resumed_settings = settings(
+        {**base_env, "IMPL_MODEL": "implementation-model-v2"}
+    )
+    resumed_implementation = agents.impl_ref(owner, resumed_settings)
+    agents.run_worker(
+        resumed_implementation,
+        "implementation resumed",
+        resumed_settings,
+        session,
+        io,
+    )
+    emitted_batches.append(io.raw_out.read_text(encoding="utf-8").splitlines())
+    agents.run_worker(owner, "owner again", resumed_settings, session, io)
+    emitted_batches.append(io.raw_out.read_text(encoding="utf-8").splitlines())
+
+    recorded = [
+        json.loads(line)
+        for line in calls_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert Path(agents._resolve_argv0("codex")).parent == bin_dir
+    assert all(
+        [json.loads(line)["type"] for line in batch]
+        == ["thread.started", "item.completed"]
+        for batch in emitted_batches
+    )
+
+    owner_first, impl_first, impl_resumed, owner_again = recorded
+    assert owner_first[:4] == ["exec", "--json", "--sandbox", "workspace-write"]
+    assert impl_first[:4] == ["exec", "--json", "--sandbox", "workspace-write"]
+    assert 'model="implementation-model-v1"' in impl_first
+    assert "model_reasoning_effort=high" in impl_first
+    assert "--skip-git-repo-check" in impl_first
+    assert "resume" not in impl_first
+    assert "11111111-1111-4111-8111-111111111111" not in impl_first
+
+    assert impl_resumed[:3] == ["exec", "resume", "--json"]
+    assert 'model="implementation-model-v2"' in impl_resumed
+    assert 'model="implementation-model-v1"' not in impl_resumed
+    assert "model_reasoning_effort=high" in impl_resumed
+    assert "--skip-git-repo-check" in impl_resumed
+    assert impl_resumed[-2:] == [
+        "22222222-2222-4222-8222-222222222222",
+        "implementation resumed",
+    ]
+
+    assert 'model="owner-model"' in owner_first
+    assert owner_again[:4] == ["exec", "--json", "--sandbox", "workspace-write"]
+    assert 'model="owner-model"' in owner_again
+    assert "resume" not in owner_again
+    assert "33333333-3333-4333-8333-333333333333" not in owner_again
+    assert session.worker_session == "44444444-4444-4444-8444-444444444444"
+    assert session.owner == owner
+
+
 def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_path):
     monkeypatch.setattr(
         agents, "_run_codex_json", lambda argv, io: (0, "ok", "")

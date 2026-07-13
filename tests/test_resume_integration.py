@@ -70,6 +70,18 @@ def calls(work: Path, pattern: str) -> int:
     )
 
 
+def implementation_tasks(work: Path, role: str) -> list[str]:
+    log = work / "implementation-tasks.log"
+    if not log.is_file():
+        return []
+    prefix = f"{role} "
+    return [
+        line.removeprefix(prefix)
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.startswith(prefix)
+    ]
+
+
 def driver_workdir(tmp_path: Path) -> Path:
     return tmp_path.parent / f"{tmp_path.name}-driver"
 
@@ -252,6 +264,67 @@ def test_scenario4_empty_queue_no_fallback(
     assert "falling back to one whole-plan implementation task" not in (
         capsys.readouterr().err
     )
+
+
+def test_custom_impl_wrapper_handles_tasks_and_commits(new_repo, tmp_path, monkeypatch):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = wf_env(work, IMPL_AGENT=_make_wrapper(work, "impl"))
+
+    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
+
+    assert calls(work, "fake-impl implement") == 2
+    assert calls(work, "fake-worker implement") == 0
+    assert calls(work, "fake-impl commit") == 2
+    assert calls(work, "fake-worker final-review") == 1
+
+
+def test_mid_queue_resume_switches_impl_wrapper_without_rerunning_completed_task(
+    new_repo, tmp_path, monkeypatch
+):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    first_impl = _make_wrapper(work, "impl")
+    second_impl = _make_wrapper(work, "impl2")
+    env = wf_env(
+        work,
+        IMPL_AGENT=first_impl,
+        FAKE_ABORT_ON_NTH="2",
+        FAKE_IMPLEMENTATION_TASKS_LOG=str(work / "implementation-tasks.log"),
+    )
+    (work / "abort-on").write_text("implement\n", encoding="utf-8")
+
+    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 75
+    state = state_dir_of(new_repo)
+    assert (state / "tasks-remaining").read_text(encoding="utf-8") == (
+        "add feature two\n"
+    )
+    plan = next((new_repo / "specs").glob("*/plan.md"))
+    assert "- [x] add feature one" in plan.read_text(encoding="utf-8")
+    assert "- [ ] add feature two" in plan.read_text(encoding="utf-8")
+    first_impl_calls = calls(work, "fake-impl implement")
+    first_impl_commits = calls(work, "fake-impl commit")
+    assert first_impl_calls == 2
+    assert first_impl_commits == 1
+
+    (work / "abort-on").unlink()
+    resume_env = dict(
+        env,
+        RESUME_RUN=state.name,
+        IMPL_AGENT=second_impl,
+    )
+    assert run_cli(new_repo, resume_env, args=[], monkeypatch=monkeypatch) == 0
+
+    assert calls(work, "fake-impl implement") == first_impl_calls
+    assert calls(work, "fake-impl commit") == first_impl_commits
+    assert calls(work, "fake-impl2 implement") == 1
+    assert calls(work, "fake-impl2 commit") == 1
+    assert calls(work, "fake-worker implement") == 0
+    resumed_tasks = implementation_tasks(work, "fake-impl2")
+    assert resumed_tasks == ["add feature two"]
+    assert "add feature one" not in resumed_tasks
+    assert (state / "tasks-remaining").read_text(encoding="utf-8") == ""
+    assert (state / "completed").is_file()
 
 
 def test_scenario6_damaged_snapshot_refused_then_restored(

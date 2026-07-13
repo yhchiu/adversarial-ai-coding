@@ -51,11 +51,30 @@ def main() -> int:
     with open(log, "a", encoding="utf-8") as calls_log:
         calls_log.write(f"{name} {kind}\n")
 
+    implementation_tasks_log = os.environ.get("FAKE_IMPLEMENTATION_TASKS_LOG", "")
+    if kind == "implement" and implementation_tasks_log:
+        first_line = prompt.splitlines()[0]
+        task_match = re.match(
+            r"^Implement this task from .*[\\/]plan\.md:(.+)$", first_line
+        )
+        if task_match:
+            with open(
+                implementation_tasks_log, "a", encoding="utf-8"
+            ) as tasks_log:
+                tasks_log.write(f"{name} {task_match.group(1)}\n")
+
     abort_on = os.environ.get("FAKE_ABORT_ON", "")
+    abort_on_nth = os.environ.get("FAKE_ABORT_ON_NTH", "")
+    matching_calls = sum(
+        1
+        for line in Path(log).read_text(encoding="utf-8").splitlines()
+        if line == f"{name} {kind}"
+    )
     if (
         abort_on
         and Path(abort_on).is_file()
         and Path(abort_on).read_text(encoding="utf-8").strip() == kind
+        and (not abort_on_nth or matching_calls == int(abort_on_nth))
     ):
         if os.environ.get("FAKE_ABORT_MODE", "quota") == "plain":
             print("fake agent plain failure")
