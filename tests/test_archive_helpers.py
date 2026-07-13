@@ -30,11 +30,11 @@ def test_csv_row_quotes_every_field_and_escapes_quotes():
     assert row == '"a","x""y","1,2"\n'
 
 
-def test_metrics_header_matches_bash():
-    # helpers.test.sh: "metric:CSV header is correct"
+def test_metrics_header_appends_agent_slot_after_existing_summary_columns():
     assert (
         ",".join(METRICS_HEADER)
-        == "run_id,stage,role,agent,round,duration_s,cost_usd,model,model_args,generated_at"
+        == "run_id,stage,role,agent,round,duration_s,cost_usd,model,model_args,"
+        "generated_at,agent_slot"
     )
 
 

@@ -18,8 +18,12 @@ from .agents import (
     AgentIO,
     AgentRef,
     AgentSession,
+    agent_model,
     agent_ref,
+    impl_ref,
+    is_builtin_agent,
     notify as agents_notify,
+    resolve_model_args,
     run_worker,
 )
 from .archive import RunArchive, safe_slug
@@ -691,6 +695,17 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
         end_stage(ctx)
 
     if begin_stage(ctx, "write-code"):
+        impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)
+        ctx.log(
+            "Resolved implementation: "
+            f"agent={impl.name} model={agent_model(impl, ctx.settings)} "
+            f"args={resolve_model_args(impl, ctx.settings)}"
+        )
+        if ctx.settings.impl_model and not is_builtin_agent(impl.name):
+            ctx.log(
+                "warning: IMPL_MODEL is ignored for custom implementation "
+                f"agent {impl.name}"
+            )
         if ctx.state is not None:
             ensure_task_queue(ctx.state, plan_file)
             total = len(remaining_tasks(ctx.state))
@@ -700,7 +715,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
                 ctx.log(f"--- Task {index}/{total}:{task_line} ---")
                 work(
                     ctx,
-                    ctx.spec_roles.owner_agent,
+                    impl,
                     render_prompt(
                         ctx.prompts_dir,
                         "implement-plan-task",
@@ -717,13 +732,13 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
                     prompts_dir=ctx.prompts_dir,
                     max_rounds=ctx.settings.max_rounds,
                     do_work=lambda prompt: work(
-                        ctx, ctx.spec_roles.owner_agent, prompt
+                        ctx, impl, prompt
                     ),
                     log=ctx.log,
                     notify=ctx.notify,
                     stage=ctx.cur_stage,
                 )
-                commit_work(ctx, ctx.spec_roles.owner_agent, f'Task "{task_line}"')
+                commit_work(ctx, impl, f'Task "{task_line}"')
                 pop_task_queue(ctx.state)
                 mark_plan_task_done(plan_file, task_line)
                 index += 1

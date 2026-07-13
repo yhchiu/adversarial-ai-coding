@@ -22,6 +22,7 @@ from .config import Settings
 METRICS_HEADER = [
     "run_id", "stage", "role", "agent", "round",
     "duration_s", "cost_usd", "model", "model_args", "generated_at",
+    "agent_slot",
 ]
 METRICS_FIELDNAMES = METRICS_HEADER
 
@@ -119,6 +120,7 @@ class RunArchive:
             "generated_at": generated_at(now),
             "generator_role": role,
             "agent": agent.name if agent is not None else "workflow",
+            "agent_slot": agent.slot if agent is not None else "workflow",
             "model": agent_model(agent, self.settings) if agent is not None else "",
             "model_args": (
                 resolve_model_args(agent, self.settings) if agent is not None else ""
@@ -225,6 +227,9 @@ class RunArchive:
             "agent_b": settings.agent_b,
             "model_b": agent_model(ref_b, settings),
             "args_b": resolve_model_args(ref_b, settings),
+            "impl_agent": settings.impl_agent,
+            "impl_model": settings.impl_model,
+            "impl_args": settings.impl_args,
             "dual_spec": "1" if settings.dual_spec else "0",
             "max_rounds": str(settings.max_rounds),
             "auto_branch": "1" if settings.auto_branch else "0",
@@ -248,6 +253,9 @@ class RunArchive:
             "agent_b": settings.agent_b,
             "model_b": agent_model(ref_b, settings),
             "args_b": resolve_model_args(ref_b, settings),
+            "impl_agent": settings.impl_agent,
+            "impl_model": settings.impl_model,
+            "impl_args": settings.impl_args,
             "dual_spec": "1" if settings.dual_spec else "0",
         }
         meta_path = self.log_path.with_name(self.log_path.name + ".meta.json")
@@ -272,7 +280,8 @@ class RunArchive:
             f"agent={agent.name if agent is not None else 'workflow'} "
             f"model={agent_model(agent, self.settings) if agent is not None else ''} "
             f"args={resolve_model_args(agent, self.settings) if agent is not None else ''} "
-            f"stage={stage} round={round}\n"
+            f"stage={stage} round={round} "
+            f"agent_slot={agent.slot if agent is not None else 'workflow'}\n"
             + "-" * 80
         )
         with self.log_path.open("a", encoding="utf-8") as log:
@@ -308,6 +317,7 @@ class RunArchive:
                 agent_model(agent, self.settings),
                 resolve_model_args(agent, self.settings),
                 generated_at(now),
+                agent.slot,
             ],
         )
 

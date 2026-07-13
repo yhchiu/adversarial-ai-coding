@@ -69,6 +69,7 @@ def test_write_meta_matches_bash_fields(tmp_path):
     assert meta["generated_at"] == "2026-01-02T03:04:05+0800"
     assert meta["generator_role"] == "worker"
     assert meta["agent"] == "claude"
+    assert meta["agent_slot"] == "A"
     assert meta["stage"] == "stage"
     assert meta["round"] == "3"
     assert meta["run_id"] == "test"
@@ -76,6 +77,7 @@ def test_write_meta_matches_bash_fields(tmp_path):
         "generated_at",
         "generator_role",
         "agent",
+        "agent_slot",
         "model",
         "model_args",
         "stage",
@@ -237,12 +239,13 @@ def test_metric_header_and_rows(tmp_path):
     assert len(lines) == 3
     assert lines[0] == (
         "run_id,stage,role,agent,round,duration_s,cost_usd,"
-        "model,model_args,generated_at"
+        "model,model_args,generated_at,agent_slot"
     )
     row = next(csv.reader([lines[2]]))
     assert row[3] == "codex"
     assert row[8] == '-c model="x,y" --flag "quoted value"'
-    assert len(row) == 10
+    assert row[10] == "B"
+    assert len(row) == 11
 
 
 def test_log_section_banner(tmp_path):
@@ -260,8 +263,67 @@ def test_log_section_banner(tmp_path):
     text = a.log_path.read_text(encoding="utf-8")
     assert "-" * 80 in text
     assert "[2026-01-02T03:04:05+0800] AI call | role=worker agent=claude" in text
+    assert "agent_slot=A" in text
     assert "stage=stage round=2" in text
     assert echoed
+
+
+def test_slot_i_archive_evidence_uses_resolved_model_args_and_slot(tmp_path):
+    a = make_archive(
+        tmp_path,
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "MODEL_A": "owner-model",
+            "IMPL_MODEL": "impl-model",
+            "IMPL_ARGS": "--impl-only",
+        },
+    )
+    implementation = agents.impl_ref(agent_ref("A", a.settings), a.settings)
+    artifact = a.archive_text(
+        "impl-output.txt",
+        "done",
+        role="worker",
+        agent=implementation,
+        stage="write-code",
+        now=FIXED,
+    )
+    a.log_section(
+        "AI call",
+        "worker",
+        implementation,
+        "write-code",
+        1,
+        echo=lambda _: None,
+        now=FIXED,
+    )
+    a.metric(
+        "worker",
+        implementation,
+        1,
+        2,
+        "",
+        stage="write-code",
+        now=FIXED,
+    )
+
+    meta = json.loads(
+        artifact.with_name(artifact.name + ".meta.json").read_text(encoding="utf-8")
+    )
+    assert meta["agent"] == "codex"
+    assert meta["agent_slot"] == "I"
+    assert meta["model"] == "impl-model"
+    assert meta["model_args"] == "--impl-only"
+
+    banner = a.log_path.read_text(encoding="utf-8")
+    assert "agent=codex model=impl-model args=--impl-only" in banner
+    assert "agent_slot=I" in banner
+
+    rows = list(csv.reader(a.metrics_path.read_text(encoding="utf-8").splitlines()))
+    assert rows[0][-1] == "agent_slot"
+    assert rows[1][7] == "impl-model"
+    assert rows[1][8] == "--impl-only"
+    assert rows[1][-1] == "I"
 
 
 def test_run_and_log_metadata(tmp_path):
@@ -279,6 +341,35 @@ def test_run_and_log_metadata(tmp_path):
         )
     )
     assert log_meta["generator_role"] == "workflow"
+
+
+def test_run_and_log_metadata_preserve_requested_impl_settings(tmp_path):
+    a = make_archive(
+        tmp_path,
+        {
+            "IMPL_AGENT": "requested-impl",
+            "IMPL_MODEL": "requested-model",
+            "IMPL_ARGS": '--profile "two words"',
+        },
+    )
+    a.write_run_metadata(spec_dir="specs/test", wf=".workflow", now=FIXED)
+    a.write_log_metadata(now=FIXED)
+
+    run_metadata = json.loads(
+        next(a.run_dir.glob("*-run-metadata.json")).read_text(encoding="utf-8")
+    )
+    log_metadata = json.loads(
+        a.log_path.with_name(a.log_path.name + ".meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = {
+        "impl_agent": "requested-impl",
+        "impl_model": "requested-model",
+        "impl_args": '--profile "two words"',
+    }
+    assert {key: run_metadata[key] for key in expected} == expected
+    assert {key: log_metadata[key] for key in expected} == expected
 
 
 def test_same_agent_slots_keep_slot_specific_models_in_all_metadata(tmp_path):

@@ -2,6 +2,7 @@
 
 import pytest
 
+from adversarial_ai_coding import agents
 from adversarial_ai_coding import workflow as wf_mod
 from adversarial_ai_coding.config import WorkflowAbort
 from adversarial_ai_coding.gitops import head_sha
@@ -146,6 +147,161 @@ def test_set_spec_roles_from_slot(make_ctx):
     assert ctx.spec_roles.reviewer_agent == ctx.ref("A")
     assert ctx.spec_roles.owner_slot == "B"
     assert ctx.spec_roles.reviewer_slot == "A"
+
+
+def test_write_code_routes_only_task_loop_repairs_and_commit_to_impl(
+    make_ctx, new_repo, monkeypatch
+):
+    ctx = with_state(
+        make_ctx(
+            {
+                "AGENT_A": "codex",
+                "AGENT_B": "claude",
+                "MODEL_A": "owner-model",
+                "IMPL_MODEL": "impl-model",
+                "IMPL_ARGS": "--impl-only",
+                "RETRY_ON_LIMIT": "0",
+            }
+        ),
+        new_repo,
+    )
+    ctx.gate_cmd = "full-gate"
+    ctx.build_gate_cmd = "build-gate"
+    ctx.spec_dir.mkdir(parents=True, exist_ok=True)
+    plan_file = ctx.spec_dir / "plan.md"
+    plan_file.write_text("- [ ] route this task\n", encoding="utf-8")
+    (ctx.wf / "protected-tests.txt").write_text(
+        "acceptance_test.py\n", encoding="utf-8"
+    )
+    (ctx.wf / "protected-base.sha").write_text("base\n", encoding="utf-8")
+
+    resolved_for = []
+
+    def tracking_impl_ref(owner, settings):
+        resolved_for.append(owner)
+        return agents.impl_ref(owner, settings)
+
+    monkeypatch.setattr(wf_mod, "impl_ref", tracking_impl_ref, raising=False)
+    monkeypatch.setattr(
+        wf_mod,
+        "begin_stage",
+        lambda ctx, name, *artifacts: name == "write-code",
+    )
+    monkeypatch.setattr(wf_mod, "end_stage", lambda ctx: None)
+    monkeypatch.setattr(wf_mod, "finish", lambda ctx, task: None)
+
+    work_calls = []
+
+    def fake_work(ctx, agent, prompt):
+        label = "protected-repair" if ctx.checking_protected else prompt
+        work_calls.append((label, agent))
+        if prompt == "build-gate-repair":
+            wf_mod.check_protected(ctx, agent)
+
+    monkeypatch.setattr(wf_mod, "work", fake_work)
+    violations = iter([["acceptance_test.py"], []])
+    monkeypatch.setattr(
+        wf_mod,
+        "protected_violations",
+        lambda protected_file, base, workspace: next(violations),
+    )
+
+    gate_events = []
+
+    def fail_then_repair_gate(cmd, **kwargs):
+        gate_events.append((cmd, "failed"))
+        kwargs["do_work"](f"{cmd}-repair")
+        gate_events.append((cmd, "passed"))
+
+    monkeypatch.setattr(wf_mod, "gate_loop_ref", fail_then_repair_gate)
+
+    review_events = []
+
+    def fail_then_repair_review(ctx, reviewer, worker, scope, gate_cmd=""):
+        review_events.append("failed")
+        wf_mod.work(ctx, worker, "branch-review-repair")
+        review_events.append("passed")
+
+    monkeypatch.setattr(wf_mod, "review_loop_ref", fail_then_repair_review)
+    commits = []
+    monkeypatch.setattr(
+        wf_mod,
+        "commit_work",
+        lambda ctx, agent, description: commits.append((agent, description)),
+    )
+    dirty_commits = []
+    monkeypatch.setattr(
+        wf_mod,
+        "commit_if_dirty",
+        lambda ctx, agent, description: dirty_commits.append((agent, description)),
+    )
+
+    wf_mod.run_workflow(ctx, "route plan tasks")
+
+    assert resolved_for == [ctx.spec_roles.owner_agent]
+    assert gate_events == [
+        ("build-gate", "failed"),
+        ("build-gate", "passed"),
+        ("full-gate", "failed"),
+        ("full-gate", "passed"),
+    ]
+    assert review_events == ["failed", "passed"]
+
+    def agent_for(label):
+        return next(agent for prompt, agent in work_calls if label in prompt)
+
+    assert agent_for("route this task").slot == "I"
+    assert agent_for("build-gate-repair").slot == "I"
+    assert agent_for("protected-repair").slot == "I"
+    assert agent_for("full-gate-repair") == ctx.spec_roles.owner_agent
+    assert agent_for("branch-review-repair") == ctx.spec_roles.owner_agent
+    assert commits == [
+        (
+            agents.impl_ref(ctx.spec_roles.owner_agent, ctx.settings),
+            'Task "route this task"',
+        )
+    ]
+    assert dirty_commits == [(ctx.spec_roles.owner_agent, "Review fixes")]
+
+    resolved_lines = [
+        line
+        for line in ctx.archive.log_path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Resolved implementation:")
+    ]
+    assert len(resolved_lines) == 1
+    assert "agent=codex" in resolved_lines[0]
+    assert "model=impl-model" in resolved_lines[0]
+    assert "args=--impl-only" in resolved_lines[0]
+
+
+def test_write_code_logs_custom_impl_model_warning(make_ctx, monkeypatch):
+    ctx = make_ctx(
+        {
+            "AGENT_A": "owner-wrapper",
+            "AGENT_B": "reviewer-wrapper",
+            "IMPL_AGENT": "impl-wrapper",
+            "IMPL_MODEL": "ignored-model",
+            "RETRY_ON_LIMIT": "0",
+        }
+    )
+    monkeypatch.setattr(
+        wf_mod,
+        "begin_stage",
+        lambda ctx, name, *artifacts: name == "write-code",
+    )
+    monkeypatch.setattr(wf_mod, "end_stage", lambda ctx: None)
+    monkeypatch.setattr(wf_mod, "review_loop_ref", lambda *args, **kwargs: None)
+    monkeypatch.setattr(wf_mod, "commit_if_dirty", lambda *args, **kwargs: None)
+    monkeypatch.setattr(wf_mod, "finish", lambda ctx, task: None)
+
+    wf_mod.run_workflow(ctx, "log custom implementation settings")
+
+    log = ctx.archive.log_path.read_text(encoding="utf-8")
+    assert "Resolved implementation: agent=impl-wrapper model= args=" in log
+    assert (
+        "warning: IMPL_MODEL is ignored for custom implementation agent "
+        "impl-wrapper" in log
+    )
 
 
 def test_default_ask_rejects_noninteractive_stdin(monkeypatch):

@@ -184,6 +184,7 @@ def test_full_workflow_e2e():
         "model",
         "model_args",
         "generated_at",
+        "agent_slot",
     ]
-    assert len(rows) > 1 and all(len(row) == 10 for row in rows)
+    assert len(rows) > 1 and all(len(row) == 11 for row in rows)
     print(f"Acceptance passed; workspace kept at {base} (delete after inspection)")
