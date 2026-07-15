@@ -516,13 +516,15 @@ Built-in session, output, sandbox, and log flags belong to the workflow.
 `--no-session-persistence`, or `--from-pr`, and must not override the structured
 output contract through `--output-format` or `--json-schema`.
 `CODEX_ARGS` and Codex-targeted `IMPL_ARGS` must not contain `--json`, `resume`,
-`--sandbox` / `-s`, or a `sandbox_mode` override through `-c` / `--config`.
+`--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`,
+`--ephemeral`, or a `sandbox_mode` override through `-c` / `--config`.
 `AGY_ARGS` and Agy-targeted `IMPL_ARGS` must not contain `--log-file`,
 `--continue`, or `--conversation`. Built-in argument variables also cannot set
 a model with `--model`, `-m`, or Codex `-c model=` / `--config model=`; use
 `MODEL_A`, `MODEL_B`, or `IMPL_MODEL` so actual calls and archived metadata
-agree. Custom argument variables are passed through instead, so custom model
-and session flags may be supplied there.
+agree. Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are
+parsed by the same reserved-option rules. Custom argument variables are passed
+through instead, so custom model and session flags may be supplied there.
 
 Agy conversation IDs depend on its current log wording; an incompatible Agy
 upgrade degrades safely to a warning and fresh sessions rather than resuming an

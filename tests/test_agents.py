@@ -495,6 +495,101 @@ def test_validate_agents_rejects_codex_workflow_owned_args(value):
 @pytest.mark.parametrize(
     "value",
     [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-bypass-approvals-and-sandbox=true",
+        "--yolo",
+        "--yolo=true",
+        "--ephemeral",
+        "--ephemeral=true",
+        "-sworkspace-write",
+        "-cmodel=gpt-5",
+        "-c model = gpt-5",
+        "-csandbox_mode=workspace-write",
+        "-c sandbox_mode = workspace-write",
+    ],
+)
+def test_validate_agents_rejects_extended_codex_workflow_owned_args(value):
+    settings = make({"CODEX_ARGS": value})
+
+    with pytest.raises(SettingsError, match="CODEX_ARGS"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize("value", ["-mgpt-5", "-m=gpt-5"])
+@pytest.mark.parametrize(
+    ("key", "agent_env"),
+    [
+        ("CLAUDE_ARGS", {}),
+        ("CODEX_ARGS", {}),
+        ("AGY_ARGS", {"AGENT_A": "agy"}),
+    ],
+)
+def test_validate_agents_rejects_attached_builtin_model_args(
+    key, agent_env, value
+):
+    settings = make({**agent_env, key: value})
+
+    with pytest.raises(SettingsError) as exc_info:
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+    assert str(exc_info.value) == (
+        f"{key} cannot set the model; "
+        "use MODEL_A / MODEL_B / IMPL_MODEL instead"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "--yolo",
+        "--ephemeral",
+        "-sworkspace-write",
+        "-cmodel=gpt-5",
+        "-csandbox_mode=workspace-write",
+        "-mgpt-5",
+    ],
+)
+def test_validate_agents_rejects_extended_codex_impl_args(value):
+    settings = make({"IMPL_AGENT": "codex", "IMPL_ARGS": value})
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-cmodel_reasoning_effort=low",
+        "-c model_reasoning_effort = low",
+        "--config 'model_reasoning_effort = low'",
+    ],
+)
+def test_validate_agents_allows_spaced_or_attached_reasoning_config(value):
+    settings = make({"CODEX_ARGS": value})
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_keeps_extended_codex_rules_adapter_specific():
+    settings = make({"IMPL_AGENT": "claude", "IMPL_ARGS": "--yolo --ephemeral"})
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_keeps_custom_impl_args_unmodified():
+    settings = make(
+        {
+            "IMPL_AGENT": "impl-wrapper",
+            "IMPL_ARGS": "-mgpt-5 -snone -cmodel=x --yolo --ephemeral",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "--log-file output.log",
         "--log-file=output.log",
         "--continue",

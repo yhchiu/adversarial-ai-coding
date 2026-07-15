@@ -192,6 +192,25 @@ def _matches_option(token: str, option: str) -> bool:
     return token == option or token.startswith(f"{option}=")
 
 
+def _matches_short_option(token: str, option: str) -> bool:
+    return token == option or (
+        token.startswith(option) and len(token) > len(option)
+    )
+
+
+def _option_value(
+    tokens: list[str], index: int, short: str, long: str
+) -> str:
+    token = tokens[index]
+    if token in {short, long}:
+        return tokens[index + 1] if index + 1 < len(tokens) else ""
+    if token.startswith(f"{long}="):
+        return token.removeprefix(f"{long}=")
+    if token.startswith(short) and token != short:
+        return token.removeprefix(short).removeprefix("=")
+    return ""
+
+
 def _model_conflict(variable: str) -> SettingsError:
     return SettingsError(
         f"{variable} cannot set the model; "
@@ -203,7 +222,7 @@ def _validate_builtin_arg_tokens(
     variable: str, adapter: str, tokens: list[str]
 ) -> None:
     for index, token in enumerate(tokens):
-        if _matches_option(token, "--model") or _matches_option(token, "-m"):
+        if _matches_option(token, "--model") or _matches_short_option(token, "-m"):
             raise _model_conflict(variable)
 
         if adapter == "claude" and (
@@ -231,23 +250,25 @@ def _validate_builtin_arg_tokens(
                 _matches_option(token, "--json")
                 or token == "resume"
                 or _matches_option(token, "--sandbox")
-                or _matches_option(token, "-s")
+                or _matches_short_option(token, "-s")
+                or any(
+                    _matches_option(token, option)
+                    for option in {
+                        "--dangerously-bypass-approvals-and-sandbox",
+                        "--yolo",
+                        "--ephemeral",
+                    }
+                )
             ):
                 raise SettingsError(
                     f"{variable} cannot contain session-control argument:{token}"
                 )
 
-            value = ""
-            if token in {"-c", "--config"} and index + 1 < len(tokens):
-                value = tokens[index + 1]
-            elif token.startswith("-c="):
-                value = token.removeprefix("-c=")
-            elif token.startswith("--config="):
-                value = token.removeprefix("--config=")
-
-            if value.startswith("model="):
+            value = _option_value(tokens, index, "-c", "--config")
+            key = value.split("=", 1)[0].strip()
+            if key == "model":
                 raise _model_conflict(variable)
-            if value.startswith("sandbox_mode="):
+            if key == "sandbox_mode":
                 raise SettingsError(
                     f"{variable} cannot override sandbox_mode; the workflow owns it"
                 )
