@@ -7,6 +7,7 @@ Everything takes an explicit cwd; nothing changes the process directory.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Collection
 from pathlib import Path
 from typing import Callable
 
@@ -50,18 +51,16 @@ def status_porcelain(cwd: Path) -> str:
     return git_out(["status", "--porcelain"], cwd)
 
 
-def protected_violations(protected_file: Path, base: str, cwd: Path) -> list[str]:
-    if not protected_file.is_file() or protected_file.stat().st_size == 0:
+def protected_violations(
+    protected: Collection[str], base: str, cwd: Path
+) -> list[str]:
+    if not protected:
         return []
-    protected = {
+    changed = [
         line
-        for line in protected_file.read_text(encoding="utf-8").splitlines()
+        for line in git_out(["diff", "--name-only", base, "--"], cwd).splitlines()
         if line
-    }
-    diff = _git(["diff", "--name-only", base, "--"], cwd)
-    if diff.returncode != 0:
-        return []
-    changed = [line for line in diff.stdout.splitlines() if line]
+    ]
     return [name for name in changed if name in protected]
 
 

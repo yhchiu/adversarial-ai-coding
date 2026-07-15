@@ -14,3 +14,15 @@ def test_codex_reserved_aliases_are_documented_bilingually():
         assert "--yolo" in readme
         assert "--ephemeral" in readme
         assert "-mMODEL" in readme
+
+
+def test_protected_test_recovery_requires_commit_before_new_base():
+    english = _read("README.md").lower()
+    recovery = english[english.index("## protected acceptance tests") :]
+    assert recovery.index("commit") < recovery.index("protected-base.sha")
+
+
+def test_empty_path_list_does_not_disable_control_integrity_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "protected-tests.txt" in readme
+        assert "protected-base.sha" in readme

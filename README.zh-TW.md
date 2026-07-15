@@ -328,7 +328,9 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 受保護測試的逃生口
 
-驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `.workflow/protected-tests.txt` 列出的檔案。若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工處理:直接編輯測試檔、commit 新內容並把 `.workflow/protected-base.sha` 更新成新的 commit SHA,或從 `.workflow/protected-tests.txt` 移除該檔。
+驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `.workflow/protected-tests.txt` 列出的檔案。acceptance stage 結束後,目前 workflow process 會在記憶體保存 `.workflow/protected-tests.txt` 與 `.workflow/protected-base.sha` 的 exact bytes、解析後 paths 與 base commit,並在每個 active worker boundary 前後驗證 exact bytes。即使 path list 為空,兩個 control files 仍受保護。這個 snapshot 只在目前 process 有效;resume 啟動的新 process 會把當時磁碟上的 controls 視為新的起始信任。這不是 OS-level lock,也不保證能防禦兩個 filesystem calls 之間的 concurrent pathname replacement。
+
+若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工依序處理:編輯修正後的測試、commit 新內容,再把該新 commit SHA 寫入 `.workflow/protected-base.sha`;若該測試不應再受保護,則可改由人工從 `.workflow/protected-tests.txt` 移除 path。確認 controls 已描述預期的 trusted state 後再 resume。
 
 ## 安全性注意事項
 

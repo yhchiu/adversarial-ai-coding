@@ -193,6 +193,8 @@ def test_write_code_routes_only_task_loop_repairs_and_commit_to_impl(
     work_calls = []
 
     def fake_work(ctx, agent, prompt):
+        if not work_calls:
+            assert ctx.protected_controls is not None
         label = "protected-repair" if ctx.checking_protected else prompt
         work_calls.append((label, agent))
         if prompt == "build-gate-repair":
@@ -203,7 +205,7 @@ def test_write_code_routes_only_task_loop_repairs_and_commit_to_impl(
     monkeypatch.setattr(
         wf_mod,
         "protected_violations",
-        lambda protected_file, base, workspace: next(violations),
+        lambda protected, base, workspace: next(violations),
     )
 
     gate_events = []
@@ -239,6 +241,9 @@ def test_write_code_routes_only_task_loop_repairs_and_commit_to_impl(
     wf_mod.run_workflow(ctx, "route plan tasks")
 
     assert resolved_for == [ctx.spec_roles.owner_agent]
+    assert ctx.protected_controls is not None
+    assert ctx.protected_controls.paths == frozenset({"acceptance_test.py"})
+    assert ctx.protected_controls.base == "base"
     assert gate_events == [
         ("build-gate", "failed"),
         ("build-gate", "passed"),
@@ -284,6 +289,8 @@ def test_write_code_logs_custom_impl_model_warning(make_ctx, monkeypatch):
             "RETRY_ON_LIMIT": "0",
         }
     )
+    (ctx.wf / "protected-tests.txt").write_text("", encoding="utf-8")
+    (ctx.wf / "protected-base.sha").write_text("base\n", encoding="utf-8")
     monkeypatch.setattr(
         wf_mod,
         "begin_stage",

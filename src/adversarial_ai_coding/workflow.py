@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import time
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,6 +72,14 @@ class SpecRoles:
     reviewer_agent: AgentRef | None = None
 
 
+@dataclass(frozen=True)
+class ProtectedControlsSnapshot:
+    protected_bytes: bytes
+    base_bytes: bytes
+    paths: frozenset[str]
+    base: str
+
+
 @dataclass
 class WorkflowContext:
     settings: Settings
@@ -93,6 +102,7 @@ class WorkflowContext:
     dual_spec_decision: str = ""
     ask: Callable[[str], str] = _default_ask
     run_id: str = ""
+    protected_controls: ProtectedControlsSnapshot | None = None
 
     def __post_init__(self) -> None:
         if not self.spec_roles.owner_agent:
@@ -168,7 +178,95 @@ def _retry_events(
     )
 
 
+def _read_regular_control(path: Path) -> bytes:
+    try:
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            raise WorkflowAbort(
+                f"!! protected control is not a regular file:{path}"
+            )
+        return path.read_bytes()
+    except WorkflowAbort:
+        raise
+    except OSError as exc:
+        raise WorkflowAbort(
+            f"!! Unable to read protected control:{path}: {exc}"
+        ) from exc
+
+
+def _snapshot_protected_controls(
+    ctx: WorkflowContext,
+) -> ProtectedControlsSnapshot:
+    protected_path = ctx.wf / "protected-tests.txt"
+    base_path = ctx.wf / "protected-base.sha"
+    protected_bytes = _read_regular_control(protected_path)
+    base_bytes = _read_regular_control(base_path)
+    try:
+        protected_text = protected_bytes.decode("utf-8")
+        base = base_bytes.decode("utf-8").strip()
+    except UnicodeError as exc:
+        raise WorkflowAbort(
+            f"!! protected control is not valid UTF-8: {exc}"
+        ) from exc
+    if not base:
+        raise WorkflowAbort("!! protected control base is empty")
+    return ProtectedControlsSnapshot(
+        protected_bytes=protected_bytes,
+        base_bytes=base_bytes,
+        paths=frozenset(line for line in protected_text.splitlines() if line),
+        base=base,
+    )
+
+
+def _activate_protected_controls(ctx: WorkflowContext) -> None:
+    ctx.protected_controls = _snapshot_protected_controls(ctx)
+
+
+def _verify_protected_controls(ctx: WorkflowContext) -> None:
+    snapshot = ctx.protected_controls
+    if snapshot is None:
+        return
+    protected_path = ctx.wf / "protected-tests.txt"
+    base_path = ctx.wf / "protected-base.sha"
+    if _read_regular_control(protected_path) != snapshot.protected_bytes:
+        raise WorkflowAbort(
+            f"!! protected control changed during worker execution:{protected_path}"
+        )
+    if _read_regular_control(base_path) != snapshot.base_bytes:
+        raise WorkflowAbort(
+            f"!! protected control changed during worker execution:{base_path}"
+        )
+
+
+def _require_regular_or_missing_control(path: Path) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise WorkflowAbort(
+            f"!! Unable to inspect protected control:{path}: {exc}"
+        ) from exc
+    if not stat.S_ISREG(mode):
+        raise WorkflowAbort(
+            f"!! Refusing to overwrite non-regular protected control:{path}"
+        )
+
+
 def work(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
+    _verify_protected_controls(ctx)
+    try:
+        _work_body(ctx, agent, instruction)
+    except BaseException as exc:
+        try:
+            _verify_protected_controls(ctx)
+        except WorkflowAbort as tampering:
+            raise tampering from exc
+        raise
+    _verify_protected_controls(ctx)
+
+
+def _work_body(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
     started = time.monotonic()
     ctx.session.last_cost = ""
     ctx.archive.log_section(
@@ -239,9 +337,8 @@ def work(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
 
 
 def check_protected(ctx: WorkflowContext, agent: AgentRef) -> None:
-    protected_file = ctx.wf / "protected-tests.txt"
-    base_file = ctx.wf / "protected-base.sha"
-    if not (protected_file.is_file() and base_file.is_file()):
+    controls = ctx.protected_controls
+    if controls is None:
         return
     ctx.archive.log_section(
         "protected check",
@@ -251,10 +348,17 @@ def check_protected(ctx: WorkflowContext, agent: AgentRef) -> None:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    base = base_file.read_text(encoding="utf-8").strip()
     recoveries = 0
     while True:
-        violations = protected_violations(protected_file, base, ctx.workspace)
+        try:
+            violations = protected_violations(
+                controls.paths, controls.base, ctx.workspace
+            )
+        except subprocess.CalledProcessError as exc:
+            raise WorkflowAbort(
+                "!! Unable to verify protected acceptance tests; "
+                "git diff failed closed."
+            ) from exc
         if not violations:
             return
         listing = "\n".join(f"  - {violation}" for violation in violations)
@@ -274,7 +378,7 @@ def check_protected(ctx: WorkflowContext, agent: AgentRef) -> None:
             "protected-tests-modified",
             {
                 "VIOLATIONS": "\n".join(violations),
-                "BASE": base,
+                "BASE": controls.base,
                 "SPEC_FILE": str(ctx.spec_dir / "spec.md"),
             },
         )
@@ -662,6 +766,8 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             for name in changed.splitlines()
             if name and (not spec_prefix or not name.startswith(spec_prefix))
         ]
+        _require_regular_or_missing_control(protected_list)
+        _require_regular_or_missing_control(protected_base)
         protected_list.write_text(
             "".join(name + "\n" for name in names), encoding="utf-8"
         )
@@ -689,10 +795,12 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             )
         else:
             ctx.echo_err(
-                "(warning: acceptance-test stage produced no files; test "
-                "protection is disabled)"
+                "(warning: no acceptance-test paths were recorded; protected "
+                "control files remain active)"
             )
         end_stage(ctx)
+
+    _activate_protected_controls(ctx)
 
     if begin_stage(ctx, "write-code"):
         impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)

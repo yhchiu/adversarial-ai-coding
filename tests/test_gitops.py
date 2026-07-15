@@ -42,8 +42,7 @@ def test_protected_violations_lifecycle(new_repo):
     git(new_repo, "add", "-A")
     git(new_repo, "commit", "-qm", "tests")
     base = head_sha(new_repo)
-    protected = new_repo / "protected.txt"
-    protected.write_text("acc_test.go\n", encoding="utf-8")
+    protected = frozenset({"acc_test.go"})
 
     assert protected_violations(protected, base, new_repo) == []
     (new_repo / "acc_test.go").write_text("weakened\n", encoding="utf-8")
@@ -51,9 +50,14 @@ def test_protected_violations_lifecycle(new_repo):
     git(new_repo, "add", "-A")
     git(new_repo, "commit", "-qm", "hack")
     assert protected_violations(protected, base, new_repo) == ["acc_test.go"]
-    protected.write_text("", encoding="utf-8")
-    assert protected_violations(protected, base, new_repo) == []
-    assert protected_violations(new_repo / "absent.txt", base, new_repo) == []
+    assert protected_violations(frozenset(), base, new_repo) == []
+
+
+def test_protected_violations_fails_closed_when_git_diff_fails(new_repo):
+    with pytest.raises(subprocess.CalledProcessError):
+        protected_violations(
+            frozenset({"acc_test.go"}), "not-a-valid-base", new_repo
+        )
 
 
 def test_ensure_committed_fallback_commit(new_repo):

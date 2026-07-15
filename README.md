@@ -541,9 +541,21 @@ Acceptance tests are written by the reviewer and then protected. During
 implementation, the worker must not edit, delete, or skip files listed in
 `.workflow/protected-tests.txt`.
 
-If a protected test is wrong, stop and handle it manually. A human can edit the
-test and update `.workflow/protected-base.sha`, or remove the file from
-`.workflow/protected-tests.txt`.
+After the acceptance stage, the active workflow process keeps the exact bytes
+of the protected path list and base control file, together with their parsed
+paths and base commit, in memory. It verifies those exact bytes before and
+after every active worker boundary. An empty path list still protects both
+control files. The snapshot is process-local: a resumed process trusts the
+current on-disk controls as its new starting state. It is not an OS-level lock
+or a guarantee against concurrent pathname replacement between filesystem
+calls.
+
+If a protected test is wrong, stop the workflow and handle it manually. Edit
+the corrected test, commit the corrected test, and only then write that new
+commit SHA to `.workflow/protected-base.sha`. If the test should no longer be
+protected, a human may instead remove its path from
+`.workflow/protected-tests.txt`. Resume only after the manual controls describe
+the intended trusted state.
 
 ## Safety Notes
 

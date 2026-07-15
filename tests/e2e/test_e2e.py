@@ -136,9 +136,14 @@ def test_full_workflow_e2e():
     assert base_sha.is_file()
     from adversarial_ai_coding.gitops import protected_violations
 
+    paths = frozenset(
+        line
+        for line in protected.read_text(encoding="utf-8").splitlines()
+        if line
+    )
     assert (
         protected_violations(
-            protected, base_sha.read_text(encoding="utf-8").strip(), repo
+            paths, base_sha.read_text(encoding="utf-8").strip(), repo
         )
         == []
     )
