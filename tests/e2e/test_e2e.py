@@ -33,6 +33,26 @@ needs_go = pytest.mark.skipif(
 )
 
 
+def e2e_base(prefix: str) -> Path:
+    """Live-workspace root. Never under the user's AppData Temp on Windows.
+
+    Codex's Windows elevated sandbox stamps unreadable ACLs on files it
+    writes when the workspace lives under %TEMP% (every such live run died
+    with PermissionError on review.md or verdict.json; the same runs pass
+    from C:\\tmp). E2E_DIR still overrides the location explicitly.
+    """
+
+    if os.environ.get("E2E_DIR"):
+        base = Path(os.environ["E2E_DIR"])
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+    if os.name == "nt":
+        root = Path("C:/tmp")
+        root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+    return Path(tempfile.mkdtemp(prefix=prefix))
+
+
 def run(cmd, cwd, env=None, check=True):
     merged = {**os.environ, **(env or {})}
     proc = subprocess.run(
@@ -85,8 +105,7 @@ def test_fixture_baseline(tmp_path):
 @pytest.mark.e2e
 @needs_go
 def test_full_workflow_e2e():
-    base = Path(os.environ.get("E2E_DIR") or tempfile.mkdtemp(prefix="wf-e2e-"))
-    base.mkdir(parents=True, exist_ok=True)
+    base = e2e_base("wf-e2e-")
     print(f"== E2E workspace:{base}")
     repo = make_fixture_repo(base)
     verify_gates(repo)
@@ -198,8 +217,7 @@ def test_full_workflow_e2e():
 @pytest.mark.e2e
 @needs_go
 def test_full_workflow_phased_e2e():
-    base = Path(os.environ.get("E2E_DIR") or tempfile.mkdtemp(prefix="wf-e2e-ph-"))
-    base.mkdir(parents=True, exist_ok=True)
+    base = e2e_base("wf-e2e-ph-")
     print(f"== Phased E2E workspace:{base}")
     repo = make_fixture_repo(base)
     verify_gates(repo)
