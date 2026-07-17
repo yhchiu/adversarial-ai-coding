@@ -99,6 +99,10 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_stage,
         ctx.cur_round,
     )
+    # Pre-create reviewer outputs under the parent workflow identity. On
+    # Windows, a sandboxed reviewer can otherwise create review.md with an
+    # owner ACL that prevents the parent workflow from reading it afterward.
+    ctx.review_path.write_text("", encoding="utf-8")
     # A reviewer that omits structured output must fail closed.
     ctx.verdict_path.write_text(FAILED_VERDICT, encoding="utf-8")
     io = ctx.agent_io()

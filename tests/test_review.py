@@ -101,6 +101,26 @@ def test_run_review_prewrites_failed_sentinel(make_ctx, monkeypatch):
     assert verdict["blockers"] == ["reviewer did not write a verdict"]
 
 
+def test_run_review_precreates_reviewer_output_files(make_ctx, monkeypatch):
+    ctx = make_ctx()
+
+    def reviewer(name, prompt, settings, session, io):
+        assert ctx.review_path.is_file()
+        assert ctx.review_path.read_text(encoding="utf-8") == ""
+        verdict = json.loads(io.verdict_path.read_text(encoding="utf-8"))
+        assert verdict["approved"] is False
+        ctx.review_path.write_text("approved\n", encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":true,"blockers":[],"suggestions":[]}',
+            encoding="utf-8",
+        )
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
+        return AgentResult(0, "review text")
+
+    monkeypatch.setattr(review_mod, "run_reviewer", reviewer)
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+
+
 def test_run_review_quota_abort(make_ctx, monkeypatch):
     ctx = make_ctx()
 
