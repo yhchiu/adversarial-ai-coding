@@ -20,6 +20,8 @@ def classify(prompt: str) -> str:
         return "write-candidate"
     if prompt.startswith("Write an implementation plan"):
         return "write-plan"
+    if prompt.startswith("Write acceptance tests for exactly one phase"):
+        return "write-phase-tests"
     if prompt.startswith("Write acceptance tests"):
         return "write-acceptance"
     if prompt.startswith("Implement this task from"):
@@ -114,15 +116,34 @@ def main() -> int:
     elif kind == "write-plan":
         target = grep_target(r"specs[\\/][^ \r\n]+[\\/]plan\.md")
         Path(target).parent.mkdir(parents=True, exist_ok=True)
-        Path(target).write_text(
-            "# Plan\n\n- [ ] add feature one\n- [ ] add feature two\n",
-            encoding="utf-8",
-        )
+        if '"## Phase N: <title>"' in prompt:
+            Path(target).write_text(
+                "# Plan\n\n"
+                "## Phase 1: feature works\n"
+                "Acceptance: src.txt records the implementation.\n"
+                "- [ ] add feature one\n"
+                "- [ ] add feature two\n\n"
+                "## Phase 2: old behavior unchanged (regression-guard)\n"
+                "Acceptance: base.txt still says base.\n"
+                "- [ ] add regression fixture\n",
+                encoding="utf-8",
+            )
+        else:
+            Path(target).write_text(
+                "# Plan\n\n- [ ] add feature one\n- [ ] add feature two\n",
+                encoding="utf-8",
+            )
     elif kind == "write-acceptance":
         Path("acc").mkdir(exist_ok=True)
         Path("acc/acceptance.txt").write_text(
             "ACCEPTANCE CHECK\n", encoding="utf-8"
         )
+    elif kind == "write-phase-tests":
+        Path("acc").mkdir(exist_ok=True)
+        title_match = re.search(r'one phase of the plan: "(.+?)"', prompt)
+        title = title_match.group(1) if title_match else "phase"
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        Path(f"acc/{slug}.txt").write_text("PHASE CHECK\n", encoding="utf-8")
     elif kind == "implement":
         with open("src.txt", "a", encoding="utf-8") as source:
             source.write("implemented\n")

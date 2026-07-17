@@ -1,0 +1,135 @@
+"""Offline PHASES=1 scenarios with fake agents (no AI cost)."""
+
+import sys
+from pathlib import Path
+
+from test_resume_integration import (
+    calls,
+    driver_workdir,
+    implementation_tasks,
+    run_cli,
+    state_dir_of,
+    wf_env,
+)
+
+from adversarial_ai_coding.runstate import RunState
+
+EXPECTED_STAGES = [
+    "write-spec",
+    "commit-spec",
+    "write-implementation-plan",
+    "phase-01-write-tests",
+    "phase-01-implement",
+    "phase-02-write-tests",
+    "phase-02-implement",
+    "write-code",
+    "final-review-and-fixes",
+]
+
+
+def phased_env(work: Path, **overrides) -> dict:
+    # Red check / phase gate: fails until the fake implement step creates
+    # src.txt, then passes. Phase 1 is red before implementation; phase 2
+    # (regression-guard) is green because phase 1 already created src.txt.
+    # If cmd.exe misparses the quoted two-path command on some setup, wrap
+    # it in a .cmd file exactly like _make_wrapper in test_resume_integration.
+    (work / "check_impl.py").write_text(
+        "import pathlib, sys\n"
+        "sys.exit(0 if pathlib.Path('src.txt').exists() else 1)\n",
+        encoding="utf-8",
+    )
+    env = wf_env(
+        work,
+        PHASES="1",
+        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}"',
+        FAKE_IMPLEMENTATION_TASKS_LOG=str(work / "implementation-tasks.log"),
+    )
+    env.update(overrides)
+    return env
+
+
+def test_phased_run_completes_and_appends_protection(
+    new_repo, tmp_path, monkeypatch
+):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = phased_env(work)
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 0
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    assert st.completed_stages() == EXPECTED_STAGES
+    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+        encoding="utf-8"
+    )
+    assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
+    assert implementation_tasks(work, "fake-worker") == [
+        "add feature one",
+        "add feature two",
+        "add regression fixture",
+    ]
+    plan = next((new_repo / "specs").glob("*/plan.md")).read_text(
+        encoding="utf-8"
+    )
+    assert "- [ ] " not in plan and plan.count("- [x]") == 3
+    assert calls(work, "fake-reviewer write-phase-tests") == 2
+    assert calls(work, "fake-worker review") == 2
+    assert calls(work, "fake-reviewer review") == 4
+
+
+def test_phased_resume_skips_completed_phases(new_repo, tmp_path, monkeypatch):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = phased_env(work, FAKE_ABORT_ON_NTH="2")
+    (work / "abort-on").write_text("write-phase-tests\n", encoding="utf-8")
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 75
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    stages = st.completed_stages()
+    assert "phase-01-implement" in stages
+    assert "phase-02-write-tests" not in stages
+
+    (work / "abort-on").unlink()
+    rc = run_cli(
+        new_repo,
+        dict(env, RESUME_RUN=state.name),
+        args=[],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 0
+    assert (state / "completed").is_file()
+    # phase 1 tests were not rewritten: 1 before the abort, the aborted
+    # attempt, and 1 on resume for phase 2
+    assert calls(work, "fake-reviewer write-phase-tests") == 3
+    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+        encoding="utf-8"
+    )
+    assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
+
+
+def test_phases_is_immutable_across_resume(new_repo, tmp_path, monkeypatch):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = phased_env(work, FAKE_ABORT_ON_NTH="1")
+    (work / "abort-on").write_text("write-phase-tests\n", encoding="utf-8")
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 75
+    state = state_dir_of(new_repo)
+    rc = run_cli(
+        new_repo,
+        dict(env, RESUME_RUN=state.name, PHASES="0"),
+        args=[],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 1
+
+
+def test_phase_review_runs_reviewer_per_phase(new_repo, tmp_path, monkeypatch):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = phased_env(work, PHASE_REVIEW="1")
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 0
+    assert calls(work, "fake-reviewer review") == 6
+    assert calls(work, "fake-worker review") == 2
