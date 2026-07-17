@@ -809,84 +809,90 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
 
     protected_list = ctx.wf / "protected-tests.txt"
     protected_base = ctx.wf / "protected-base.sha"
-    if begin_stage(ctx, "write-acceptance-tests", protected_list, protected_base):
-        test_base = restore_or_record_acceptance_base(
-            ctx.state, lambda: head_sha(ctx.workspace)
-        )
-        work(
-            ctx,
-            ctx.spec_roles.reviewer_agent,
-            render_prompt(
-                ctx.prompts_dir,
-                "write-acceptance-tests",
-                {"SPEC_FILE": str(spec_file), "SPEC_DIR": str(ctx.spec_dir)},
-            ),
-        )
-        scope = render_prompt(
-            ctx.prompts_dir,
-            "review-scope-acceptance-tests",
-            {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)},
-        )
-        review_loop_ref(
-            ctx,
-            ctx.spec_roles.owner_agent,
-            ctx.spec_roles.reviewer_agent,
-            scope,
-        )
-        commit_work(ctx, ctx.spec_roles.reviewer_agent, "Acceptance tests")
-        record_protected_tests(ctx, test_base)
-        end_stage(ctx)
+    if ctx.settings.phases:
+        from .phaseflow import run_phased_stages
 
-    _activate_protected_controls(ctx)
+        run_phased_stages(ctx, spec_file, plan_file)
+    else:
+        if begin_stage(ctx, "write-acceptance-tests", protected_list, protected_base):
+            test_base = restore_or_record_acceptance_base(
+                ctx.state, lambda: head_sha(ctx.workspace)
+            )
+            work(
+                ctx,
+                ctx.spec_roles.reviewer_agent,
+                render_prompt(
+                    ctx.prompts_dir,
+                    "write-acceptance-tests",
+                    {"SPEC_FILE": str(spec_file), "SPEC_DIR": str(ctx.spec_dir)},
+                ),
+            )
+            scope = render_prompt(
+                ctx.prompts_dir,
+                "review-scope-acceptance-tests",
+                {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)},
+            )
+            review_loop_ref(
+                ctx,
+                ctx.spec_roles.owner_agent,
+                ctx.spec_roles.reviewer_agent,
+                scope,
+            )
+            commit_work(ctx, ctx.spec_roles.reviewer_agent, "Acceptance tests")
+            record_protected_tests(ctx, test_base)
+            end_stage(ctx)
+
+        _activate_protected_controls(ctx)
 
     if begin_stage(ctx, "write-code"):
-        impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)
-        ctx.log(
-            "Resolved implementation: "
-            f"agent={impl.name} model={agent_model(impl, ctx.settings)} "
-            f"args={resolve_model_args(impl, ctx.settings)}"
-        )
-        if ctx.settings.impl_model and not is_builtin_agent(impl.name):
+        if not ctx.settings.phases:
+            impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)
             ctx.log(
-                "warning: IMPL_MODEL is ignored for custom implementation "
-                f"agent {impl.name}"
+                "Resolved implementation: "
+                f"agent={impl.name} model={agent_model(impl, ctx.settings)} "
+                f"args={resolve_model_args(impl, ctx.settings)}"
             )
-        if ctx.state is not None:
-            ensure_task_queue(ctx.state, plan_file)
-            total = len(remaining_tasks(ctx.state))
-            index = 1
-            while remaining_tasks(ctx.state):
-                task_line = remaining_tasks(ctx.state)[0]
-                ctx.log(f"--- Task {index}/{total}:{task_line} ---")
-                work(
-                    ctx,
-                    impl,
-                    render_prompt(
-                        ctx.prompts_dir,
-                        "implement-plan-task",
-                        {
-                            "PLAN_FILE": str(plan_file),
-                            "TASK": task_line,
-                            "PROTECTED_TESTS_FILE": str(protected_list),
-                        },
-                    ),
+            if ctx.settings.impl_model and not is_builtin_agent(impl.name):
+                ctx.log(
+                    "warning: IMPL_MODEL is ignored for custom implementation "
+                    f"agent {impl.name}"
                 )
-                gate_loop_ref(
-                    ctx.build_gate_cmd,
-                    cwd=ctx.workspace,
-                    prompts_dir=ctx.prompts_dir,
-                    max_rounds=ctx.settings.max_rounds,
-                    do_work=lambda prompt: work(
-                        ctx, impl, prompt
-                    ),
-                    log=ctx.log,
-                    notify=ctx.notify,
-                    stage=ctx.cur_stage,
-                )
-                commit_work(ctx, impl, f'Task "{task_line}"')
-                pop_task_queue(ctx.state)
-                mark_plan_task_done(plan_file, task_line)
-                index += 1
+            if ctx.state is not None:
+                ensure_task_queue(ctx.state, plan_file)
+                total = len(remaining_tasks(ctx.state))
+                index = 1
+                while remaining_tasks(ctx.state):
+                    task_line = remaining_tasks(ctx.state)[0]
+                    ctx.log(f"--- Task {index}/{total}:{task_line} ---")
+                    work(
+                        ctx,
+                        impl,
+                        render_prompt(
+                            ctx.prompts_dir,
+                            "implement-plan-task",
+                            {
+                                "PLAN_FILE": str(plan_file),
+                                "TASK": task_line,
+                                "PROTECTED_TESTS_FILE": str(protected_list),
+                            },
+                        ),
+                    )
+                    gate_loop_ref(
+                        ctx.build_gate_cmd,
+                        cwd=ctx.workspace,
+                        prompts_dir=ctx.prompts_dir,
+                        max_rounds=ctx.settings.max_rounds,
+                        do_work=lambda prompt: work(
+                            ctx, impl, prompt
+                        ),
+                        log=ctx.log,
+                        notify=ctx.notify,
+                        stage=ctx.cur_stage,
+                    )
+                    commit_work(ctx, impl, f'Task "{task_line}"')
+                    pop_task_queue(ctx.state)
+                    mark_plan_task_done(plan_file, task_line)
+                    index += 1
         ctx.log(
             "--- All tasks complete; running full quality gate. Acceptance "
             "tests must pass. ---"
