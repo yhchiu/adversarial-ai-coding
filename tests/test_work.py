@@ -16,7 +16,7 @@ def _write_controls(ctx, paths="acc_test.go\n", base=None):
     base_text = f"{head_sha(ctx.workspace)}\n" if base is None else base
     (ctx.wf / "protected-tests.txt").write_text(paths, encoding="utf-8")
     (ctx.wf / "protected-base.sha").write_text(base_text, encoding="utf-8")
-    wf_mod._activate_protected_controls(ctx)
+    wf_mod.activate_protected_controls(ctx)
 
 
 def test_work_archives_prompt_and_sends_file_reference(make_ctx, monkeypatch):
@@ -199,7 +199,7 @@ def test_activate_protected_controls_rejects_invalid_inputs(
         path.mkdir()
 
     with pytest.raises(WorkflowAbort, match="protected control"):
-        wf_mod._activate_protected_controls(ctx)
+        wf_mod.activate_protected_controls(ctx)
 
 
 def test_acceptance_control_target_allows_missing_and_regular_but_not_directory(
@@ -220,7 +220,7 @@ def test_check_protected_repairs_then_stops(make_ctx, monkeypatch):
     ctx = make_ctx()
     (ctx.wf / "protected-tests.txt").write_text("acc_test.go\n", encoding="utf-8")
     (ctx.wf / "protected-base.sha").write_text("basesha\n", encoding="utf-8")
-    wf_mod._activate_protected_controls(ctx)
+    wf_mod.activate_protected_controls(ctx)
     monkeypatch.setattr(
         wf_mod,
         "protected_violations",

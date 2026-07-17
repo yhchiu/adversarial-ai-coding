@@ -219,7 +219,7 @@ def _snapshot_protected_controls(
     )
 
 
-def _activate_protected_controls(ctx: WorkflowContext) -> None:
+def activate_protected_controls(ctx: WorkflowContext) -> None:
     ctx.protected_controls = _snapshot_protected_controls(ctx)
 
 
@@ -842,7 +842,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             record_protected_tests(ctx, test_base)
             end_stage(ctx)
 
-        _activate_protected_controls(ctx)
+        activate_protected_controls(ctx)
 
     if begin_stage(ctx, "write-code"):
         if not ctx.settings.phases:

@@ -184,7 +184,7 @@ def run_phased_stages(
             )
             wf.record_protected_tests(ctx, test_base, append=True)
             wf.end_stage(ctx)
-        wf._activate_protected_controls(ctx)
+        wf.activate_protected_controls(ctx)
         if wf.begin_stage(ctx, f"{label}-implement"):
             queue = phase_queue_name(phase.number)
             ensure_named_task_queue(ctx.state, queue, list(phase.tasks))
@@ -248,7 +248,13 @@ def run_phased_stages(
                         "PLAN_FILE": str(plan_file),
                     },
                 )
-                wf.review_loop_ref(ctx, ctx.spec_roles.reviewer_agent, impl, scope)
+                wf.review_loop_ref(
+                    ctx,
+                    ctx.spec_roles.reviewer_agent,
+                    impl,
+                    scope,
+                    gate_cmd=phase_gate,
+                )
                 wf.commit_if_dirty(
                     ctx, impl, f"Phase {phase.number} review fixes"
                 )

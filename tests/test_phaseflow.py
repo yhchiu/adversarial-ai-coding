@@ -261,12 +261,15 @@ def test_phase_review_adds_reviewer_loop_over_impl(make_ctx, new_repo, monkeypat
         wf_mod,
         "review_loop_ref",
         lambda ctx_arg, reviewer, worker, scope, gate_cmd="": events.append(
-            ("review", reviewer.slot, worker.slot)
+            ("review", reviewer.slot, worker.slot, gate_cmd)
         ),
     )
     monkeypatch.setattr(gates, "run_shell", lambda cmd, cwd: (1, "red"))
 
     phaseflow.run_phased_stages(ctx, spec, plan)
 
-    assert ("review", "B", "I") in events
+    # Phase-review repairs must re-run the phase gate, like branch review
+    # does with the full gate; a fix by I could otherwise break tests after
+    # the phase gate already passed.
+    assert ("review", "B", "I", "phase-gate") in events
     assert ("dirty", "I", "Phase 1 review fixes") in events
