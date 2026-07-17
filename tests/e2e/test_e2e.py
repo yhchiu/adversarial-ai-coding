@@ -193,3 +193,52 @@ def test_full_workflow_e2e():
     ]
     assert len(rows) > 1 and all(len(row) == 11 for row in rows)
     print(f"Acceptance passed; workspace kept at {base} (delete after inspection)")
+
+
+@pytest.mark.e2e
+@needs_go
+def test_full_workflow_phased_e2e():
+    base = Path(os.environ.get("E2E_DIR") or tempfile.mkdtemp(prefix="wf-e2e-ph-"))
+    base.mkdir(parents=True, exist_ok=True)
+    print(f"== Phased E2E workspace:{base}")
+    repo = make_fixture_repo(base)
+    verify_gates(repo)
+
+    env = {key: os.environ.get(key, value) for key, value in E2E_DEFAULTS.items()}
+    env["PHASES"] = "1"
+    tool = shutil.which("adversarial-ai-coding")
+    assert tool, "console script not installed; run `uv sync` first"
+    proc = subprocess.run(
+        [tool, "task.md"],
+        cwd=repo,
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    (base / "run.log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    assert proc.returncode == 0, f"workflow rc={proc.returncode}; see {base}/run.log"
+    log = (base / "run.log").read_text(encoding="utf-8")
+
+    assert "All stages complete" in log
+    assert "[phase-01-write-tests]" in log
+    assert "[phase-01-implement]" in log
+    assert "Phase red check passed" in log
+
+    state_dirs = list((repo / ".workflow" / "state").iterdir())
+    assert len(state_dirs) == 1
+    ledger = json.loads(
+        (state_dirs[0] / "ledger.json").read_text(encoding="utf-8")
+    )
+    stages = ledger["stages"]
+    assert "phase-01-write-tests" in stages and "phase-01-implement" in stages
+    assert "write-acceptance-tests" not in stages
+
+    protected = repo / ".workflow" / "protected-tests.txt"
+    assert protected.is_file() and protected.stat().st_size > 0
+    plan = next((repo / "specs").glob("*/plan.md")).read_text(encoding="utf-8")
+    assert "## Phase 1:" in plan
+    assert "- [ ] " not in plan and "- [x]" in plan
+    verify_gates(repo)
+    print(f"Phased E2E passed; workspace kept at {base} (delete after inspection)")
