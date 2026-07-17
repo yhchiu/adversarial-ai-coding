@@ -78,3 +78,11 @@ def test_restore_or_record_base_is_per_name(state):
         restore_or_record_base(state, "phase-01-test-base", lambda: "never")
         == "sha-one"
     )
+
+
+def test_load_phases_refuses_malformed_entry(state):
+    (state.state_dir / "phases.json").write_text(
+        '{"schema": 1, "phases": [{"number": 1}]}', encoding="utf-8"
+    )
+    with pytest.raises(RunStateError, match="malformed phase entry"):
+        load_phases(state)

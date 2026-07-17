@@ -213,3 +213,11 @@ def test_check_immutable_refuses_phases_conflict():
         check_immutable({"PHASES": "1"}, {"PHASES": "0"})
     check_immutable({"PHASES": "1"}, {"PHASES": "1"})
     check_immutable({}, {"PHASES": "0"})
+
+
+def test_check_immutable_defaults_missing_phases_to_off():
+    # Snapshots from before the phased feature have no "phases" key; they
+    # were necessarily non-phased runs, so PHASES=1 on resume must refuse.
+    with pytest.raises(RunStateError, match="PHASES=1 conflicts"):
+        check_immutable({"PHASES": "1"}, {})
+    check_immutable({"PHASES": "0"}, {})

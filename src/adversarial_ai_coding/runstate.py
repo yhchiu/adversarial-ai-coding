@@ -158,6 +158,11 @@ def check_immutable(
     for key in IMMUTABLE_KEYS:
         current = env.get(key, "")
         recorded = snapshot.get(key)
+        if key == "PHASES" and recorded is None:
+            # Snapshots written before the phased feature have no "phases"
+            # key; those runs were necessarily non-phased, so a PHASES=1
+            # resume would change the stage graph and must be refused.
+            recorded = "0"
         if recorded is None or not current or current == recorded:
             continue
         raise RunStateError(
@@ -373,15 +378,21 @@ def load_phases(state: RunState) -> tuple[Phase, ...] | None:
         ) from None
     if not isinstance(payload, dict) or payload.get("schema") != 1:
         raise RunStateError(f"!! {path}: unknown phases schema; start a fresh run.")
-    return tuple(
-        Phase(
-            number=int(entry["number"]),
-            title=str(entry["title"]),
-            regression_guard=bool(entry["regression_guard"]),
-            tasks=tuple(str(task) for task in entry["tasks"]),
+    try:
+        return tuple(
+            Phase(
+                number=int(entry["number"]),
+                title=str(entry["title"]),
+                regression_guard=bool(entry["regression_guard"]),
+                tasks=tuple(str(task) for task in entry["tasks"]),
+            )
+            for entry in payload.get("phases", [])
         )
-        for entry in payload.get("phases", [])
-    )
+    except (KeyError, TypeError, ValueError):
+        raise RunStateError(
+            f"!! {path}: malformed phase entry; the state may be damaged. "
+            "Start a fresh run."
+        ) from None
 
 
 def ensure_phases(state: RunState, plan_path: Path) -> tuple[Phase, ...]:
