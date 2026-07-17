@@ -1,0 +1,1 @@
+The diff for phase "{{PHASE_TITLE}}", using git diff from {{PHASE_BASE}}: does the implementation satisfy this phase's Acceptance line in {{PLAN_FILE}}, is the change limited to this phase's scope, and is the code quality acceptable?

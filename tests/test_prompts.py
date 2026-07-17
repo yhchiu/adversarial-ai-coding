@@ -63,3 +63,55 @@ def test_value_trailing_newlines_survive_at_template_end(tmp_path):
     (tmp_path / "t.md").write_text("Message:\n{{MESSAGE}}\n", encoding="utf-8")
     out = render_prompt(tmp_path, "t", {"MESSAGE": "x\n\n"})
     assert out == "Message:\nx\n\n\n"
+
+
+PHASED_TEMPLATES = {
+    "write-implementation-plan-phased": {
+        "SPEC_FILE": "specfile.md",
+        "PLAN_FILE": "planfile.md",
+    },
+    "review-scope-plan-phased": {
+        "PLAN_FILE": "planfile.md",
+        "SPEC_FILE": "specfile.md",
+    },
+    "phased-plan-invalid": {
+        "PLAN_FILE": "planfile.md",
+        "PROBLEMS": "- Phase 1 has no 'Acceptance:' line",
+    },
+    "write-phase-tests": {
+        "SPEC_FILE": "specfile.md",
+        "PLAN_FILE": "planfile.md",
+        "SPEC_DIR": "specdir",
+        "PHASE_TITLE": "phase-title",
+        "PHASES_DONE": "phases-done",
+        "PROTECTED_TESTS_FILE": "protectedfile.txt",
+    },
+    "phase-red-check-failed": {
+        "COMMAND": "gate-command",
+        "EXPECTED": "expected-text",
+        "PHASE_TITLE": "phase-title",
+        "OUTPUT": "tail-output",
+    },
+    "review-scope-phase": {
+        "PHASE_TITLE": "phase-title",
+        "PHASE_BASE": "base-sha",
+        "PLAN_FILE": "planfile.md",
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(PHASED_TEMPLATES))
+def test_phased_templates_render_every_placeholder(name):
+    rendered = render_prompt(default_prompts_dir({}), name, PHASED_TEMPLATES[name])
+    assert "{{" not in rendered
+    for value in PHASED_TEMPLATES[name].values():
+        assert value in rendered
+
+
+def test_write_phase_tests_first_line_is_stable():
+    rendered = render_prompt(
+        default_prompts_dir({}), "write-phase-tests", PHASED_TEMPLATES["write-phase-tests"]
+    )
+    assert rendered.startswith(
+        'Write acceptance tests for exactly one phase of the plan: "phase-title"'
+    )
