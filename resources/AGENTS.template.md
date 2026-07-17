@@ -59,6 +59,21 @@ All AI participants must follow these rules.
   `u4e0a` denotes U+4E0A). Some AI tools misdecode non-ASCII file content on
   Windows and will report phantom corruption.
 
+## Phased mode (PHASES=1)
+
+- The plan splits into `## Phase N: <title>` sections. Every phase needs an
+  `Acceptance:` line with observable behavior at a stable boundary and at
+  least one `- [ ]` task. Phases are vertical functional slices, never
+  technical layers.
+- A title ending in `(regression-guard)` marks tests that must pass
+  immediately; all other phase tests must be red before implementation.
+- The default test level is the phase acceptance test at a stable boundary
+  (component or contract level is fine). Add lower-level implementation
+  tests only when a trigger holds: many input combinations or edge cases;
+  parser, state machine, algorithm, or data-transformation logic;
+  concurrency, timeout, retry, or cancellation behavior; failures that
+  acceptance tests cannot localize or reproduce cheaply.
+
 ## Commits
 
 - Use Conventional Commits (feat: / fix: / chore(scope): ...) in simple English.

@@ -54,6 +54,9 @@ flowchart TD
     more -- "yes" --> task
     more -- "no" --> branch --> final --> fin
     tests -. "run by the full gate" .-> branch
+    phased["<b>4-5 · Phased loop (PHASES=1)</b><br/>per phase: B writes tests · A reviews ⟳<br/>red check · I implements tasks · phase gate"]
+    plangate -. "y · PHASES=1" .-> phased
+    phased -.-> branch
 ```
 
 The ⟳ review loop is one reusable building block. The workflow, not the AI,
@@ -262,6 +265,36 @@ and writes the protected acceptance tests. Dual spec mode requires an
 interactive terminal and `HUMAN_GATE=1`; unattended runs should leave it
 disabled.
 
+## Phased ATDD Mode
+
+Set `PHASES=1` to replace the single up-front acceptance-test stage with a
+per-phase loop. The plan must use `## Phase N: <title>` headings; every
+phase needs an `Acceptance:` line with observable behavior at a stable
+boundary and at least one `- [ ]` task. Phases must be vertical functional
+slices (a working behavior increment), never horizontal technical layers.
+The workflow parses the plan deterministically after the plan review and
+sends structure problems back to the owner before anything is implemented.
+
+For each phase, in order:
+
+1. B writes only this phase's acceptance tests; A reviews them.
+2. The workflow runs the red check with `PHASE_GATE_CMD` (or `GATE_CMD`):
+   the new tests must fail, because the phase is not implemented yet. A
+   title ending in `(regression-guard)` inverts the expectation: those
+   tests lock in existing behavior and must pass immediately.
+3. The tests are committed and appended to the protected list; earlier
+   phases' tests are never removed.
+4. The implementation slot implements the phase's tasks (one commit per
+   task, build gate per task), then the phase gate runs: every test
+   written so far must pass. Completed phases stay green for the rest of
+   the run.
+
+Because tests are written just in time, "run everything" at a phase
+boundary already means "all completed phases plus the current phase are
+green" — no test tagging or per-phase selection is needed. After the last
+phase, the normal full gate, branch review, and final review run
+unchanged. `PHASES` cannot change across resume.
+
 ## Custom Agent Commands
 
 If `AGENT_A`, `AGENT_B`, or `IMPL_AGENT` is not `claude`, `codex`, or `agy`,
@@ -343,6 +376,9 @@ Add `--json` output to the CLI.
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
+| `PHASES` | `0` | `1` enables the phased ATDD flow: the plan is split into vertical phases, and each phase writes its own protected acceptance tests before its tasks are implemented. Decides the stage graph, so it cannot change across resume. |
+| `PHASE_GATE_CMD` | empty | Gate command for the per-phase red check and phase gate. Empty falls back to `GATE_CMD`. |
+| `PHASE_REVIEW` | `0` | `1` adds a reviewer pass over each phase diff, with blocker loops. Off by default because the phase gate already enforces the reviewer's protected tests. |
 | `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`, npm projects with a `test` script use `npm test`, Cargo projects use `cargo test`, and projects without a detected gate skip deterministic gates unless you set it. |
 | `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. Go projects use `go build ./...`, Cargo projects use `cargo build`, and projects without a detected build gate skip this per-task gate unless you set it. |
 | `AUTO_BRANCH` | `1` | Create an `auto/<timestamp>` branch before running. |

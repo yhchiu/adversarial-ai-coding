@@ -26,3 +26,12 @@ def test_empty_path_list_does_not_disable_control_integrity_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "protected-tests.txt" in readme
         assert "protected-base.sha" in readme
+
+
+def test_phased_mode_is_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "PHASES" in readme
+        assert "PHASE_GATE_CMD" in readme
+        assert "PHASE_REVIEW" in readme
+        assert "regression-guard" in readme
+    assert "regression-guard" in _read("resources/AGENTS.template.md")

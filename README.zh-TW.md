@@ -41,6 +41,9 @@ flowchart TD
     more -- "是" --> task
     more -- "否" --> branch --> final --> fin
     tests -. "由完整關卡執行" .-> branch
+    phased["<b>4-5 · 分階段迴圈(PHASES=1)</b><br/>每個 phase:B 寫測試 · A 審 ⟳<br/>red check · I 實作任務 · phase gate"]
+    plangate -. "y · PHASES=1" .-> phased
+    phased -.-> branch
 ```
 
 ⟳ 審查迴圈是同一顆可重用的積木;迴圈何時結束由 workflow 決定,不由 AI 說了算:
@@ -170,6 +173,31 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 
 被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
+## 分階段 ATDD 模式(Phased ATDD)
+
+設定 `PHASES=1` 後,單次預先撰寫驗收測試的 stage 會改成逐 phase
+迴圈。Plan 必須使用 `## Phase N: <title>` 標題;每個 phase 都需要一行
+`Acceptance:`,以穩定邊界上的可觀察行為描述驗收條件,並至少包含一個
+`- [ ]` 任務。Phase 必須是垂直功能切片(一個可運作的行為增量),不可是
+水平技術分層。Plan review 完成後,workflow 會確定性解析 plan;若結構有
+問題,會在任何實作開始前交回 owner 修正。
+
+每個 phase 依序執行:
+
+1. B 只撰寫此 phase 的驗收測試;A 審查這些測試。
+2. Workflow 用 `PHASE_GATE_CMD`(或 `GATE_CMD`)執行 red check:由於此
+   phase 尚未實作,新測試必須失敗。標題以 `(regression-guard)` 結尾時
+   會反轉預期:這些測試用來鎖定既有行為,所以必須立即通過。
+3. 測試會先 commit 並附加到受保護清單;較早 phase 的測試絕不移除。
+4. 實作 slot 逐一實作此 phase 的任務(每個任務一個 commit、每個任務
+   都跑 build gate),接著執行 phase gate:截至目前寫下的所有測試都必須
+   通過。已完成的 phase 在後續整個 run 中都必須維持綠燈。
+
+因為測試是及時撰寫,在 phase 邊界「全部執行」本來就代表「所有已完成
+phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取。最後
+一個 phase 結束後,既有的完整關卡、branch review 與 final review 仍照常
+執行。Resume 時不可變更 `PHASES`。
+
 ### 任務怎麼寫
 
 結果好壞幾乎取決於任務範圍是否明確、「完成」是否可驗證。建議用檔案 + 這個格式:
@@ -204,6 +232,9 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
+| `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。 |
+| `PHASE_GATE_CMD` | 空 | 每個 phase 的 red check 與 phase gate 命令。空值時改用 `GATE_CMD`。 |
+| `PHASE_REVIEW` | `0` | `1` 時每個 phase 結尾由 reviewer 審該 phase 的 diff(含 blocker 迴圈)。預設關閉,因為 phase gate 本身就是 reviewer 寫的受保護測試在把關。 |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |
 | `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈) |
 | `AUTO_BRANCH` | `1` | 自動建立 `auto/<時間戳>` branch |
