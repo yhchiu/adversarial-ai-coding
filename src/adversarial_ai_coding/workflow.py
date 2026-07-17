@@ -254,6 +254,72 @@ def _require_regular_or_missing_control(path: Path) -> None:
         )
 
 
+def record_protected_tests(
+    ctx: WorkflowContext, test_base: str, *, append: bool = False
+) -> list[str]:
+    """Detect test files changed since test_base and write both controls.
+
+    append=True keeps already-protected paths (phased mode grows the list one
+    phase at a time); append=False replaces the list (single-shot stage 4).
+    """
+    from .gitops import git_out, head_sha
+
+    protected_list = ctx.wf / "protected-tests.txt"
+    protected_base = ctx.wf / "protected-base.sha"
+    changed = git_out(["diff", "--name-only", test_base, "HEAD"], ctx.workspace)
+    root = Path(git_out(["rev-parse", "--show-toplevel"], ctx.workspace))
+    try:
+        spec_prefix = ctx.spec_dir.relative_to(root).as_posix().rstrip("/") + "/"
+    except ValueError:
+        spec_prefix = ""
+    names = [
+        name
+        for name in changed.splitlines()
+        if name and (not spec_prefix or not name.startswith(spec_prefix))
+    ]
+    _require_regular_or_missing_control(protected_list)
+    _require_regular_or_missing_control(protected_base)
+    existing: list[str] = []
+    if append and protected_list.is_file():
+        existing = [
+            line
+            for line in protected_list.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+    merged = existing + [name for name in names if name not in existing]
+    protected_list.write_text(
+        "".join(name + "\n" for name in merged), encoding="utf-8"
+    )
+    protected_base.write_text(head_sha(ctx.workspace) + "\n", encoding="utf-8")
+    ctx.archive.archive_snapshot(
+        protected_list,
+        "protected-tests.txt",
+        "workflow",
+        None,
+        ctx.cur_stage,
+        ctx.cur_round,
+    )
+    ctx.archive.archive_snapshot(
+        protected_base,
+        "protected-base.sha",
+        "workflow",
+        None,
+        ctx.cur_stage,
+        ctx.cur_round,
+    )
+    if merged:
+        ctx.log(
+            "Protected acceptance test files:\n"
+            + "\n".join(f"  - {name}" for name in merged)
+        )
+    else:
+        ctx.echo_err(
+            "(warning: no acceptance-test paths were recorded; protected "
+            "control files remain active)"
+        )
+    return names
+
+
 def work(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
     _verify_protected_controls(ctx)
     try:
@@ -754,51 +820,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             scope,
         )
         commit_work(ctx, ctx.spec_roles.reviewer_agent, "Acceptance tests")
-        changed = git_out(
-            ["diff", "--name-only", test_base, "HEAD"], ctx.workspace
-        )
-        root = Path(git_out(["rev-parse", "--show-toplevel"], ctx.workspace))
-        try:
-            spec_prefix = ctx.spec_dir.relative_to(root).as_posix().rstrip("/") + "/"
-        except ValueError:
-            spec_prefix = ""
-        names = [
-            name
-            for name in changed.splitlines()
-            if name and (not spec_prefix or not name.startswith(spec_prefix))
-        ]
-        _require_regular_or_missing_control(protected_list)
-        _require_regular_or_missing_control(protected_base)
-        protected_list.write_text(
-            "".join(name + "\n" for name in names), encoding="utf-8"
-        )
-        protected_base.write_text(head_sha(ctx.workspace) + "\n", encoding="utf-8")
-        ctx.archive.archive_snapshot(
-            protected_list,
-            "protected-tests.txt",
-            "workflow",
-            None,
-            ctx.cur_stage,
-            ctx.cur_round,
-        )
-        ctx.archive.archive_snapshot(
-            protected_base,
-            "protected-base.sha",
-            "workflow",
-            None,
-            ctx.cur_stage,
-            ctx.cur_round,
-        )
-        if names:
-            ctx.log(
-                "Protected acceptance test files:\n"
-                + "\n".join(f"  - {name}" for name in names)
-            )
-        else:
-            ctx.echo_err(
-                "(warning: no acceptance-test paths were recorded; protected "
-                "control files remain active)"
-            )
+        record_protected_tests(ctx, test_base)
         end_stage(ctx)
 
     _activate_protected_controls(ctx)
