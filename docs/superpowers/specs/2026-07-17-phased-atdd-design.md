@@ -11,7 +11,7 @@ can therefore stay red across the whole implementation loop and only turn
 green at the final full gate. On large tasks this makes failure localization
 poor: a red suite at the end points at a dozen tasks, not one phase.
 
-Source proposal: `docs/plans/20260717_phase_v1_gpt56sol-high-thinking.md`
+Source proposal: `docs/plans/20260717_phase_atdd_proposal_gpt56sol-high-thinking.md`
 (external review, "Phased ATDD"). This design adopts its direction with four
 corrections:
 
