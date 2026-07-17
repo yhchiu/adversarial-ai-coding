@@ -22,6 +22,48 @@ FAILED_VERDICT = (
     '{"approved": false, "blockers": ["reviewer did not write a '
     'verdict"], "suggestions": []}\n'
 )
+REVIEW_UNREADABLE_STUB = (
+    "The reviewer's output file was unreadable and was discarded (a "
+    "sandboxed reviewer can write it with a broken ACL). The next review "
+    "round will regenerate it; there is nothing to fix in this file.\n"
+)
+
+
+def _read_probe(path: Path) -> None:
+    path.read_bytes()
+
+
+def _recover_unreadable_output(ctx: WorkflowContext, path: Path, fallback: str) -> None:
+    """Replace a reviewer output the parent process cannot read back.
+
+    A sandboxed reviewer (observed with Codex's Windows elevated sandbox) can
+    rewrite verdict.json or review.md with an ACL that denies the workflow
+    every access. Deleting still works through the parent directory's rights,
+    so fail closed: discard the poisoned file, restore a safe fallback, and
+    let the normal review loop treat the round as failed.
+    """
+
+    try:
+        _read_probe(path)
+        return
+    except FileNotFoundError:
+        return
+    except OSError:
+        pass
+    ctx.echo_err(
+        f"(warning: reviewer output {path.name} is unreadable; discarding it "
+        "and writing a safe fallback. A sandboxed reviewer may have written "
+        "it with a broken ACL.)"
+    )
+    try:
+        path.unlink()
+        path.write_text(fallback, encoding="utf-8")
+    except OSError as exc:
+        raise WorkflowAbort(
+            f"!! Reviewer output {path} is unreadable and could not be "
+            f"replaced ({exc}).\n   Remove the file manually, then resume "
+            "the run."
+        ) from exc
 
 
 def verdict_approved(path: Path) -> bool:
@@ -147,6 +189,8 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.session.last_cost,
         stage=ctx.cur_stage,
     )
+    _recover_unreadable_output(ctx, ctx.verdict_path, FAILED_VERDICT)
+    _recover_unreadable_output(ctx, ctx.review_path, REVIEW_UNREADABLE_STUB)
     if not ctx.verdict_path.is_file():
         ctx.echo_err("(reviewer did not write verdict.json; treating as failed)")
         return False

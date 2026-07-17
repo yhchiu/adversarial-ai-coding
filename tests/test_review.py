@@ -121,6 +121,59 @@ def test_run_review_precreates_reviewer_output_files(make_ctx, monkeypatch):
     assert run_review(ctx, ctx.ref("B"), "scope") is True
 
 
+def failing_probe(target):
+    """Probe that raises the Windows deny-ACL error for one file name."""
+
+    def probe(path):
+        if path.name == target:
+            raise PermissionError(13, "Access is denied", str(path))
+        path.read_bytes()
+
+    return probe
+
+
+def test_run_review_recovers_unreadable_verdict(make_ctx, monkeypatch):
+    ctx = make_ctx()
+    warnings = []
+    ctx.echo_err = warnings.append
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+    monkeypatch.setattr(review_mod, "_read_probe", failing_probe("verdict.json"))
+    assert run_review(ctx, ctx.ref("B"), "scope") is False
+    verdict = json.loads(ctx.verdict_path.read_text(encoding="utf-8"))
+    assert verdict["approved"] is False
+    assert verdict["blockers"] == ["reviewer did not write a verdict"]
+    assert any("verdict.json is unreadable" in line for line in warnings)
+
+
+def test_run_review_recovers_unreadable_review_md(make_ctx, monkeypatch):
+    ctx = make_ctx()
+    warnings = []
+    ctx.echo_err = warnings.append
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+    monkeypatch.setattr(review_mod, "_read_probe", failing_probe("review.md"))
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    assert "unreadable" in ctx.review_path.read_text(encoding="utf-8")
+    assert any("review.md is unreadable" in line for line in warnings)
+
+
+def test_run_review_aborts_when_poisoned_output_cannot_be_replaced(
+    make_ctx, monkeypatch
+):
+    from pathlib import Path
+
+    ctx = make_ctx()
+    ctx.echo_err = lambda line: None
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+    monkeypatch.setattr(review_mod, "_read_probe", failing_probe("verdict.json"))
+
+    def deny_unlink(self, missing_ok=False):
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "unlink", deny_unlink)
+    with pytest.raises(WorkflowAbort, match="could not be replaced"):
+        run_review(ctx, ctx.ref("B"), "scope")
+
+
 def test_run_review_quota_abort(make_ctx, monkeypatch):
     ctx = make_ctx()
 
