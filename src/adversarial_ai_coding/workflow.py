@@ -769,18 +769,28 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
         end_stage(ctx)
 
     if begin_stage(ctx, "write-implementation-plan", plan_file):
+        plan_template = (
+            "write-implementation-plan-phased"
+            if ctx.settings.phases
+            else "write-implementation-plan"
+        )
+        plan_scope_template = (
+            "review-scope-plan-phased"
+            if ctx.settings.phases
+            else "review-scope-plan"
+        )
         work(
             ctx,
             ctx.spec_roles.owner_agent,
             render_prompt(
                 ctx.prompts_dir,
-                "write-implementation-plan",
+                plan_template,
                 {"SPEC_FILE": str(spec_file), "PLAN_FILE": str(plan_file)},
             ),
         )
         scope = render_prompt(
             ctx.prompts_dir,
-            "review-scope-plan",
+            plan_scope_template,
             {"PLAN_FILE": str(plan_file), "SPEC_FILE": str(spec_file)},
         )
         review_loop_ref(
@@ -790,6 +800,10 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             scope,
         )
         human_gate_plan(ctx)
+        if ctx.settings.phases:
+            from .phaseflow import phased_plan_structure_check
+
+            phased_plan_structure_check(ctx, plan_file)
         commit_work(ctx, ctx.spec_roles.owner_agent, "Implementation plan")
         end_stage(ctx)
 
