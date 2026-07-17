@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from .config import Settings
+from .phases import Phase, parse_phases
 
 SNAPSHOT_FILE = "settings.json"
 SNAPSHOT_KEYS = (
@@ -316,20 +317,81 @@ class RunState:
         return path.read_text(encoding="utf-8").strip()
 
 
+def restore_or_record_base(
+    state: RunState | None, name: str, head_sha: Callable[[], str]
+) -> str:
+    if state is None:
+        return head_sha()
+    path = state.state_dir / name
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    base = head_sha()
+    _atomic_write(path, base + "\n")
+    return base
+
+
 def restore_or_record_acceptance_base(
     state: RunState | None, head_sha: Callable[[], str]
 ) -> str:
     # Without persistence, an interrupt between the acceptance commit and the
     # protected-list write would recompute an empty diff on resume and silently
     # disable test protection (C4, sh:832-849).
-    if state is None:
-        return head_sha()
-    path = state.state_dir / "acceptance-test-base"
-    if path.is_file():
-        return path.read_text(encoding="utf-8").strip()
-    base = head_sha()
-    _atomic_write(path, base + "\n")
-    return base
+    return restore_or_record_base(state, "acceptance-test-base", head_sha)
+
+
+PHASES_FILE = "phases.json"
+
+
+def save_phases(state: RunState, phases) -> None:
+    payload = {
+        "schema": 1,
+        "phases": [
+            {
+                "number": phase.number,
+                "title": phase.title,
+                "regression_guard": phase.regression_guard,
+                "tasks": list(phase.tasks),
+            }
+            for phase in phases
+        ],
+    }
+    _atomic_write(
+        state.state_dir / PHASES_FILE, json.dumps(payload, indent=2) + "\n"
+    )
+
+
+def load_phases(state: RunState) -> tuple[Phase, ...] | None:
+    path = state.state_dir / PHASES_FILE
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise RunStateError(
+            f"!! {path} is not valid JSON; the state may be damaged. "
+            "Start a fresh run."
+        ) from None
+    if not isinstance(payload, dict) or payload.get("schema") != 1:
+        raise RunStateError(f"!! {path}: unknown phases schema; start a fresh run.")
+    return tuple(
+        Phase(
+            number=int(entry["number"]),
+            title=str(entry["title"]),
+            regression_guard=bool(entry["regression_guard"]),
+            tasks=tuple(str(task) for task in entry["tasks"]),
+        )
+        for entry in payload.get("phases", [])
+    )
+
+
+def ensure_phases(state: RunState, plan_path: Path) -> tuple[Phase, ...]:
+    # The persisted structure is control flow; plan.md is UI after this point.
+    saved = load_phases(state)
+    if saved is not None:
+        return saved
+    phases = parse_phases(plan_path)
+    save_phases(state, phases)
+    return phases
 
 
 def plan_tasks(plan_path: Path) -> list[str]:
@@ -342,8 +404,19 @@ def plan_tasks(plan_path: Path) -> list[str]:
     return tasks
 
 
-def _queue_path(state: RunState) -> Path:
-    return state.state_dir / "tasks-remaining"
+def _queue_path(state: RunState, name: str = "tasks-remaining") -> Path:
+    return state.state_dir / name
+
+
+def phase_queue_name(number: int) -> str:
+    return f"tasks-remaining-phase-{number:02d}"
+
+
+def ensure_named_task_queue(state: RunState, name: str, tasks: list[str]) -> None:
+    queue = _queue_path(state, name)
+    if queue.is_file():
+        return
+    _atomic_write(queue, "".join(task + "\n" for task in tasks))
 
 
 def ensure_task_queue(state: RunState, plan_path: Path) -> None:
@@ -365,16 +438,16 @@ def ensure_task_queue(state: RunState, plan_path: Path) -> None:
     _atomic_write(queue, "".join(task + "\n" for task in tasks))
 
 
-def remaining_tasks(state: RunState) -> list[str]:
-    queue = _queue_path(state)
+def remaining_tasks(state: RunState, name: str = "tasks-remaining") -> list[str]:
+    queue = _queue_path(state, name)
     if not queue.is_file():
         return []
     return [line for line in queue.read_text(encoding="utf-8").splitlines() if line]
 
 
-def pop_task_queue(state: RunState) -> None:
-    tasks = remaining_tasks(state)
-    _atomic_write(_queue_path(state), "".join(task + "\n" for task in tasks[1:]))
+def pop_task_queue(state: RunState, name: str = "tasks-remaining") -> None:
+    tasks = remaining_tasks(state, name)
+    _atomic_write(_queue_path(state, name), "".join(task + "\n" for task in tasks[1:]))
 
 
 def mark_plan_task_done(plan_path: Path, task: str) -> None:
