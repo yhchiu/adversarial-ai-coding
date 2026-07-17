@@ -96,6 +96,7 @@ class WorkflowContext:
     checking_protected: bool = False
     gate_cmd: str = ""
     build_gate_cmd: str = ""
+    phase_gate_cmd: str = ""
     echo: Callable[[str], None] = print
     echo_err: Callable[[str], None] = _print_err
     spec_roles: SpecRoles = field(default_factory=SpecRoles)

@@ -159,3 +159,20 @@ def test_empty_env_values_fall_back_like_bash():
     assert s.retry_on_limit is True
     assert s.max_rounds == 3
     assert s.auto_branch is True
+
+
+def test_phase_settings_defaults_and_parsing():
+    settings = Settings.from_env({}, run_id="r")
+    assert settings.phases is False
+    assert settings.phase_review is False
+    settings = Settings.from_env({"PHASES": "1", "PHASE_REVIEW": "1"}, run_id="r")
+    assert settings.phases is True
+    assert settings.phase_review is True
+
+
+def test_phase_settings_resume_from_snapshot():
+    settings = Settings.from_env(
+        {}, run_id="r", snapshot={"PHASES": "1", "PHASE_REVIEW": "1"}
+    )
+    assert settings.phases is True
+    assert settings.phase_review is True

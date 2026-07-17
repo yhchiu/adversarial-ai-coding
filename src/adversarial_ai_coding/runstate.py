@@ -21,6 +21,8 @@ SNAPSHOT_FILE = "settings.json"
 SNAPSHOT_KEYS = (
     "spec_dir",
     "dual_spec",
+    "phases",
+    "phase_review",
     "auto_branch",
     "use_worktree",
     "branch",
@@ -43,11 +45,12 @@ SNAPSHOT_KEYS = (
     "tools",
     "gate_cmd",
     "build_gate_cmd",
+    "phase_gate_cmd",
     "task_arg",
     "task_source_kind",
     "task_source_path",
 )
-IMMUTABLE_KEYS = ("SPEC_DIR", "DUAL_SPEC", "AUTO_BRANCH", "USE_WORKTREE")
+IMMUTABLE_KEYS = ("SPEC_DIR", "DUAL_SPEC", "AUTO_BRANCH", "USE_WORKTREE", "PHASES")
 
 
 class RunStateError(Exception):
@@ -66,6 +69,7 @@ def snapshot_values(
     branch: str,
     gate_cmd: str,
     build_gate_cmd: str,
+    phase_gate_cmd: str,
     task_arg: str,
     task_source_kind: str,
     task_source_path: str,
@@ -76,6 +80,8 @@ def snapshot_values(
     return {
         "spec_dir": settings.spec_dir,
         "dual_spec": flag(settings.dual_spec),
+        "phases": flag(settings.phases),
+        "phase_review": flag(settings.phase_review),
         "auto_branch": flag(settings.auto_branch),
         "use_worktree": flag(settings.use_worktree),
         "branch": branch,
@@ -98,6 +104,7 @@ def snapshot_values(
         "tools": settings.tools,
         "gate_cmd": gate_cmd,
         "build_gate_cmd": build_gate_cmd,
+        "phase_gate_cmd": phase_gate_cmd,
         # Informational only; keep the first line so display stays one-line (sh:183).
         "task_arg": task_arg.split("\n", 1)[0],
         "task_source_kind": task_source_kind,
@@ -155,8 +162,8 @@ def check_immutable(
         raise RunStateError(
             f"!! {key}={current} conflicts with the resumed run's snapshot "
             f"({key}={recorded}).\n"
-            "   SPEC_DIR/DUAL_SPEC/AUTO_BRANCH/USE_WORKTREE decide the stage graph "
-            "and cannot change across resume.\n"
+            "   SPEC_DIR/DUAL_SPEC/AUTO_BRANCH/USE_WORKTREE/PHASES decide the "
+            "stage graph and cannot change across resume.\n"
             f"   Unset {key} to keep the snapshot value, or start a fresh run."
         )
 

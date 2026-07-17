@@ -158,7 +158,8 @@ def main(
         print(
             f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
             f"DUAL_SPEC={'1' if settings.dual_spec else '0'}  "
-            f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}"
+            f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}  "
+            f"PHASES={'1' if settings.phases else '0'}"
         )
         print(f"Task:{task}")
 
@@ -212,6 +213,9 @@ def main(
             or snapshot.get("BUILD_GATE_CMD")
             or detect_build_gate(workspace)
         )
+        phase_gate_cmd = (
+            env.get("PHASE_GATE_CMD") or snapshot.get("PHASE_GATE_CMD") or ""
+        )
         if gate_cmd:
             print(f"Quality gate:{gate_cmd}")
         else:
@@ -232,6 +236,7 @@ def main(
             spec_dir=workspace / settings.spec_dir,
             gate_cmd=gate_cmd,
             build_gate_cmd=build_gate_cmd,
+            phase_gate_cmd=phase_gate_cmd,
             run_id=run_id,
         )
         ctx.spec_dir.mkdir(parents=True, exist_ok=True)
@@ -243,6 +248,7 @@ def main(
                 branch=current_branch(workspace),
                 gate_cmd=gate_cmd,
                 build_gate_cmd=build_gate_cmd,
+                phase_gate_cmd=phase_gate_cmd,
                 task_arg=task_arg,
                 task_source_kind=task_source_kind,
                 task_source_path=task_source_path,

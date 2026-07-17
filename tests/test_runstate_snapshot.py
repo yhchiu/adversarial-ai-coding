@@ -38,6 +38,7 @@ def test_write_parse_roundtrip_keeps_spaces_and_quotes(tmp_path):
         branch="main",
         gate_cmd="go test ./...",
         build_gate_cmd="",
+        phase_gate_cmd="",
         task_arg="task.md",
         task_source_kind="file",
         task_source_path="/tmp/task dir/task.md",
@@ -59,6 +60,7 @@ def test_newline_values_round_trip(tmp_path):
         branch="b",
         gate_cmd="a\nb",
         build_gate_cmd="",
+        phase_gate_cmd="",
         task_arg="line1\nline2",
         task_source_kind="literal",
         task_source_path="",
@@ -107,6 +109,7 @@ def test_snapshot_feeds_settings_from_env():
         branch="b",
         gate_cmd="",
         build_gate_cmd="",
+        phase_gate_cmd="",
         task_arg="",
         task_source_kind="literal",
         task_source_path="",
@@ -135,6 +138,7 @@ def test_snapshot_values_includes_impl_settings():
         branch="b",
         gate_cmd="",
         build_gate_cmd="",
+        phase_gate_cmd="",
         task_arg="",
         task_source_kind="literal",
         task_source_path="",
@@ -151,6 +155,7 @@ def test_plan_gate_survives_resume_without_the_env_var(tmp_path):
         branch="b",
         gate_cmd="",
         build_gate_cmd="",
+        phase_gate_cmd="",
         task_arg="",
         task_source_kind="literal",
         task_source_path="",
@@ -170,3 +175,41 @@ def test_check_immutable_conflict():
     check_immutable({"DUAL_SPEC": "0"}, snap)
     check_immutable({"DUAL_SPEC": ""}, snap)
     check_immutable({}, snap)
+
+
+def test_snapshot_values_records_phase_settings():
+    from adversarial_ai_coding.config import Settings
+
+    settings = Settings.from_env({"PHASES": "1", "PHASE_REVIEW": "1"}, run_id="r")
+    values = snapshot_values(
+        settings,
+        branch="b",
+        gate_cmd="g",
+        build_gate_cmd="bg",
+        phase_gate_cmd="pg",
+        task_arg="t",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+    assert values["phases"] == "1"
+    assert values["phase_review"] == "1"
+    assert values["phase_gate_cmd"] == "pg"
+
+
+def test_snapshot_round_trips_phase_keys(tmp_path):
+    values = {key: "" for key in SNAPSHOT_KEYS}
+    values.update(
+        {"phases": "1", "phase_review": "1", "phase_gate_cmd": "go test ./..."}
+    )
+    write_snapshot(tmp_path, values)
+    snapshot = load_snapshot(tmp_path)
+    assert snapshot["PHASES"] == "1"
+    assert snapshot["PHASE_REVIEW"] == "1"
+    assert snapshot["PHASE_GATE_CMD"] == "go test ./..."
+
+
+def test_check_immutable_refuses_phases_conflict():
+    with pytest.raises(RunStateError, match="PHASES=1 conflicts"):
+        check_immutable({"PHASES": "1"}, {"PHASES": "0"})
+    check_immutable({"PHASES": "1"}, {"PHASES": "1"})
+    check_immutable({}, {"PHASES": "0"})
