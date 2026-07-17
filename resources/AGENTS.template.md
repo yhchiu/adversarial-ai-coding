@@ -10,6 +10,10 @@ All AI participants must follow these rules.
 - Prefer your built-in file read/search tools over shell commands such as
   `cat`, `ls`, or `cd`-prefixed pipelines. Shell commands are restricted by an
   allowlist; a blocked command wastes a turn and burns tokens.
+- Write and edit files with your built-in file editing tools. Never create or
+  modify files through shell writes such as PowerShell `Set-Content` or output
+  redirection: on Windows, sandboxed shell writes can produce files that other
+  participants and the workflow cannot read.
 
 ## Review and replies (.workflow/review.md)
 

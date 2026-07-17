@@ -1,1 +1,1 @@
-- Finally write the verdict to {{WF}}/verdict.json. The file already exists with a default failed verdict, so overwrite it. Use one line of JSON: {"approved": true|false, "blockers": ["must-fix issue"], "suggestions": ["non-blocking suggestion"]}.
+- Finally write the verdict to {{WF}}/verdict.json. The file already exists with a default failed verdict, so overwrite it with your built-in file editing tool, not a shell command. Use one line of JSON: {"approved": true|false, "blockers": ["must-fix issue"], "suggestions": ["non-blocking suggestion"]}.
