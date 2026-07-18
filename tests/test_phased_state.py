@@ -1,5 +1,7 @@
 """Phase structure persistence and per-phase task queues."""
 
+import json
+
 import pytest
 
 from adversarial_ai_coding.phases import Phase
@@ -84,5 +86,44 @@ def test_load_phases_refuses_malformed_entry(state):
     (state.state_dir / "phases.json").write_text(
         '{"schema": 1, "phases": [{"number": 1}]}', encoding="utf-8"
     )
-    with pytest.raises(RunStateError, match="malformed phase entry"):
+    with pytest.raises(RunStateError, match="title must be a non-empty string"):
+        load_phases(state)
+
+
+def _write_phases(state, phases):
+    (state.state_dir / "phases.json").write_text(
+        json.dumps({"schema": 1, "phases": phases}), encoding="utf-8"
+    )
+
+
+def test_load_phases_rejects_string_regression_guard(state):
+    _write_phases(
+        state,
+        [{"number": 1, "title": "one", "regression_guard": "false", "tasks": ["a"]}],
+    )
+    with pytest.raises(RunStateError, match="regression_guard must be a boolean"):
+        load_phases(state)
+
+
+def test_load_phases_rejects_string_tasks(state):
+    _write_phases(
+        state,
+        [{"number": 1, "title": "one", "regression_guard": False, "tasks": "abc"}],
+    )
+    with pytest.raises(RunStateError, match="tasks must be a non-empty list"):
+        load_phases(state)
+
+
+def test_load_phases_rejects_empty_phase_list(state):
+    _write_phases(state, [])
+    with pytest.raises(RunStateError, match="non-empty list"):
+        load_phases(state)
+
+
+def test_load_phases_rejects_non_sequential_numbers(state):
+    _write_phases(
+        state,
+        [{"number": 2, "title": "two", "regression_guard": False, "tasks": ["a"]}],
+    )
+    with pytest.raises(RunStateError, match="phase number must be 1"):
         load_phases(state)

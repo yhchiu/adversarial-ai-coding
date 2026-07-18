@@ -356,6 +356,42 @@ def record_checkpoint(state: RunState, name: str) -> None:
 PHASES_FILE = "phases.json"
 
 
+def _validated_phase(path: Path, entry: object, expected_number: int) -> Phase:
+    def bad(reason: str) -> RunStateError:
+        return RunStateError(
+            f"!! {path}: {reason}; the state may be damaged. Start a fresh run."
+        )
+
+    if not isinstance(entry, dict):
+        raise bad("phase entry is not an object")
+    number = entry.get("number")
+    if (
+        not isinstance(number, int)
+        or isinstance(number, bool)
+        or number != expected_number
+    ):
+        raise bad(f"phase number must be {expected_number}")
+    title = entry.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise bad(f"phase {expected_number} title must be a non-empty string")
+    guard = entry.get("regression_guard")
+    if not isinstance(guard, bool):
+        raise bad(f"phase {expected_number} regression_guard must be a boolean")
+    tasks = entry.get("tasks")
+    if (
+        not isinstance(tasks, list)
+        or not tasks
+        or not all(isinstance(task, str) and task.strip() for task in tasks)
+    ):
+        raise bad(
+            f"phase {expected_number} tasks must be a non-empty list of "
+            "non-empty strings"
+        )
+    return Phase(
+        number=number, title=title, regression_guard=guard, tasks=tuple(tasks)
+    )
+
+
 def save_phases(state: RunState, phases) -> None:
     payload = {
         "schema": 1,
@@ -387,21 +423,16 @@ def load_phases(state: RunState) -> tuple[Phase, ...] | None:
         ) from None
     if not isinstance(payload, dict) or payload.get("schema") != 1:
         raise RunStateError(f"!! {path}: unknown phases schema; start a fresh run.")
-    try:
-        return tuple(
-            Phase(
-                number=int(entry["number"]),
-                title=str(entry["title"]),
-                regression_guard=bool(entry["regression_guard"]),
-                tasks=tuple(str(task) for task in entry["tasks"]),
-            )
-            for entry in payload.get("phases", [])
-        )
-    except (KeyError, TypeError, ValueError):
+    entries = payload.get("phases")
+    if not isinstance(entries, list) or not entries:
         raise RunStateError(
-            f"!! {path}: malformed phase entry; the state may be damaged. "
-            "Start a fresh run."
-        ) from None
+            f"!! {path}: phases must be a non-empty list; the state may be "
+            "damaged. Start a fresh run."
+        )
+    return tuple(
+        _validated_phase(path, entry, index + 1)
+        for index, entry in enumerate(entries)
+    )
 
 
 def ensure_phases(state: RunState, plan_path: Path) -> tuple[Phase, ...]:
