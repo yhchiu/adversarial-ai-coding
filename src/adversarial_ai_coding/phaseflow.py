@@ -159,11 +159,13 @@ def run_phased_stages(
 ) -> None:
     from .gitops import head_sha
     from .runstate import (
+        checkpoint_done,
         ensure_named_task_queue,
         ensure_phases,
         mark_plan_task_done,
         phase_queue_name,
         pop_task_queue,
+        record_checkpoint,
         remaining_tasks,
         restore_or_record_base,
     )
@@ -190,37 +192,45 @@ def run_phased_stages(
         label = f"phase-{phase.number:02d}"
         base_name = f"{label}-test-base"
         if wf.begin_stage(ctx, f"{label}-write-tests", protected_list, protected_base):
-            test_base = restore_or_record_base(
-                ctx.state, base_name, lambda: head_sha(ctx.workspace)
-            )
-            wf.work(
-                ctx,
-                ctx.spec_roles.reviewer_agent,
-                render_prompt(
+            controls_checkpoint = f"{label}-controls-recorded"
+            if checkpoint_done(ctx.state, controls_checkpoint):
+                ctx.log(
+                    f"== [{label}-write-tests] protected controls already "
+                    "recorded; finishing the interrupted stage"
+                )
+            else:
+                test_base = restore_or_record_base(
+                    ctx.state, base_name, lambda: head_sha(ctx.workspace)
+                )
+                wf.work(
+                    ctx,
+                    ctx.spec_roles.reviewer_agent,
+                    render_prompt(
+                        ctx.prompts_dir,
+                        "write-phase-tests",
+                        {
+                            "SPEC_FILE": str(spec_file),
+                            "PLAN_FILE": str(plan_file),
+                            "SPEC_DIR": str(ctx.spec_dir),
+                            "PHASE_TITLE": phase.title,
+                            "PHASES_DONE": ", ".join(done_titles) or "none",
+                            "PROTECTED_TESTS_FILE": str(protected_list),
+                        },
+                    ),
+                )
+                scope = render_prompt(
                     ctx.prompts_dir,
-                    "write-phase-tests",
-                    {
-                        "SPEC_FILE": str(spec_file),
-                        "PLAN_FILE": str(plan_file),
-                        "SPEC_DIR": str(ctx.spec_dir),
-                        "PHASE_TITLE": phase.title,
-                        "PHASES_DONE": ", ".join(done_titles) or "none",
-                        "PROTECTED_TESTS_FILE": str(protected_list),
-                    },
-                ),
-            )
-            scope = render_prompt(
-                ctx.prompts_dir,
-                "review-scope-acceptance-tests",
-                {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)},
-            )
-            reviewed_red_check(ctx, phase, phase_gate, scope)
-            wf.commit_work(
-                ctx,
-                ctx.spec_roles.reviewer_agent,
-                f"Phase {phase.number} acceptance tests",
-            )
-            wf.record_protected_tests(ctx, test_base, append=True)
+                    "review-scope-acceptance-tests",
+                    {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)},
+                )
+                reviewed_red_check(ctx, phase, phase_gate, scope)
+                wf.commit_work(
+                    ctx,
+                    ctx.spec_roles.reviewer_agent,
+                    f"Phase {phase.number} acceptance tests",
+                )
+                wf.record_protected_tests(ctx, test_base, append=True)
+                record_checkpoint(ctx.state, controls_checkpoint)
             wf.end_stage(ctx)
         wf.activate_protected_controls(ctx)
         if wf.begin_stage(ctx, f"{label}-implement"):

@@ -344,6 +344,15 @@ def restore_or_record_acceptance_base(
     return restore_or_record_base(state, "acceptance-test-base", head_sha)
 
 
+def checkpoint_done(state: RunState, name: str) -> bool:
+    return (state.state_dir / name).is_file()
+
+
+def record_checkpoint(state: RunState, name: str) -> None:
+    # Durable sub-stage marker: survives resume like the task queues.
+    _atomic_write(state.state_dir / name, "done\n")
+
+
 PHASES_FILE = "phases.json"
 
 

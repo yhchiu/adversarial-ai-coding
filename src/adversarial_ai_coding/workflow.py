@@ -263,6 +263,7 @@ def record_protected_tests(
     phase at a time); append=False replaces the list (single-shot stage 4).
     """
     from .gitops import git_out, head_sha
+    from .runstate import _atomic_write
 
     protected_list = ctx.wf / "protected-tests.txt"
     protected_base = ctx.wf / "protected-base.sha"
@@ -287,10 +288,11 @@ def record_protected_tests(
             if line
         ]
     merged = existing + [name for name in names if name not in existing]
-    protected_list.write_text(
-        "".join(name + "\n" for name in merged), encoding="utf-8"
-    )
-    protected_base.write_text(head_sha(ctx.workspace) + "\n", encoding="utf-8")
+    # Base first, atomically: an interrupt then leaves {fresh base, stale
+    # list}, which flags nothing. The old order left {fresh list, stale
+    # base} and misread already-committed phase tests as tampering.
+    _atomic_write(protected_base, head_sha(ctx.workspace) + "\n")
+    _atomic_write(protected_list, "".join(name + "\n" for name in merged))
     ctx.archive.archive_snapshot(
         protected_list,
         "protected-tests.txt",

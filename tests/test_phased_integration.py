@@ -163,3 +163,48 @@ def test_phase_gate_repair_is_committed_not_leaked(new_repo, tmp_path, monkeypat
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
+
+
+def test_resume_after_controls_recorded_before_stage_end(
+    new_repo, tmp_path, monkeypatch
+):
+    """Crash window: phase-2 tests committed and controls recorded, but
+    phase-02-write-tests not yet in the ledger. Resume must finish the
+    stage without re-running the test writer (GPT review blocker 5)."""
+    from adversarial_ai_coding import workflow as wf_mod
+    from adversarial_ai_coding.config import WorkflowAbort
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = phased_env(work)
+    real_end = wf_mod.end_stage
+    injected = []
+
+    def crashing_end_stage(ctx):
+        if ctx.cur_stage == "phase-02-write-tests" and not injected:
+            injected.append(True)
+            raise WorkflowAbort("injected: crash before the ledger write")
+        real_end(ctx)
+
+    monkeypatch.setattr(wf_mod, "end_stage", crashing_end_stage)
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 1
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    assert "phase-02-write-tests" not in st.completed_stages()
+
+    rc = run_cli(
+        new_repo,
+        dict(env, RESUME_RUN=state.name),
+        args=[],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 0
+    # The checkpoint keeps the resume from re-asking B for phase-2 tests
+    # (the fake writes identical content, so tampering would not fire here;
+    # a real writer varies content and exhausts the recovery loop).
+    assert calls(work, "fake-reviewer write-phase-tests") == 2
+    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+        encoding="utf-8"
+    )
+    assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
