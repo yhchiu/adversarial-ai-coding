@@ -33,21 +33,23 @@ def _read_probe(path: Path) -> None:
     path.read_bytes()
 
 
-def _recover_unreadable_output(ctx: WorkflowContext, path: Path, fallback: str) -> None:
+def _recover_unreadable_output(
+    ctx: WorkflowContext, path: Path, fallback: str
+) -> bool:
     """Replace a reviewer output the parent process cannot read back.
 
     A sandboxed reviewer (observed with Codex's Windows elevated sandbox) can
     rewrite verdict.json or review.md with an ACL that denies the workflow
     every access. Deleting still works through the parent directory's rights,
     so fail closed: discard the poisoned file, restore a safe fallback, and
-    let the normal review loop treat the round as failed.
+    report the loss so the round is treated as failed.
     """
 
     try:
         _read_probe(path)
-        return
+        return False
     except FileNotFoundError:
-        return
+        return False
     except OSError:
         pass
     ctx.echo_err(
@@ -64,6 +66,7 @@ def _recover_unreadable_output(ctx: WorkflowContext, path: Path, fallback: str) 
             f"replaced ({exc}).\n   Remove the file manually, then resume "
             "the run."
         ) from exc
+    return True
 
 
 def _reset_review_file(ctx: WorkflowContext) -> None:
@@ -200,11 +203,14 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         stage=ctx.cur_stage,
     )
     _recover_unreadable_output(ctx, ctx.verdict_path, FAILED_VERDICT)
-    _recover_unreadable_output(ctx, ctx.review_path, REVIEW_UNREADABLE_STUB)
+    review_unreadable = _recover_unreadable_output(
+        ctx, ctx.review_path, REVIEW_UNREADABLE_STUB
+    )
     if not ctx.verdict_path.is_file():
         ctx.echo_err("(reviewer did not write verdict.json; treating as failed)")
         return False
-    if ctx.collect_review_suggestions:
+    review_missing = not ctx.review_path.is_file()
+    if ctx.collect_review_suggestions and not (review_unreadable or review_missing):
         collect_suggestions(ctx)
     stage_slug = safe_slug(ctx.cur_stage)
     ctx.archive.archive_snapshot(
@@ -223,6 +229,12 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_stage,
         ctx.cur_round,
     )
+    if review_unreadable or review_missing:
+        ctx.echo_err(
+            "(reviewer review.md was unreadable or missing; treating the "
+            "round as failed)"
+        )
+        return False
     if not verdict_approved(ctx.verdict_path):
         show_blockers(ctx)
         return False

@@ -145,15 +145,32 @@ def test_run_review_recovers_unreadable_verdict(make_ctx, monkeypatch):
     assert any("verdict.json is unreadable" in line for line in warnings)
 
 
-def test_run_review_recovers_unreadable_review_md(make_ctx, monkeypatch):
+def test_run_review_fails_when_review_md_unreadable(make_ctx, monkeypatch):
+    """An approved verdict with a discarded review body must not end the
+    loop (GPT review blocker 3)."""
     ctx = make_ctx()
     warnings = []
     ctx.echo_err = warnings.append
     monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
     monkeypatch.setattr(review_mod, "_read_probe", failing_probe("review.md"))
-    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    assert run_review(ctx, ctx.ref("B"), "scope") is False
     assert "unreadable" in ctx.review_path.read_text(encoding="utf-8")
     assert any("review.md is unreadable" in line for line in warnings)
+
+
+def test_run_review_fails_when_reviewer_deletes_review_md(make_ctx, monkeypatch):
+    ctx = make_ctx()
+
+    def deleting_reviewer(name, prompt, settings, session, io):
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":true,"blockers":[],"suggestions":[]}', encoding="utf-8"
+        )
+        ctx.review_path.unlink()
+        return AgentResult(0, "review text")
+
+    monkeypatch.setattr(review_mod, "run_reviewer", deleting_reviewer)
+    assert run_review(ctx, ctx.ref("B"), "scope") is False
 
 
 def test_run_review_aborts_when_poisoned_output_cannot_be_replaced(
