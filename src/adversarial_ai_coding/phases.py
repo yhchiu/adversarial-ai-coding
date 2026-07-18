@@ -77,15 +77,23 @@ def parse_phases(plan_path: Path) -> tuple[Phase, ...]:
             }
             continue
         if line.startswith(TASK_PREFIX):
+            text = line[len(TASK_PREFIX) :]
             if current is None:
+                problems.append(f"task outside any phase: {text}")
+            elif not text.strip():
                 problems.append(
-                    f"task outside any phase: {line[len(TASK_PREFIX):]}"
+                    f"Phase {current['number']} has an empty '- [ ] ' task"
                 )
             else:
-                current["tasks"].append(line[len(TASK_PREFIX):])
+                current["tasks"].append(text)
             continue
         if line.startswith("Acceptance:") and current is not None:
-            current["acceptance"] = True
+            if line[len("Acceptance:") :].strip():
+                current["acceptance"] = True
+            else:
+                problems.append(
+                    f"Phase {current['number']} has an empty 'Acceptance:' line"
+                )
     close(current)
     if not phases and not problems:
         problems.append("no '## Phase N: <title>' headings found")

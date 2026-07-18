@@ -94,3 +94,21 @@ def test_all_problems_are_reported_together(tmp_path):
     assert "task outside any phase" in message
     assert "expected Phase 1" in message
     assert "no 'Acceptance:' line" in message
+
+
+def test_empty_acceptance_text_is_a_problem(tmp_path):
+    text = "## Phase 1: x\nAcceptance:\n- [ ] t\n"
+    with pytest.raises(PhasePlanError, match="empty 'Acceptance:' line"):
+        parse_phases(_write(tmp_path, text))
+
+
+def test_blank_task_text_is_a_problem(tmp_path):
+    text = "## Phase 1: x\nAcceptance: y.\n- [ ] \n"
+    with pytest.raises(PhasePlanError, match="empty '- \\[ \\] ' task"):
+        parse_phases(_write(tmp_path, text))
+
+
+def test_whitespace_only_task_text_is_a_problem(tmp_path):
+    text = "## Phase 1: x\nAcceptance: y.\n- [ ]   \n"
+    with pytest.raises(PhasePlanError, match="empty '- \\[ \\] ' task"):
+        parse_phases(_write(tmp_path, text))
