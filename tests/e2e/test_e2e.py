@@ -43,9 +43,11 @@ def e2e_base(prefix: str) -> Path:
     """
 
     if os.environ.get("E2E_DIR"):
-        base = Path(os.environ["E2E_DIR"])
-        base.mkdir(parents=True, exist_ok=True)
-        return base
+        # A fresh prefix-named child per test: both live tests can share
+        # one E2E_DIR override without colliding on <E2E_DIR>/repo.
+        root = Path(os.environ["E2E_DIR"])
+        root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=root))
     if os.name == "nt":
         root = Path("C:/tmp")
         root.mkdir(parents=True, exist_ok=True)
