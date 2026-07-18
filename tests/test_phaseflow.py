@@ -222,6 +222,9 @@ def test_run_phased_stages_drives_phases_in_order(make_ctx, new_repo, monkeypatc
     assert ctx.protected_controls is not None
     plan_text = plan.read_text(encoding="utf-8")
     assert "- [ ] " not in plan_text and plan_text.count("- [x]") == 3
+    dirty_commits = [event for event in events if event[0] == "dirty"]
+    assert ("dirty", "I", "Phase 1 gate repairs") in dirty_commits
+    assert ("dirty", "I", "Phase 2 gate repairs") in dirty_commits
 
 
 def test_phase_review_adds_reviewer_loop_over_impl(make_ctx, new_repo, monkeypatch):

@@ -235,6 +235,9 @@ def run_phased_stages(
                 notify=ctx.notify,
                 stage=ctx.cur_stage,
             )
+            wf.commit_if_dirty(
+                ctx, impl, f"Phase {phase.number} gate repairs"
+            )
             if ctx.settings.phase_review:
                 phase_base = restore_or_record_base(
                     ctx.state, base_name, lambda: head_sha(ctx.workspace)

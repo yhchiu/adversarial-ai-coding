@@ -133,3 +133,33 @@ def test_phase_review_runs_reviewer_per_phase(new_repo, tmp_path, monkeypatch):
     assert rc == 0
     assert calls(work, "fake-reviewer review") == 6
     assert calls(work, "fake-worker review") == 2
+
+
+def test_phase_gate_repair_is_committed_not_leaked(new_repo, tmp_path, monkeypatch):
+    """A dirty phase-gate repair must not ride into the next phase's
+    protected-test commit (GPT review blocker 1)."""
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    # Gate: red while src.txt is missing; then fails once while dropping a
+    # dirty repair file into the workspace (simulating an uncommitted fix
+    # made during the gate loop); passes afterwards.
+    (work / "flaky_gate.py").write_text(
+        "import pathlib, sys\n"
+        "if not pathlib.Path('src.txt').exists():\n"
+        "    sys.exit(1)\n"
+        "if not pathlib.Path('repair.txt').exists():\n"
+        "    pathlib.Path('repair.txt').write_text('dirty repair\\n')\n"
+        "    sys.exit(1)\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    env = phased_env(
+        work,
+        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "flaky_gate.py"}"',
+    )
+    rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
+    assert rc == 0
+    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+        encoding="utf-8"
+    )
+    assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
