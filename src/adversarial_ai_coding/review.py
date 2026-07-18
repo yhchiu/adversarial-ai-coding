@@ -56,7 +56,7 @@ def _recover_unreadable_output(ctx: WorkflowContext, path: Path, fallback: str) 
         "it with a broken ACL.)"
     )
     try:
-        path.unlink()
+        path.unlink(missing_ok=True)
         path.write_text(fallback, encoding="utf-8")
     except OSError as exc:
         raise WorkflowAbort(
@@ -64,6 +64,13 @@ def _recover_unreadable_output(ctx: WorkflowContext, path: Path, fallback: str) 
             f"replaced ({exc}).\n   Remove the file manually, then resume "
             "the run."
         ) from exc
+
+
+def _reset_review_file(ctx: WorkflowContext) -> None:
+    """Give a new review loop a clean review.md under the parent identity."""
+
+    _recover_unreadable_output(ctx, ctx.review_path, REVIEW_UNREADABLE_STUB)
+    ctx.review_path.write_text("", encoding="utf-8")
 
 
 def verdict_approved(path: Path) -> bool:
@@ -141,10 +148,13 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_stage,
         ctx.cur_round,
     )
-    # Pre-create reviewer outputs under the parent workflow identity. On
-    # Windows, a sandboxed reviewer can otherwise create review.md with an
-    # owner ACL that prevents the parent workflow from reading it afterward.
-    ctx.review_path.write_text("", encoding="utf-8")
+    # Ensure reviewer outputs exist under the parent workflow identity (on
+    # Windows a sandboxed reviewer can otherwise create review.md with an
+    # ACL the workflow cannot read back), but keep readable content: round
+    # N must see the worker replies written after round N-1.
+    _recover_unreadable_output(ctx, ctx.review_path, REVIEW_UNREADABLE_STUB)
+    if not ctx.review_path.is_file():
+        ctx.review_path.write_text("", encoding="utf-8")
     # A reviewer that omits structured output must fail closed.
     ctx.verdict_path.write_text(FAILED_VERDICT, encoding="utf-8")
     io = ctx.agent_io()
@@ -227,6 +237,7 @@ def review_loop(
     gate_cmd: str = "",
 ) -> None:
     ctx.cur_round = 1
+    _reset_review_file(ctx)
     while not run_review(ctx, reviewer, scope):
         if ctx.cur_round >= ctx.settings.max_rounds:
             ctx.notify(

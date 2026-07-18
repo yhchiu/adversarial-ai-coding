@@ -221,7 +221,7 @@ def test_review_loop_repair_round_then_approval(make_ctx, monkeypatch):
     monkeypatch.setattr(
         review_mod, "gate_loop", lambda cmd, **kwargs: gates_run.append(cmd)
     )
-    review_loop(ctx, "codex", "claude", "scope", gate_cmd="go test ./...")
+    review_loop(ctx, ctx.ref("B"), ctx.ref("A"), "scope", gate_cmd="go test ./...")
     assert len(repairs) == 1
     assert "review.md" in repairs[0]
     assert gates_run == ["go test ./..."]
@@ -233,4 +233,65 @@ def test_review_loop_max_rounds_aborts(make_ctx, monkeypatch):
     monkeypatch.setattr(review_mod, "run_review", lambda ctx, agent, scope: False)
     monkeypatch.setattr(review_mod, "work", lambda ctx, agent, prompt: None)
     with pytest.raises(WorkflowAbort, match="Review still failed"):
-        review_loop(ctx, "codex", "claude", "scope")
+        review_loop(ctx, ctx.ref("B"), ctx.ref("A"), "scope")
+
+
+def test_review_round_two_sees_worker_replies(make_ctx, monkeypatch):
+    """Round N must read the findings and replies from round N-1
+    (GPT review blocker 2)."""
+    ctx = make_ctx()
+    seen = {}
+
+    def rejecting_reviewer(name, prompt, settings, session, io):
+        ctx.review_path.write_text("- Blocker: bad name\n", encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":false,"blockers":["bad name"],"suggestions":[]}',
+            encoding="utf-8",
+        )
+        io.agent_out.write_text("rejected\n", encoding="utf-8")
+        return AgentResult(0, "rejected")
+
+    def verifying_reviewer(name, prompt, settings, session, io):
+        seen["review"] = ctx.review_path.read_text(encoding="utf-8")
+        ctx.review_path.write_text("approved\n", encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":true,"blockers":[],"suggestions":[]}', encoding="utf-8"
+        )
+        io.agent_out.write_text("approved\n", encoding="utf-8")
+        return AgentResult(0, "approved")
+
+    reviewers = iter([rejecting_reviewer, verifying_reviewer])
+    monkeypatch.setattr(
+        review_mod, "run_reviewer", lambda *args: next(reviewers)(*args)
+    )
+
+    def worker_reply(ctx_arg, agent, prompt):
+        with ctx.review_path.open("a", encoding="utf-8") as review:
+            review.write("Disagree: the name matches the spec\n")
+
+    monkeypatch.setattr(review_mod, "work", worker_reply)
+    monkeypatch.setattr(review_mod, "gate_loop", lambda cmd, **kwargs: None)
+    review_loop(ctx, ctx.ref("B"), ctx.ref("A"), "scope")
+    assert "- Blocker: bad name" in seen["review"]
+    assert "Disagree: the name matches the spec" in seen["review"]
+
+
+def test_review_loop_starts_with_a_clean_review_file(make_ctx, monkeypatch):
+    """Stale content from another stage must not leak into a new loop."""
+    ctx = make_ctx()
+    ctx.review_path.write_text(
+        "stale replies from another stage\n", encoding="utf-8"
+    )
+    seen = {}
+
+    def reviewer(name, prompt, settings, session, io):
+        seen["review"] = ctx.review_path.read_text(encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":true,"blockers":[],"suggestions":[]}', encoding="utf-8"
+        )
+        io.agent_out.write_text("ok\n", encoding="utf-8")
+        return AgentResult(0, "ok")
+
+    monkeypatch.setattr(review_mod, "run_reviewer", reviewer)
+    review_loop(ctx, ctx.ref("B"), ctx.ref("A"), "scope")
+    assert seen["review"] == ""
