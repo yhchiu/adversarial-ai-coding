@@ -53,8 +53,13 @@ def phased_plan_structure_check(ctx: wf.WorkflowContext, plan_file: Path) -> Non
         return
 
 
-def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> None:
-    """TDD-red gate run by the workflow, never trusted from AI output."""
+def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> bool:
+    """TDD-red gate run by the workflow, never trusted from AI output.
+
+    Returns True when the test author had to repair the tests to reach the
+    expected result; the repair invalidates the earlier test review, so the
+    caller must run the review again before accepting the candidate.
+    """
 
     from .gates import run_shell
 
@@ -63,8 +68,9 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> None:
             "(warning: no phase gate command; the red check is skipped. Set "
             "PHASE_GATE_CMD or GATE_CMD to enable it.)"
         )
-        return
+        return False
     attempt = 1
+    repaired = False
     while True:
         ctx.log(f">>> Phase red check:{cmd}")
         rc, output = run_shell(cmd, ctx.workspace)
@@ -83,7 +89,7 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> None:
             )
         if ok:
             ctx.log("Phase red check passed")
-            return
+            return repaired
         ctx.log(f"Phase red check failed (attempt {attempt})")
         if attempt >= ctx.settings.max_rounds:
             ctx.notify(
@@ -97,6 +103,7 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> None:
                 + "\n".join(output.splitlines()[-50:])
             )
         attempt += 1
+        repaired = True
         prompt = render_prompt(
             ctx.prompts_dir,
             "phase-red-check-failed",
@@ -108,6 +115,43 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> None:
             },
         )
         wf.work(ctx, ctx.spec_roles.reviewer_agent, prompt)
+
+
+def reviewed_red_check(
+    ctx: wf.WorkflowContext, phase: Phase, cmd: str, scope: str
+) -> None:
+    """One combined gate: A's test review plus the deterministic red check.
+
+    Any repair B makes inside the red check bypassed A's approval, so loop
+    review -> red check until a candidate passes the check with no repair.
+    """
+
+    attempt = 1
+    while True:
+        wf.review_loop_ref(
+            ctx,
+            ctx.spec_roles.owner_agent,
+            ctx.spec_roles.reviewer_agent,
+            scope,
+        )
+        if not red_check(ctx, phase, cmd):
+            return
+        if attempt >= ctx.settings.max_rounds:
+            ctx.notify(
+                f"adversarial-ai-coding:[{ctx.cur_stage}] phase tests kept "
+                "needing red-check repairs after review; human intervention "
+                "required"
+            )
+            raise WorkflowAbort(
+                f"!! [{ctx.cur_stage}] Phase tests were repaired inside the "
+                f"red check {ctx.settings.max_rounds} times without a "
+                "reviewed candidate; stopping for human intervention."
+            )
+        attempt += 1
+        ctx.log(
+            "Red-check repairs changed the phase tests; running the "
+            "acceptance-test review again"
+        )
 
 
 def run_phased_stages(
@@ -170,13 +214,7 @@ def run_phased_stages(
                 "review-scope-acceptance-tests",
                 {"TEST_BASE": test_base, "SPEC_FILE": str(spec_file)},
             )
-            wf.review_loop_ref(
-                ctx,
-                ctx.spec_roles.owner_agent,
-                ctx.spec_roles.reviewer_agent,
-                scope,
-            )
-            red_check(ctx, phase, phase_gate)
+            reviewed_red_check(ctx, phase, phase_gate, scope)
             wf.commit_work(
                 ctx,
                 ctx.spec_roles.reviewer_agent,

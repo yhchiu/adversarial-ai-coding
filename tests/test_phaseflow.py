@@ -70,7 +70,7 @@ def test_red_check_passes_when_normal_phase_is_red(make_ctx, monkeypatch):
     monkeypatch.setattr(
         wf_mod, "work", lambda *args: pytest.fail("no repair expected")
     )
-    phaseflow.red_check(ctx, NORMAL, "gate")
+    assert phaseflow.red_check(ctx, NORMAL, "gate") is False
 
 
 def test_red_check_passes_when_guard_phase_is_green(make_ctx, monkeypatch):
@@ -79,7 +79,7 @@ def test_red_check_passes_when_guard_phase_is_green(make_ctx, monkeypatch):
     monkeypatch.setattr(
         wf_mod, "work", lambda *args: pytest.fail("no repair expected")
     )
-    phaseflow.red_check(ctx, GUARD, "gate")
+    assert phaseflow.red_check(ctx, GUARD, "gate") is False
 
 
 def test_red_check_repairs_with_test_author_then_passes(make_ctx, monkeypatch):
@@ -90,7 +90,7 @@ def test_red_check_repairs_with_test_author_then_passes(make_ctx, monkeypatch):
     monkeypatch.setattr(
         wf_mod, "work", lambda ctx_arg, agent, prompt: repairs.append((agent, prompt))
     )
-    phaseflow.red_check(ctx, NORMAL, "gate")
+    assert phaseflow.red_check(ctx, NORMAL, "gate") is True
     assert len(repairs) == 1
     agent, prompt = repairs[0]
     assert agent == ctx.spec_roles.reviewer_agent
@@ -115,7 +115,7 @@ def test_red_check_skips_without_command(make_ctx, monkeypatch):
     monkeypatch.setattr(
         gates, "run_shell", lambda cmd, cwd: pytest.fail("must not run")
     )
-    phaseflow.red_check(ctx, NORMAL, "")
+    assert phaseflow.red_check(ctx, NORMAL, "") is False
     assert any("red check is skipped" in line for line in warnings)
 
 
@@ -276,3 +276,43 @@ def test_phase_review_adds_reviewer_loop_over_impl(make_ctx, new_repo, monkeypat
     # the phase gate already passed.
     assert ("review", "B", "I", "phase-gate") in events
     assert ("dirty", "I", "Phase 1 review fixes") in events
+
+
+def test_reviewed_red_check_rereviews_after_repair(make_ctx, monkeypatch):
+    """A red-check repair invalidates A's approval: review must run again
+    before the candidate is accepted (GPT review blocker 4)."""
+    ctx = make_ctx()
+    results = iter([(0, "green"), (1, "red"), (1, "red")])
+    monkeypatch.setattr(gates, "run_shell", lambda cmd, cwd: next(results))
+    events = []
+    monkeypatch.setattr(
+        wf_mod, "work", lambda ctx_arg, agent, prompt: events.append("repair")
+    )
+    monkeypatch.setattr(
+        wf_mod,
+        "review_loop_ref",
+        lambda ctx_arg, reviewer, worker, scope, gate_cmd="": events.append(
+            "review"
+        ),
+    )
+    phaseflow.reviewed_red_check(ctx, NORMAL, "gate", "scope")
+    assert events == ["review", "repair", "review"]
+
+
+def test_reviewed_red_check_aborts_when_repairs_never_settle(
+    make_ctx, monkeypatch
+):
+    ctx = make_ctx()
+    results = iter([(0, "green"), (1, "red")] * 40)
+    monkeypatch.setattr(gates, "run_shell", lambda cmd, cwd: next(results))
+    monkeypatch.setattr(wf_mod, "work", lambda *args: None)
+    monkeypatch.setattr(
+        wf_mod,
+        "review_loop_ref",
+        lambda ctx_arg, reviewer, worker, scope, gate_cmd="": None,
+    )
+    notices = []
+    monkeypatch.setattr(ctx, "notify", notices.append)
+    with pytest.raises(WorkflowAbort, match="repaired inside the red check"):
+        phaseflow.reviewed_red_check(ctx, NORMAL, "gate", "scope")
+    assert notices
