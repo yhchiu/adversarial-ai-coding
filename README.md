@@ -15,113 +15,56 @@ The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
 
 ## How It Works
 
-The workflow drives two owner/reviewer slots through a staged pipeline: `A` is
-the worker agent and `B` is the reviewer agent. Stage 5 can also use a separate
-implementation slot, `I`. Any slot can resolve to:
+Every run drives two agent slots: `A` is the worker and `B` is the adversarial
+reviewer. Use different AI brands for the two slots — their blind spots differ.
+Each slot can be `claude` (Claude Code), `codex` (Codex CLI), `agy`
+(Antigravity CLI), or a custom wrapper command, and the implementation step can
+optionally use a third slot `I` (see
+[Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
 
-- `claude` for Claude Code CLI
-- `codex` for Codex CLI
-- `agy` for Antigravity CLI
-- A custom agent CLI or wrapper command
-
-Using different agent commands for worker and reviewer is recommended because their
-failure modes are different.
-
-Every step marked ⟳ in the pipeline runs the same review loop, shown in the
-second diagram.
+The default pipeline:
 
 ```mermaid
 flowchart TD
-    spec["<b>1 · Write spec</b><br/>A writes · B reviews ⟳"]
-    gate{"2 · Human approves<br/>the spec?"}
-    plan["<b>3 · Write plan</b><br/>A writes the checkbox task list · B reviews ⟳"]
-    plangate{"Human approves the plan?<br/>(optional: HUMAN_GATE_PLAN=1)"}
-    tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
-    task["<b>5 · Implement next task</b><br/>I (owner by default) codes · build gate (compile only) · protected-test check · commit"]
-    more{"Tasks left?"}
-    branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · B reviews diff ⟳"]
-    final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
-    fin(["<b>8 · Finish</b><br/>print push / PR commands"])
-    abort(["Abort"])
-
-    spec --> gate
-    gate -- "y" --> plan
-    gate -- "anything else" --> abort
-    plan --> plangate
-    plangate -- "y (or gate disabled)" --> tests
-    plangate -- "anything else" --> abort
-    tests --> task --> more
-    more -- "yes" --> task
-    more -- "no" --> branch --> final --> fin
-    tests -. "run by the full gate" .-> branch
-    phased["<b>4-5 · Phased loop (PHASES=1)</b><br/>per phase: B writes tests · A reviews ⟳<br/>red check · I implements tasks · phase gate"]
-    plangate -. "y · PHASES=1" .-> phased
-    phased -.-> branch
+    spec["<b>Spec</b> — A writes · B reviews · human approves"]
+    plan["<b>Plan</b> — A writes a checkbox task list · B reviews"]
+    tests["<b>Acceptance tests</b> — B writes · A reviews · files become protected"]
+    impl["<b>Implement</b> — one task per commit · compile gate per task"]
+    gate["<b>Full gate + branch review</b> — workflow runs GATE_CMD · B reviews the whole diff"]
+    final["<b>Final</b> — A self-review · B final acceptance"]
+    fin(["<b>Finish</b> — print push / PR commands"])
+    spec --> plan --> tests --> impl --> gate --> final --> fin
 ```
 
-The ⟳ review loop is one reusable building block. The workflow, not the AI,
-decides when the loop ends:
+Four rules make the pipeline adversarial instead of cooperative:
 
-```mermaid
-flowchart LR
-    review["B reviews the scope"] --> verdict{"verdict.json<br/>approved?"}
-    verdict -- "yes" --> done(["stage continues"])
-    verdict -- "no (blockers)" --> fix["A replies to review.md<br/>and fixes"]
-    fix --> dgate["deterministic gate<br/>(if configured)"] --> review
-    verdict -. "MAX_ROUNDS exhausted" .-> halt(["abort + notify human"])
-```
+- **The reviewer writes the acceptance tests.** Roles swap for that stage: B
+  writes the tests, A only reviews them, and the test files become protected —
+  the workflow re-checks them with `git diff` after every later worker action.
+- **Quality gates are deterministic.** The workflow runs the build and test
+  commands itself and feeds failures back to the worker; an agent's own "tests
+  pass" claim is never trusted.
+- **The workflow decides when a review ends.** Every review step loops
+  review → fix → gate until B's `verdict.json` is approved, and aborts after
+  `MAX_ROUNDS`. Only blockers repeat the loop; suggestions accumulate and are
+  handled in the final stage.
+- **Humans sit at the highest-leverage checkpoints.** A human approves the
+  spec before implementation starts (`HUMAN_GATE`), optionally the plan too
+  (`HUMAN_GATE_PLAN=1`), and the run ends in a PR for a human to merge.
 
-A deterministic gate is a shell command the workflow runs itself instead of
-trusting the AI's "tests pass" claims. There are two: `GATE_CMD` is the full
-gate (build, vet, and every test, including the acceptance tests), and
-`BUILD_GATE_CMD` is the lightweight per-task gate (compile only). Stages
-without a configured gate command skip that step.
+Two optional modes reshape parts of the pipeline:
 
-Stage notes:
+- **[Phased ATDD](#phased-atdd-mode)** (`PHASES=1`) splits the plan into
+  vertical phases and replaces the single test stage with a per-phase loop:
+  B writes one phase's tests, the workflow verifies they start red, the phase
+  is implemented, and the phase gate keeps every finished phase green.
+- **[Dual spec](#dual-spec-mode)** (`DUAL_SPEC=1`) replaces the spec stage:
+  A and B write independent candidate specs, cross-review them, and a human
+  picks the base (or a merge). The chosen slot owns the rest of the run.
 
-1. **Write spec**: `spec.md` must include an Assumptions and Open Questions
-   section, because headless AI cannot ask humans and silent guessing is
-   forbidden. With `DUAL_SPEC=1`, A and B write independent candidate specs
-   first; see [Dual Spec Mode](#dual-spec-mode).
-2. **Human approval**: the highest-leverage checkpoint. A bad spec amplifies
-   into many bad changes, so a human approves the spec (and may edit it first)
-   before costly implementation starts. `HUMAN_GATE=0` skips this gate.
-3. **Write plan**: `plan.md` must be a `- [ ]` checkbox task list. Each task
-   maps to one commit. `HUMAN_GATE_PLAN=1` adds a second human checkpoint
-   here, after the review and before the plan is committed: the plan is the
-   task queue, so it is the last cheap place to intervene. Off by default;
-   like the spec gate, you may edit `plan.md` first and your edits are
-   committed with it.
-4. **Acceptance tests**: adversarial TDD separates the test author from the
-   implementer, so the roles swap: B writes the tests and A only reviews them.
-   The test files become protected; the workflow hard-checks them with
-   `git diff` after every later worker action. Red tests are expected here
-   (TDD red phase). See
-   [Protected Acceptance Tests](#protected-acceptance-tests) for details and
-   the escape hatch when a protected test is wrong.
-5. **Implement tasks**: one checkbox task per commit keeps review and rollback
-   small. The implementation slot handles the whole per-task loop: implementing
-   the task, repairing `BUILD_GATE_CMD` failures, repairing protected-test
-   violations, and making that task's commit. With no `IMPL_*` setting, this
-   slot is exactly the owner and behavior is unchanged. The per-task gate is
-   lightweight (compile only), so acceptance tests may stay red until all tasks
-   are done. After the loop, the normal owner/reviewer pairing resumes: the
-   owner handles full-`GATE_CMD` repairs, branch-review fixes, and final-review
-   fixes, while the reviewer performs branch review and final acceptance.
-6. **Full gate + branch review**: the workflow itself runs `GATE_CMD` — the AI's
-   own "tests pass" claim is never trusted — and acceptance tests must pass
-   now. B then reviews the complete branch diff.
-7. **Final review and fixes**: A works through the accumulated
-   `.workflow/suggestions.md` items and its own self-review findings, then B
-   gives final acceptance.
-8. **Finish**: the workflow prints `git push` / `gh pr create` commands and run
-   metrics. `OPEN_PR=1` runs them automatically.
-
-Review verdicts are graded. `verdict.json` is
-`{approved, blockers[], suggestions[]}`: only blockers make the loop repeat,
-while suggestions accumulate in `.workflow/suggestions.md` and are handled in
-stage 7. This keeps a reviewer from blocking on nitpicks or approving just to
-be polite.
+For the stage-by-stage walkthrough — the full pipeline diagram, review-loop
+mechanics, gate commands, and per-stage notes — see
+[`docs/how-it-works.md`](docs/how-it-works.md).
 
 ## Requirements
 
