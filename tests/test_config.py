@@ -176,3 +176,21 @@ def test_phase_settings_resume_from_snapshot():
     )
     assert settings.phases is True
     assert settings.phase_review is True
+
+
+def test_import_settings_default_off():
+    settings = Settings.from_env({}, run_id="r")
+    assert settings.import_spec == ""
+    assert settings.import_plan == ""
+    assert settings.import_review is True
+
+
+def test_import_settings_from_env_and_snapshot():
+    settings = Settings.from_env(
+        {"IMPORT_SPEC": "ext/spec.md", "IMPORT_REVIEW": "0"},
+        run_id="r",
+        snapshot={"IMPORT_PLAN": "ext/plan.md"},
+    )
+    assert settings.import_spec == "ext/spec.md"
+    assert settings.import_plan == "ext/plan.md"
+    assert settings.import_review is False
