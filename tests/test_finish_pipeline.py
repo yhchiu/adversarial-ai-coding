@@ -73,6 +73,32 @@ def test_finish_without_open_pr_prints_commands(make_ctx):
     assert "second line" in (ctx.wf / "pr-body.md").read_text(encoding="utf-8")
 
 
+def test_pr_body_records_import_provenance_review_off(make_ctx):
+    ctx = make_ctx(
+        {"IMPORT_SPEC": "ext.md", "IMPORT_REVIEW": "0", "RETRY_ON_LIMIT": "0"}
+    )
+    finish(ctx, "task", which=lambda name: None, run_gh=None, run_git=None)
+    body = (ctx.wf / "pr-body.md").read_text(encoding="utf-8")
+    assert "(imported; AI review skipped)" in body
+    assert "and cross-review" not in body
+
+
+def test_pr_body_keeps_cross_review_claim_when_reviewed(make_ctx):
+    ctx = make_ctx({"IMPORT_SPEC": "ext.md", "RETRY_ON_LIMIT": "0"})
+    finish(ctx, "task", which=lambda name: None, run_gh=None, run_git=None)
+    body = (ctx.wf / "pr-body.md").read_text(encoding="utf-8")
+    assert "(imported; cross-reviewed in-run)" in body
+    assert "Each stage passed deterministic quality gates and cross-review." in body
+
+
+def test_pr_body_unchanged_without_import(make_ctx):
+    ctx = make_ctx({"RETRY_ON_LIMIT": "0"})
+    finish(ctx, "task", which=lambda name: None, run_gh=None, run_git=None)
+    body = (ctx.wf / "pr-body.md").read_text(encoding="utf-8")
+    assert "imported" not in body
+    assert "Each stage passed deterministic quality gates and cross-review." in body
+
+
 def test_run_workflow_single_spec_stage_order(make_ctx, new_repo, monkeypatch):
     ctx = make_ctx()
     ctx.state = RunState.create(new_repo / ".workflow" / "state", "run", "t\n")
