@@ -1,1 +1,1 @@
-Current code changes on this branch, using git diff and git log: code quality, conformance with {{SPEC_FILE}}, actual test execution, and protected acceptance-test integrity using {{PROTECTED_TESTS_FILE}}. Confirm tests were not weakened or bypassed.
+Current code changes on this branch, using git diff and git log from base commit {{BASE}}: code quality, conformance with {{SPEC_FILE}}, actual test execution, and protected acceptance-test integrity using {{PROTECTED_TESTS_FILE}}. Confirm tests were not weakened or bypassed.

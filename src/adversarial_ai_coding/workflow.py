@@ -748,10 +748,16 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
         pop_task_queue,
         remaining_tasks,
         restore_or_record_acceptance_base,
+        restore_or_record_base,
     )
 
     spec_file = ctx.spec_dir / "spec.md"
     plan_file = ctx.spec_dir / "plan.md"
+    # The whole-branch reviews diff from the commit the run started on;
+    # record it before the first stage so resumed runs reuse the same base.
+    run_base = restore_or_record_base(
+        ctx.state, "run-base", lambda: head_sha(ctx.workspace)
+    )
 
     if ctx.settings.dual_spec:
         from .dual_spec import run_dual_spec_spec_stage
@@ -950,6 +956,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             ctx.prompts_dir,
             "review-scope-branch",
             {
+                "BASE": run_base,
                 "SPEC_FILE": str(spec_file),
                 "PROTECTED_TESTS_FILE": str(protected_list),
             },
@@ -987,7 +994,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
         scope = render_prompt(
             ctx.prompts_dir,
             "review-scope-final-acceptance",
-            {"SPEC_FILE": str(spec_file)},
+            {"BASE": run_base, "SPEC_FILE": str(spec_file)},
         )
         review_loop_ref(
             ctx,

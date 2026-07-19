@@ -122,6 +122,28 @@ def test_review_overwrite_rule_keeps_unreplied_findings():
     assert phrase in " ".join(agents.split())
 
 
+def test_branch_review_scopes_name_the_diff_base():
+    # Without an explicit base the reviewer must guess which commit the
+    # branch diff starts from; both whole-branch scopes must name it.
+    prompts_dir = default_prompts_dir({})
+    branch = render_prompt(
+        prompts_dir,
+        "review-scope-branch",
+        {
+            "BASE": "base-sha",
+            "SPEC_FILE": "specfile.md",
+            "PROTECTED_TESTS_FILE": "protected.txt",
+        },
+    )
+    final = render_prompt(
+        prompts_dir,
+        "review-scope-final-acceptance",
+        {"BASE": "base-sha", "SPEC_FILE": "specfile.md"},
+    )
+    assert "base-sha" in branch and "{{" not in branch
+    assert "base-sha" in final and "{{" not in final
+
+
 def test_verdict_rules_require_zero_blockers_for_approval():
     # The zero-blockers rule lives in AGENTS.md; both verdict-producing
     # prompts must repeat it so a reviewer cannot approve with blockers.

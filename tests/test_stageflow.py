@@ -315,3 +315,35 @@ def test_default_ask_rejects_noninteractive_stdin(monkeypatch):
     monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: False)
     with pytest.raises(WorkflowAbort, match="No interactive terminal"):
         wf_mod._default_ask("approve?")
+
+
+def test_branch_and_final_reviews_receive_run_base(make_ctx, monkeypatch):
+    # The write-code and final-acceptance reviews must be anchored to the
+    # commit the run started from, not left to the reviewer to guess.
+    ctx = make_ctx()
+    (ctx.wf / "protected-tests.txt").write_text("", encoding="utf-8")
+    (ctx.wf / "protected-base.sha").write_text("base\n", encoding="utf-8")
+    run_base = head_sha(ctx.workspace)
+    monkeypatch.setattr(
+        wf_mod,
+        "begin_stage",
+        lambda ctx, name, *artifacts: name
+        in {"write-code", "final-review-and-fixes"},
+    )
+    monkeypatch.setattr(wf_mod, "end_stage", lambda ctx: None)
+    monkeypatch.setattr(wf_mod, "finish", lambda ctx, task: None)
+    monkeypatch.setattr(wf_mod, "work", lambda ctx, agent, prompt: None)
+    monkeypatch.setattr(wf_mod, "gate_loop_ref", lambda cmd, **kwargs: None)
+    monkeypatch.setattr(wf_mod, "commit_if_dirty", lambda *args, **kwargs: None)
+    scopes = []
+    monkeypatch.setattr(
+        wf_mod,
+        "review_loop_ref",
+        lambda ctx, reviewer, worker, scope, gate_cmd="": scopes.append(scope),
+    )
+
+    wf_mod.run_workflow(ctx, "anchor reviews to the run base")
+
+    assert len(scopes) == 2
+    for scope in scopes:
+        assert run_base in scope
