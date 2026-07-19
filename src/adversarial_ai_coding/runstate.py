@@ -22,6 +22,9 @@ SNAPSHOT_FILE = "settings.json"
 SNAPSHOT_KEYS = (
     "spec_dir",
     "dual_spec",
+    "import_spec",
+    "import_plan",
+    "import_review",
     "phases",
     "phase_review",
     "auto_branch",
@@ -51,7 +54,16 @@ SNAPSHOT_KEYS = (
     "task_source_kind",
     "task_source_path",
 )
-IMMUTABLE_KEYS = ("SPEC_DIR", "DUAL_SPEC", "AUTO_BRANCH", "USE_WORKTREE", "PHASES")
+IMMUTABLE_KEYS = (
+    "SPEC_DIR",
+    "DUAL_SPEC",
+    "AUTO_BRANCH",
+    "USE_WORKTREE",
+    "PHASES",
+    "IMPORT_SPEC",
+    "IMPORT_PLAN",
+    "IMPORT_REVIEW",
+)
 
 
 class RunStateError(Exception):
@@ -81,6 +93,9 @@ def snapshot_values(
     return {
         "spec_dir": settings.spec_dir,
         "dual_spec": flag(settings.dual_spec),
+        "import_spec": settings.import_spec,
+        "import_plan": settings.import_plan,
+        "import_review": flag(settings.import_review),
         "phases": flag(settings.phases),
         "phase_review": flag(settings.phase_review),
         "auto_branch": flag(settings.auto_branch),
@@ -155,21 +170,28 @@ def load_snapshot(state_dir: Path) -> dict[str, str]:
 def check_immutable(
     env: Mapping[str, str], snapshot: Mapping[str, str]
 ) -> None:
+    _MISSING_KEY_DEFAULTS = {
+        # Snapshots written before these features have no such keys; those
+        # runs necessarily ran without them, so enabling one on resume would
+        # change stage behavior and must be refused.
+        "PHASES": "0",
+        "IMPORT_SPEC": "",
+        "IMPORT_PLAN": "",
+        "IMPORT_REVIEW": "1",
+    }
     for key in IMMUTABLE_KEYS:
         current = env.get(key, "")
         recorded = snapshot.get(key)
-        if key == "PHASES" and recorded is None:
-            # Snapshots written before the phased feature have no "phases"
-            # key; those runs were necessarily non-phased, so a PHASES=1
-            # resume would change the stage graph and must be refused.
-            recorded = "0"
+        if recorded is None and key in _MISSING_KEY_DEFAULTS:
+            recorded = _MISSING_KEY_DEFAULTS[key]
         if recorded is None or not current or current == recorded:
             continue
         raise RunStateError(
             f"!! {key}={current} conflicts with the resumed run's snapshot "
             f"({key}={recorded}).\n"
-            "   SPEC_DIR/DUAL_SPEC/AUTO_BRANCH/USE_WORKTREE/PHASES decide the "
-            "stage graph and cannot change across resume.\n"
+            "   SPEC_DIR/DUAL_SPEC/AUTO_BRANCH/USE_WORKTREE/PHASES and the "
+            "IMPORT_* variables decide stage behavior and cannot change "
+            "across resume.\n"
             f"   Unset {key} to keep the snapshot value, or start a fresh run."
         )
 

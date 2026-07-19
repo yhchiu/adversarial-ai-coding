@@ -221,3 +221,51 @@ def test_check_immutable_defaults_missing_phases_to_off():
     with pytest.raises(RunStateError, match="PHASES=1 conflicts"):
         check_immutable({"PHASES": "1"}, {})
     check_immutable({"PHASES": "0"}, {})
+
+
+def test_snapshot_round_trips_import_settings(tmp_path):
+    settings = Settings.from_env(
+        {
+            "IMPORT_SPEC": "ext/spec.md",
+            "IMPORT_PLAN": "ext/plan.md",
+            "IMPORT_REVIEW": "0",
+        },
+        run_id="r",
+    )
+    values = snapshot_values(
+        settings,
+        branch="auto/r",
+        gate_cmd="",
+        build_gate_cmd="",
+        phase_gate_cmd="",
+        task_arg="t",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+    assert values["import_spec"] == "ext/spec.md"
+    assert values["import_plan"] == "ext/plan.md"
+    assert values["import_review"] == "0"
+    write_snapshot(tmp_path, values)
+    snap = load_snapshot(tmp_path)
+    resumed = Settings.from_env({}, run_id="r2", snapshot=snap)
+    assert resumed.import_spec == "ext/spec.md"
+    assert resumed.import_plan == "ext/plan.md"
+    assert resumed.import_review is False
+
+
+def test_import_keys_are_immutable_on_resume():
+    snap = {"IMPORT_SPEC": "a.md", "IMPORT_PLAN": "", "IMPORT_REVIEW": "1"}
+    check_immutable({"IMPORT_SPEC": "a.md"}, snap)
+    with pytest.raises(RunStateError, match="IMPORT_SPEC"):
+        check_immutable({"IMPORT_SPEC": "b.md"}, snap)
+    with pytest.raises(RunStateError, match="IMPORT_REVIEW"):
+        check_immutable({"IMPORT_REVIEW": "0"}, snap)
+
+
+def test_import_missing_from_old_snapshot_refuses_enabling():
+    check_immutable({}, {})
+    with pytest.raises(RunStateError, match="IMPORT_SPEC"):
+        check_immutable({"IMPORT_SPEC": "a.md"}, {})
+    with pytest.raises(RunStateError, match="IMPORT_REVIEW"):
+        check_immutable({"IMPORT_REVIEW": "0"}, {})
+    check_immutable({"IMPORT_REVIEW": "1"}, {})
