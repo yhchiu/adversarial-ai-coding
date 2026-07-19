@@ -35,6 +35,17 @@ def test_verdict_approved_cases(tmp_path):
     assert not verdict_approved(verdict)
 
 
+def test_verdict_with_blockers_is_never_approved(tmp_path):
+    # AGENTS.md: approved may be true only with zero blockers. A reviewer
+    # that contradicts itself must fail closed.
+    verdict = tmp_path / "v.json"
+    verdict.write_text(
+        '{"approved":true,"blockers":["unfixed bug"],"suggestions":[]}',
+        encoding="utf-8",
+    )
+    assert not verdict_approved(verdict)
+
+
 def test_compose_review_prompt_verdict_instruction(tmp_path):
     claude = compose_review_prompt(
         AgentRef("A", "claude"), "scope", PROMPTS, tmp_path / ".workflow"

@@ -83,7 +83,9 @@ def verdict_approved(path: Path) -> bool:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return False
-    return payload.get("approved") is True
+    # AGENTS.md: approved may be true only with zero blockers; a verdict
+    # that contradicts itself fails closed.
+    return payload.get("approved") is True and not payload.get("blockers")
 
 
 def compose_review_prompt(

@@ -122,6 +122,17 @@ def test_review_overwrite_rule_keeps_unreplied_findings():
     assert phrase in " ".join(agents.split())
 
 
+def test_verdict_rules_require_zero_blockers_for_approval():
+    # The zero-blockers rule lives in AGENTS.md; both verdict-producing
+    # prompts must repeat it so a reviewer cannot approve with blockers.
+    prompts_dir = default_prompts_dir({})
+    review = render_prompt(prompts_dir, "review", {"SCOPE": "s", "WF": "wf"})
+    instruction = render_prompt(prompts_dir, "verdict-file-instruction", {"WF": "wf"})
+    phrase = "only when there are zero blockers"
+    assert phrase in " ".join(review.split())
+    assert phrase in " ".join(instruction.split())
+
+
 def test_write_phase_tests_first_line_is_stable():
     rendered = render_prompt(
         default_prompts_dir({}), "write-phase-tests", PHASED_TEMPLATES["write-phase-tests"]
