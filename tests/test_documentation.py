@@ -35,3 +35,21 @@ def test_phased_mode_is_documented_bilingually():
         assert "PHASE_REVIEW" in readme
         assert "regression-guard" in readme
     assert "regression-guard" in _read("resources/AGENTS.template.md")
+
+
+def test_import_mode_is_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "IMPORT_SPEC" in readme
+        assert "IMPORT_PLAN" in readme
+        assert "IMPORT_REVIEW" in readme
+        assert "import-format" in readme
+    contract = _read("docs/import-format.md")
+    assert contract.isascii()
+    assert "Assumptions" in contract and "Open Questions" in contract
+    assert "- [ ] " in contract
+    assert "## Phase" in contract
+    assert "IMPORT_REVIEW" in contract
+    prompt = _read("resources/import-authoring-prompt.md")
+    assert prompt.isascii()
+    assert "Assumptions and Open Questions" in prompt
+    assert "- [ ] " in prompt

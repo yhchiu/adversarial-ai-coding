@@ -139,6 +139,18 @@ A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
 
 被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
+## 匯入外部 Spec 或 Plan
+
+先在你慣用的互動工具裡釐清需求,再把成品交給 workflow:
+`IMPORT_SPEC=path` 會把你的檔案當作 `spec.md`,只跳過「worker 撰寫
+spec」那一步;`IMPORT_PLAN=path`(需同時設定 `IMPORT_SPEC`)對
+`plan.md` 做同樣的事。匯入的產物預設仍會經過 reviewer 的對抗式
+review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
+與 commit 一律照跑)。檔案格式要求見
+[docs/import-format.md](docs/import-format.md),
+[resources/import-authoring-prompt.md](resources/import-authoring-prompt.md)
+是可直接貼進你自己工具的 prompt。
+
 ## 分階段 ATDD 模式(Phased ATDD)
 
 設定 `PHASES=1` 後,單次預先撰寫驗收測試的 stage 會改成逐 phase
@@ -198,6 +210,9 @@ phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取�
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
+| `IMPORT_SPEC` | 空 | 使用此檔案作為 `spec.md`;跳過「worker 撰寫 spec」步驟。 |
+| `IMPORT_PLAN` | 空 | 使用此檔案作為 `plan.md`;跳過「worker 撰寫 plan」步驟。需要 `IMPORT_SPEC`。 |
+| `IMPORT_REVIEW` | `1` | 匯入的產物仍會經過 reviewer 的 review loop。`0` 只會跳過匯入產物的 AI review。需要 `IMPORT_SPEC`。 |
 | `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。 |
 | `PHASE_GATE_CMD` | 空 | 每個 phase 的 red check 與 phase gate 命令。空值時改用 `GATE_CMD`。 |
 | `PHASE_REVIEW` | `0` | `1` 時每個 phase 結尾由 reviewer 審該 phase 的 diff(含 blocker 迴圈)。預設關閉,因為 phase gate 本身就是 reviewer 寫的受保護測試在把關。 |

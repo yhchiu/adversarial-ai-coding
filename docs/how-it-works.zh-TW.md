@@ -48,9 +48,9 @@ flowchart LR
 
 各 stage 說明:
 
-1. **訂規格**:`spec.md` 必含「假設與未決問題」——headless 下 AI 不能問人,禁止默默腦補。`DUAL_SPEC=1` 時 A/B 先各寫一份獨立候選 spec,見[雙 spec 模式](../README.zh-TW.md#雙-spec-模式)。
+1. **訂規格**:`spec.md` 必含「假設與未決問題」——headless 下 AI 不能問人,禁止默默腦補。`DUAL_SPEC=1` 時 A/B 先各寫一份獨立候選 spec,見[雙 spec 模式](../README.zh-TW.md#雙-spec-模式)。使用 `IMPORT_SPEC=path` 時,workflow 會改為複製你的檔案,不再要求 A 撰寫;匯入格式規範見 [import-format.md](import-format.md)。
 2. **人工核准**:最高槓桿的人工檢查點——人核准 spec(可先直接編輯,改動會一併 commit)後,才開始花大錢實作。無人值守用 `HUMAN_GATE=0` 跳過。
-3. **規劃實作計畫**:`plan.md` 必須是「- [ ] 」checkbox 任務清單,一個任務對應一個 commit。`HUMAN_GATE_PLAN=1` 可在此加第二個人工檢查點:AI 互審後、commit 之前暫停——plan 就是後續實作的任務佇列,這是開始燒錢前最後一個便宜的介入點。預設關閉;與 spec gate 一樣可先直接編輯 `plan.md`,改動會一併 commit。
+3. **規劃實作計畫**:`plan.md` 必須是「- [ ] 」checkbox 任務清單,一個任務對應一個 commit。`HUMAN_GATE_PLAN=1` 可在此加第二個人工檢查點:AI 互審後、commit 之前暫停——plan 就是後續實作的任務佇列,這是開始燒錢前最後一個便宜的介入點。預設關閉;與 spec gate 一樣可先直接編輯 `plan.md`,改動會一併 commit。使用 `IMPORT_PLAN=path` 時會以相同方式匯入 plan;review、gate 與結構檢查仍會執行(`IMPORT_REVIEW=0` 只會跳過匯入檔案的 AI review)。
 4. **撰寫驗收測試**:對抗式 TDD 讓出題者與答題者分離,所以角色互換:B 寫測試、A 只負責審。測試檔隨後受保護,之後每次工作者動作後 workflow 都用 `git diff` 硬性檢查;此階段紅燈是預期的(TDD red phase)。詳細機制與「測試真的錯了怎麼辦」見[受保護測試的逃生口](../README.zh-TW.md#受保護測試的逃生口)。
 5. **逐任務實作**:一個 checkbox 任務一個 commit,審查與回退都容易。實作 slot 負責整個逐任務迴圈:實作該任務、修復 `BUILD_GATE_CMD` 失敗、修復受保護測試違規,以及建立該任務的 commit。三個 `IMPL_*` 都未設定時,實作 slot 就是 owner,行為完全不變。逐任務只跑輕量關卡(只驗編譯),因此所有任務完成前驗收測試允許紅燈。迴圈結束後恢復一般 owner/reviewer 配對:完整 `GATE_CMD` 修復、branch-review 修正與 final-review 修正由 owner 處理,reviewer 仍負責 branch review 與最終驗收。
 6. **完整關卡 + 整體審查**:workflow 親自跑 `GATE_CMD`,此時驗收測試必須全綠;接著 B 審整條 branch 的完整 diff。

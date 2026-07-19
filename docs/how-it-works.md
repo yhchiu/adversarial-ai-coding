@@ -72,6 +72,9 @@ Stage notes:
    section, because headless AI cannot ask humans and silent guessing is
    forbidden. With `DUAL_SPEC=1`, A and B write independent candidate specs
    first; see [Dual Spec Mode](../README.md#dual-spec-mode).
+   With `IMPORT_SPEC=path`, the workflow copies your file in instead of
+   asking A to write it; see the import contract in
+   [import-format.md](import-format.md).
 2. **Human approval**: the highest-leverage checkpoint. A bad spec amplifies
    into many bad changes, so a human approves the spec (and may edit it first)
    before costly implementation starts. `HUMAN_GATE=0` skips this gate.
@@ -81,6 +84,9 @@ Stage notes:
    task queue, so it is the last cheap place to intervene. Off by default;
    like the spec gate, you may edit `plan.md` first and your edits are
    committed with it.
+   With `IMPORT_PLAN=path` the plan is imported the same way; the
+   review, gates, and structure checks still run (`IMPORT_REVIEW=0`
+   skips only the AI review of imported files).
 4. **Acceptance tests**: adversarial TDD separates the test author from the
    implementer, so the roles swap: B writes the tests and A only reviews them.
    The test files become protected; the workflow hard-checks them with

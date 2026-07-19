@@ -208,6 +208,19 @@ and writes the protected acceptance tests. Dual spec mode requires an
 interactive terminal and `HUMAN_GATE=1`; unattended runs should leave it
 disabled.
 
+## Importing an External Spec or Plan
+
+Clarify requirements in whatever interactive tool you prefer, then hand
+the finished files to the workflow: `IMPORT_SPEC=path` uses your file as
+`spec.md` and skips only the "worker writes the spec" step, and
+`IMPORT_PLAN=path` (requires `IMPORT_SPEC`) does the same for `plan.md`.
+Imported artifacts still get the reviewer's adversarial review by
+default; set `IMPORT_REVIEW=0` to skip that AI review (human gates,
+format checks, and commits always run). File requirements and the exact
+rules are in [docs/import-format.md](docs/import-format.md), and
+[resources/import-authoring-prompt.md](resources/import-authoring-prompt.md)
+is a paste-ready prompt for your own tool.
+
 ## Phased ATDD Mode
 
 Set `PHASES=1` to replace the single up-front acceptance-test stage with a
@@ -319,6 +332,9 @@ Add `--json` output to the CLI.
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
+| `IMPORT_SPEC` | empty | Use this file as `spec.md`; skip the "worker writes the spec" step. |
+| `IMPORT_PLAN` | empty | Use this file as `plan.md`; skip the "worker writes the plan" step. Requires `IMPORT_SPEC`. |
+| `IMPORT_REVIEW` | `1` | Imported artifacts still go through the reviewer's review loop. `0` skips the AI review of imported artifacts only. Requires `IMPORT_SPEC`. |
 | `PHASES` | `0` | `1` enables the phased ATDD flow: the plan is split into vertical phases, and each phase writes its own protected acceptance tests before its tasks are implemented. Decides the stage graph, so it cannot change across resume. |
 | `PHASE_GATE_CMD` | empty | Gate command for the per-phase red check and phase gate. Empty falls back to `GATE_CMD`. |
 | `PHASE_REVIEW` | `0` | `1` adds a reviewer pass over each phase diff, with blocker loops. Off by default because the phase gate already enforces the reviewer's protected tests. |
