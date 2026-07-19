@@ -5,6 +5,7 @@ import pytest
 from adversarial_ai_coding.prompts import (
     REPO_ROOT,
     PromptTemplateError,
+    default_agents_template,
     default_prompts_dir,
     prompt_file_instruction,
     render_prompt,
@@ -106,6 +107,19 @@ def test_phased_templates_render_every_placeholder(name):
     assert "{{" not in rendered
     for value in PHASED_TEMPLATES[name].values():
         assert value in rendered
+
+
+def test_review_overwrite_rule_keeps_unreplied_findings():
+    # AGENTS.template.md carries the full overwrite rule; the review prompt
+    # must not drift into a plain "overwrite old content" that lets a
+    # reviewer discard findings the worker has not answered yet.
+    phrase = "keep items the worker has not replied to yet"
+    prompt = render_prompt(
+        default_prompts_dir({}), "review", {"SCOPE": "scope", "WF": ".workflow"}
+    )
+    agents = default_agents_template({}).read_text(encoding="utf-8")
+    assert phrase in " ".join(prompt.split())
+    assert phrase in " ".join(agents.split())
 
 
 def test_write_phase_tests_first_line_is_stable():
