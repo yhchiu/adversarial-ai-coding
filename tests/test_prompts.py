@@ -155,6 +155,43 @@ def test_verdict_rules_require_zero_blockers_for_approval():
     assert phrase in " ".join(instruction.split())
 
 
+def test_implement_plan_task_marks_done_in_the_plan_file():
+    # The prompt must reference the parameterized plan path, not assume
+    # the file is literally named plan.md.
+    out = render_prompt(
+        default_prompts_dir({}),
+        "implement-plan-task",
+        {
+            "PLAN_FILE": "PLANPATH.md",
+            "TASK": "- [ ] do it",
+            "PROTECTED_TESTS_FILE": "protected.txt",
+        },
+    )
+    assert 'change this task in PLANPATH.md from "- [ ]" to "- [x]"' in out
+    assert "plan.md" not in out
+
+
+def test_quality_gate_repair_must_not_weaken_tests():
+    out = render_prompt(
+        default_prompts_dir({}),
+        "quality-gate-failed",
+        {"COMMAND": "gate-cmd", "OUTPUT": "boom"},
+    )
+    assert (
+        "Do not make the gate pass by deleting, skipping, or weakening tests"
+        in out
+    )
+
+
+def test_final_self_review_names_where_rejections_go():
+    out = render_prompt(
+        default_prompts_dir({}),
+        "final-self-review",
+        {"SUGGESTIONS_FILE": "SUGG.md"},
+    )
+    assert "writing a reason in SUGG.md under each suggestion you reject" in out
+
+
 def test_write_phase_tests_first_line_is_stable():
     rendered = render_prompt(
         default_prompts_dir({}), "write-phase-tests", PHASED_TEMPLATES["write-phase-tests"]
