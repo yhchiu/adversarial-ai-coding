@@ -192,6 +192,18 @@ def test_final_self_review_names_where_rejections_go():
     assert "writing a reason in SUGG.md under each suggestion you reject" in out
 
 
+def test_review_blockers_require_reproducible_evidence():
+    # A blocker without evidence forces an extra round of back-and-forth;
+    # the reviewer must show how the worker can reproduce each finding.
+    prompt = render_prompt(
+        default_prompts_dir({}), "review", {"SCOPE": "s", "WF": "wf"}
+    )
+    text = " ".join(prompt.split())
+    assert (
+        "name the file and include evidence the worker can reproduce" in text
+    )
+
+
 def test_write_phase_tests_first_line_is_stable():
     rendered = render_prompt(
         default_prompts_dir({}), "write-phase-tests", PHASED_TEMPLATES["write-phase-tests"]
