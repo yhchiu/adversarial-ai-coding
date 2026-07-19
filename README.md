@@ -344,6 +344,9 @@ Add `--json` output to the CLI.
 | `USE_WORKTREE` | `0` | Run in a separate Git worktree. |
 | `OPEN_PR` | `0` | Push and create a GitHub PR at the end. By default, commands are only printed. |
 | `NOTIFY_CMD` | empty | Notification command. The message is passed as the first argument. |
+| `COLOR` | `auto` | Colorize the workflow's own status messages. `auto` colors only when the stream is a terminal (honors `NO_COLOR` and `FORCE_COLOR`; `TERM=dumb` disables), `always` forces color, `never` disables it. Redirected output and the archived run log never contain color codes. |
+| `COLOR_THEME` | `dark` | Status message color theme: `dark` or `light`. |
+| `COLOR_<CATEGORY>` | theme default | Per-category color override for `STAGE`, `PROGRESS`, `ERROR`, `WARNING`, `CHECKPOINT`, `SUCCESS`. Accepts a color name (`red`, `bright-cyan`, `bold-bright-red`) or raw SGR parameters (`1;91`), e.g. `COLOR_ERROR=bold-bright-red`. |
 | `RETRY_ON_LIMIT` | `1` | Wait and retry on rate-limit or quota errors. |
 | `RETRY_MAX` | `6` | Maximum rate-limit retries per agent call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |

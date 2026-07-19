@@ -222,6 +222,9 @@ phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取�
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
+| `COLOR` | `auto` | 為 workflow 自身的狀態訊息上色。`auto` 只在輸出是終端機時上色(遵守 `NO_COLOR` 與 `FORCE_COLOR`;`TERM=dumb` 停用),`always` 強制上色,`never` 停用。重導向的輸出與封存的 run log 永遠不含色碼。 |
+| `COLOR_THEME` | `dark` | 狀態訊息主題:`dark` 或 `light`。 |
+| `COLOR_<CATEGORY>` | 主題預設 | 逐類別覆寫顏色,類別為 `STAGE`、`PROGRESS`、`ERROR`、`WARNING`、`CHECKPOINT`、`SUCCESS`。接受顏色名(`red`、`bright-cyan`、`bold-bright-red`)或原始 SGR 參數(`1;91`),例如 `COLOR_ERROR=bold-bright-red`。 |
 | `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三個內建 agent 通用。能解析等待時間就精準等(claude 的 `resets HH:MMam` +2 分緩衝;codex 的 `try again in 90s`、`try again at Jul 14th, 2026 7:23 PM` 或只有時刻的 `try again at 12:50 AM` +30 秒緩衝),否則指數退避;`0` = 直接失敗 |
 | `RETRY_MAX` | `6` | 每次 agent 呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |

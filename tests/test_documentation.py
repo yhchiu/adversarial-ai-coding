@@ -53,3 +53,13 @@ def test_import_mode_is_documented_bilingually():
     assert prompt.isascii()
     assert "Assumptions and Open Questions" in prompt
     assert "- [ ] " in prompt
+
+
+def test_color_settings_are_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "`COLOR`" in readme
+        assert "COLOR_THEME" in readme
+        assert "NO_COLOR" in readme
+        assert "COLOR_ERROR" in readme
+        assert "bold-bright-red" in readme
+        assert "1;91" in readme
