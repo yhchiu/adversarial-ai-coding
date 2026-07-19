@@ -125,7 +125,7 @@ def stage_import(ctx, kind: str, src_str: str, dst: Path) -> None:
         )
         raise WorkflowAbort(
             f"!! Cannot import the {kind}: {exc}\n"
-            "   If an earlier attempt of this run imported it, the "
+            "   If an earlier attempt of this run imported it, "
             f"{archive_hint}"
         ) from None
     try:

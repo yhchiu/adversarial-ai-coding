@@ -20,7 +20,13 @@ Rules the workflow enforces:
 - `IMPORT_REVIEW` without `IMPORT_SPEC` is an error.
 - `IMPORT_SPEC` with `DUAL_SPEC=1` is an error.
 - Import settings are frozen into the run's resume snapshot; they cannot
-  be changed when resuming.
+  be changed when resuming. Relative paths are resolved against the
+  directory the run is started from and are stored as absolute paths, so
+  a resume works from any directory without re-passing them (re-passing
+  a different path is refused).
+- Keep the source files outside the target repository: stage commits
+  include every pending change in the workspace, so a source file lying
+  inside the repo would be committed onto the run's branch.
 - `IMPORT_REVIEW=0` never skips human gates, format checks, or commits.
 
 ## Spec file (`IMPORT_SPEC`)
