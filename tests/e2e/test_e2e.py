@@ -262,3 +262,99 @@ def test_full_workflow_phased_e2e():
     assert "- [ ] " not in plan and "- [x]" in plan
     verify_gates(repo)
     print(f"Phased E2E passed; workspace kept at {base} (delete after inspection)")
+
+
+IMPORT_SPEC_TEXT = """# Spec: IsPalindrome for strutil
+
+Add IsPalindrome(s string) bool to the strutil package. It reports
+whether the string is a palindrome.
+
+## Acceptance criteria
+
+- Compare rune-by-rune, verbatim: no case folding, no Unicode
+  normalization; every character (including spaces) is significant.
+- The empty string returns true.
+- Examples: "" true; "a" true; "abc" false; "Abba" false (case matters);
+  "a b a" true; the rune sequence U+4E0A U+6D77 U+6D77 U+4E0A true
+  (write that test string with Go Unicode escape sequences, not literal
+  CJK characters).
+- Unit tests cover the example set.
+
+## Out of scope
+
+- Do not modify the existing Reverse function. No new APIs, no CLI.
+
+## Assumptions and Open Questions
+
+- Assumes the strutil package layout stays unchanged; no open questions.
+"""
+
+IMPORT_PLAN_TEXT = """# Plan
+
+- [ ] Add IsPalindrome to strutil with unit tests for the ASCII examples
+- [ ] Add the CJK palindrome test using Go Unicode escape sequences
+"""
+
+
+@pytest.mark.e2e
+@needs_go
+def test_full_workflow_import_e2e():
+    base = e2e_base("wf-e2e-imp-")
+    print(f"== Import E2E workspace:{base}")
+    repo = make_fixture_repo(base)
+    verify_gates(repo)
+
+    external = base / "external"
+    external.mkdir()
+    spec = external / "spec.md"
+    spec.write_text(IMPORT_SPEC_TEXT, encoding="utf-8")
+    plan = external / "plan.md"
+    plan.write_text(IMPORT_PLAN_TEXT, encoding="utf-8")
+
+    env = {key: os.environ.get(key, value) for key, value in E2E_DEFAULTS.items()}
+    env["IMPORT_SPEC"] = str(spec)
+    env["IMPORT_PLAN"] = str(plan)
+    tool = shutil.which("adversarial-ai-coding")
+    assert tool, "console script not installed; run `uv sync` first"
+    proc = subprocess.run(
+        [tool, "task.md"],
+        cwd=repo,
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    (base / "run.log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    assert proc.returncode == 0, f"workflow rc={proc.returncode}; see {base}/run.log"
+    log = (base / "run.log").read_text(encoding="utf-8")
+
+    assert "All stages complete" in log
+    assert "Imported spec from" in log
+    assert "Imported plan from" in log
+    assert spec.read_text(encoding="utf-8") == IMPORT_SPEC_TEXT
+
+    spec_copy = next((repo / "specs").glob("*/spec.md")).read_text(
+        encoding="utf-8"
+    )
+    assert "assumptions and open questions" in spec_copy.lower()
+    plan_text = next((repo / "specs").glob("*/plan.md")).read_text(
+        encoding="utf-8"
+    )
+    assert "- [x]" in plan_text and "- [ ] " not in plan_text
+
+    strutil = "".join(
+        path.read_text(encoding="utf-8")
+        for path in (repo / "strutil").glob("*.go")
+    )
+    assert "func IsPalindrome" in strutil
+
+    run_dir = Path(
+        (repo / ".workflow" / "latest-run.txt")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    assert list(run_dir.glob("*imported-spec.md"))
+    assert list(run_dir.glob("*imported-plan.md"))
+    verify_gates(repo)
+    print(f"Import E2E passed; workspace kept at {base} (delete after inspection)")
