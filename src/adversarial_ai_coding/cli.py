@@ -24,6 +24,7 @@ from .gitops import (
     resume_workspace,
     setup_workspace,
 )
+from .imports import import_preflight
 from .prompts import (
     PromptTemplateError,
     bootstrap_agents_md,
@@ -154,6 +155,7 @@ def main(
             return 1
         dual_spec_preflight(settings, stdin_isatty)
         plan_gate_preflight(settings, stdin_isatty)
+        import_preflight(settings, env, fresh_run=not resume_run)
 
         print(
             f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
@@ -162,6 +164,16 @@ def main(
             f"PHASES={'1' if settings.phases else '0'}"
         )
         print(f"Task:{task}")
+        if settings.import_spec:
+            print(
+                f"Importing spec:{settings.import_spec}"
+                + (
+                    f"  plan:{settings.import_plan}"
+                    if settings.import_plan
+                    else ""
+                )
+                + f"  IMPORT_REVIEW={'1' if settings.import_review else '0'}"
+            )
 
         if resume_run:
             resume_workspace(

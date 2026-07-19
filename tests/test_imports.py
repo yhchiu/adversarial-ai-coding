@@ -2,7 +2,7 @@
 
 import pytest
 
-from adversarial_ai_coding.config import Settings, SettingsError
+from adversarial_ai_coding.config import Settings, SettingsError, WorkflowAbort
 from adversarial_ai_coding.imports import (
     import_preflight,
     validate_import_plan,
@@ -86,3 +86,61 @@ def test_preflight_accepts_good_import(tmp_path):
     plan = _write(tmp_path / "p.md", GOOD_PLAN)
     env = {"IMPORT_SPEC": str(spec), "IMPORT_PLAN": str(plan)}
     import_preflight(Settings.from_env(env, run_id="r"), env, fresh_run=True)
+
+
+def test_stage_import_copies_archives_and_aborts_on_missing(make_ctx, tmp_path):
+    from adversarial_ai_coding.imports import stage_import
+
+    ctx = make_ctx({"IMPORT_SPEC": "unused", "RETRY_ON_LIMIT": "0"})
+    src = tmp_path / "ext-spec.md"
+    src.write_text(GOOD_SPEC, encoding="utf-8")
+    dst = ctx.spec_dir / "spec.md"
+    stage_import(ctx, "spec", str(src), dst)
+    assert dst.read_text(encoding="utf-8") == GOOD_SPEC
+    assert src.read_text(encoding="utf-8") == GOOD_SPEC
+    assert list(ctx.archive.run_dir.glob("*imported-spec.md"))
+    with pytest.raises(WorkflowAbort, match="archived copy"):
+        stage_import(ctx, "spec", str(tmp_path / "gone.md"), dst)
+
+
+def test_stage_import_translates_destination_filesystem_error(make_ctx, tmp_path):
+    from adversarial_ai_coding.imports import stage_import
+
+    ctx = make_ctx({"IMPORT_SPEC": "unused", "RETRY_ON_LIMIT": "0"})
+    src = _write(tmp_path / "ext-spec.md", GOOD_SPEC)
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_text("file blocks destination", encoding="utf-8")
+    dst = blocked_parent / "spec.md"
+
+    with pytest.raises(WorkflowAbort) as caught:
+        stage_import(ctx, "spec", str(src), dst)
+
+    message = str(caught.value)
+    assert message.startswith("!! ")
+    assert "spec" in message
+    assert str(src) in message
+    assert str(dst) in message
+
+
+def test_stage_import_translates_archive_filesystem_error(
+    make_ctx, tmp_path, monkeypatch
+):
+    from adversarial_ai_coding.imports import stage_import
+
+    ctx = make_ctx({"IMPORT_SPEC": "unused", "RETRY_ON_LIMIT": "0"})
+    src = _write(tmp_path / "ext-spec.md", GOOD_SPEC)
+    dst = ctx.spec_dir / "spec.md"
+
+    def fail_archive(*_args, **_kwargs):
+        raise OSError("archive unavailable")
+
+    monkeypatch.setattr(ctx.archive, "archive_snapshot", fail_archive)
+    with pytest.raises(WorkflowAbort) as caught:
+        stage_import(ctx, "spec", str(src), dst)
+
+    message = str(caught.value)
+    assert message.startswith("!! ")
+    assert "spec" in message
+    assert str(src) in message
+    assert str(dst) in message
+    assert "imported-spec.md" in message

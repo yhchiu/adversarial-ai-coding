@@ -9,10 +9,11 @@ file has since been deleted.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Mapping
 
-from .config import Settings, SettingsError
+from .config import Settings, SettingsError, WorkflowAbort
 from .phases import TASK_PREFIX, PhasePlanError, parse_phases
 
 CONTRACT_HINT = "See docs/import-format.md for the import format contract."
@@ -95,3 +96,38 @@ def import_preflight(
     validate_import_spec(Path(settings.import_spec))
     if settings.import_plan:
         validate_import_plan(Path(settings.import_plan), settings.phases)
+
+
+def stage_import(ctx, kind: str, src_str: str, dst: Path) -> None:
+    """Copy an imported artifact into the spec dir and archive the original.
+
+    Runs inside the write stage: a resumed run that redoes the stage
+    re-validates and re-copies. The source file is never modified.
+    """
+
+    src = Path(src_str)
+    archive_name = f"imported-{kind}.md"
+    try:
+        if kind == "spec":
+            validate_import_spec(src)
+        else:
+            validate_import_plan(src, ctx.settings.phases)
+    except SettingsError as exc:
+        raise WorkflowAbort(
+            f"!! Cannot import the {kind}: {exc}\n"
+            "   If an earlier attempt of this run imported it, the "
+            f"archived copy is {ctx.archive.art_path(archive_name)}."
+        ) from None
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        ctx.archive.archive_snapshot(
+            src, archive_name, "workflow", None, ctx.cur_stage, ctx.cur_round
+        )
+    except OSError as exc:
+        raise WorkflowAbort(
+            f"!! Cannot stage imported {kind} from {src} at {dst} "
+            f"(archive {archive_name} under {ctx.archive.run_dir}): {exc}"
+        ) from exc
+    review = "on" if ctx.settings.import_review else "off"
+    ctx.log(f"Imported {kind} from {src} (review: {review})")

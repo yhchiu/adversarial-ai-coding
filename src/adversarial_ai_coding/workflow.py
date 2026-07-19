@@ -735,26 +735,32 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
     else:
         set_spec_roles_from_slot(ctx, "A")
         if begin_stage(ctx, "write-spec", spec_file):
-            work(
-                ctx,
-                ctx.spec_roles.owner_agent,
-                render_prompt(
+            if ctx.settings.import_spec:
+                from .imports import stage_import
+
+                stage_import(ctx, "spec", ctx.settings.import_spec, spec_file)
+            else:
+                work(
+                    ctx,
+                    ctx.spec_roles.owner_agent,
+                    render_prompt(
+                        ctx.prompts_dir,
+                        "write-spec",
+                        {"SPEC_FILE": str(spec_file), "TASK": task},
+                    ),
+                )
+            if not ctx.settings.import_spec or ctx.settings.import_review:
+                scope = render_prompt(
                     ctx.prompts_dir,
-                    "write-spec",
-                    {"SPEC_FILE": str(spec_file), "TASK": task},
-                ),
-            )
-            scope = render_prompt(
-                ctx.prompts_dir,
-                "review-scope-spec",
-                {"SPEC_FILE": str(spec_file)},
-            )
-            review_loop_ref(
-                ctx,
-                ctx.spec_roles.reviewer_agent,
-                ctx.spec_roles.owner_agent,
-                scope,
-            )
+                    "review-scope-spec",
+                    {"SPEC_FILE": str(spec_file)},
+                )
+                review_loop_ref(
+                    ctx,
+                    ctx.spec_roles.reviewer_agent,
+                    ctx.spec_roles.owner_agent,
+                    scope,
+                )
             human_gate_spec(ctx)
             end_stage(ctx)
 
@@ -781,26 +787,32 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             if ctx.settings.phases
             else "review-scope-plan"
         )
-        work(
-            ctx,
-            ctx.spec_roles.owner_agent,
-            render_prompt(
+        if ctx.settings.import_plan:
+            from .imports import stage_import
+
+            stage_import(ctx, "plan", ctx.settings.import_plan, plan_file)
+        else:
+            work(
+                ctx,
+                ctx.spec_roles.owner_agent,
+                render_prompt(
+                    ctx.prompts_dir,
+                    plan_template,
+                    {"SPEC_FILE": str(spec_file), "PLAN_FILE": str(plan_file)},
+                ),
+            )
+        if not ctx.settings.import_plan or ctx.settings.import_review:
+            scope = render_prompt(
                 ctx.prompts_dir,
-                plan_template,
-                {"SPEC_FILE": str(spec_file), "PLAN_FILE": str(plan_file)},
-            ),
-        )
-        scope = render_prompt(
-            ctx.prompts_dir,
-            plan_scope_template,
-            {"PLAN_FILE": str(plan_file), "SPEC_FILE": str(spec_file)},
-        )
-        review_loop_ref(
-            ctx,
-            ctx.spec_roles.reviewer_agent,
-            ctx.spec_roles.owner_agent,
-            scope,
-        )
+                plan_scope_template,
+                {"PLAN_FILE": str(plan_file), "SPEC_FILE": str(spec_file)},
+            )
+            review_loop_ref(
+                ctx,
+                ctx.spec_roles.reviewer_agent,
+                ctx.spec_roles.owner_agent,
+                scope,
+            )
         human_gate_plan(ctx)
         if ctx.settings.phases:
             from .phaseflow import phased_plan_structure_check
