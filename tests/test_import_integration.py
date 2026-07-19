@@ -2,10 +2,12 @@
 
 Reuses the resume-suite harness. Fake-agent call counts prove which AI
 steps ran: a full basic run has exactly 4 reviewer 'review' calls (spec,
-plan, branch, final acceptance); import with IMPORT_REVIEW=0 drops the
-spec and plan reviews, leaving 2.
+plan, branch, final acceptance). IMPORT_REVIEW=0 skips review only for
+artifacts that were actually imported.
 """
 
+import json
+import os
 from pathlib import Path
 
 from test_resume_integration import (
@@ -53,6 +55,36 @@ def test_import_spec_skips_write_and_keeps_review(new_repo, tmp_path, monkeypatc
     assert list(run_dir.glob("*imported-spec.md"))
 
 
+def test_relative_import_paths_survive_worktree_setup(
+    new_repo, tmp_path, monkeypatch
+):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    external = new_repo / "external"
+    external.mkdir()
+    spec_source = external / "spec.md"
+    spec_source.write_text(SPEC_TEXT, encoding="utf-8")
+    plan_source = external / "plan.md"
+    plan_source.write_text(PLAN_TEXT, encoding="utf-8")
+    env = wf_env(
+        work,
+        IMPORT_SPEC=os.path.relpath(spec_source, new_repo),
+        IMPORT_PLAN=os.path.relpath(plan_source, new_repo),
+        USE_WORKTREE="1",
+    )
+
+    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
+
+    workspace = Path.cwd()
+    assert workspace != new_repo
+    spec = next((workspace / "specs").glob("*/spec.md"))
+    assert spec.read_text(encoding="utf-8") == SPEC_TEXT
+    state = state_dir_of(workspace)
+    snapshot = json.loads((state / "settings.json").read_text(encoding="utf-8"))
+    assert snapshot["import_spec"] == str(spec_source.resolve())
+    assert snapshot["import_plan"] == str(plan_source.resolve())
+
+
 def test_import_spec_and_plan_review_off(new_repo, tmp_path, monkeypatch):
     work = driver_workdir(tmp_path)
     work.mkdir()
@@ -70,6 +102,20 @@ def test_import_spec_and_plan_review_off(new_repo, tmp_path, monkeypatch):
         .strip()
     )
     assert list(run_dir.glob("*imported-plan.md"))
+
+
+def test_import_spec_review_off_still_writes_and_reviews_generated_plan(
+    new_repo, tmp_path, monkeypatch
+):
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = wf_env(work, **import_files(work), IMPORT_REVIEW="0")
+
+    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
+
+    assert calls(work, "fake-worker write-spec") == 0
+    assert calls(work, "fake-worker write-plan") == 1
+    assert calls(work, "fake-reviewer review") == 3
 
 
 def test_import_preflight_fails_before_any_agent_call(

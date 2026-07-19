@@ -43,6 +43,12 @@ def _to_int(name: str, raw: str) -> int:
         raise SettingsError(f"{name} must be an integer, got: {raw}") from None
 
 
+def _to_binary_flag(name: str, raw: str) -> bool:
+    if raw not in {"0", "1"}:
+        raise SettingsError(f"{name} must be 0 or 1, got: {raw}")
+    return raw == "1"
+
+
 @dataclass(frozen=True)
 class Settings:
     agent_a: str
@@ -91,6 +97,12 @@ class Settings:
         def persisted(key: str, default: str) -> str:
             return env.get(key) or snap.get(key) or default
 
+        import_review_raw = (
+            env["IMPORT_REVIEW"]
+            if "IMPORT_REVIEW" in env
+            else snap.get("IMPORT_REVIEW", "1")
+        )
+
         return cls(
             agent_a=persisted("AGENT_A", "claude"),
             agent_b=persisted("AGENT_B", "codex"),
@@ -112,7 +124,7 @@ class Settings:
             dual_spec=persisted("DUAL_SPEC", "0") == "1",
             import_spec=persisted("IMPORT_SPEC", ""),
             import_plan=persisted("IMPORT_PLAN", ""),
-            import_review=persisted("IMPORT_REVIEW", "1") == "1",
+            import_review=_to_binary_flag("IMPORT_REVIEW", import_review_raw),
             phases=persisted("PHASES", "0") == "1",
             phase_review=persisted("PHASE_REVIEW", "0") == "1",
             open_pr=persisted("OPEN_PR", "0") == "1",

@@ -68,6 +68,13 @@ def test_preflight_combination_rules(tmp_path):
     with pytest.raises(SettingsError, match="IMPORT_REVIEW"):
         import_preflight(Settings.from_env(env, run_id="r"), env, fresh_run=True)
 
+    with pytest.raises(SettingsError, match="IMPORT_REVIEW"):
+        import_preflight(
+            Settings.from_env({}, run_id="r"),
+            {"IMPORT_REVIEW": ""},
+            fresh_run=True,
+        )
+
     env = {"IMPORT_SPEC": str(spec), "DUAL_SPEC": "1"}
     with pytest.raises(SettingsError, match="DUAL_SPEC"):
         import_preflight(Settings.from_env(env, run_id="r"), env, fresh_run=True)
@@ -101,6 +108,34 @@ def test_stage_import_copies_archives_and_aborts_on_missing(make_ctx, tmp_path):
     assert list(ctx.archive.run_dir.glob("*imported-spec.md"))
     with pytest.raises(WorkflowAbort, match="archived copy"):
         stage_import(ctx, "spec", str(tmp_path / "gone.md"), dst)
+
+
+def test_stage_import_reports_real_archive_from_previous_attempt(
+    make_ctx, tmp_path
+):
+    from adversarial_ai_coding.archive import establish_run_archive
+    from adversarial_ai_coding.imports import stage_import
+    from adversarial_ai_coding.runstate import RunState
+
+    ctx = make_ctx({"IMPORT_SPEC": "unused", "RETRY_ON_LIMIT": "0"})
+    ctx.state = RunState.create(ctx.wf / "state", "test", "task")
+    src = _write(tmp_path / "ext-spec.md", GOOD_SPEC)
+    dst = ctx.spec_dir / "spec.md"
+    stage_import(ctx, "spec", str(src), dst)
+    prior_archive = next(ctx.archive.run_dir.glob("*imported-spec.md"))
+
+    ctx.archive = establish_run_archive(
+        ctx.archive.run_dir.parent, "test", ctx.settings
+    )
+    src.unlink()
+    with pytest.raises(WorkflowAbort) as caught:
+        stage_import(ctx, "spec", str(src), dst)
+
+    message = str(caught.value)
+    assert str(prior_archive) in message
+    assert prior_archive.is_file()
+    assert prior_archive.read_text(encoding="utf-8") == GOOD_SPEC
+    assert not list(ctx.archive.run_dir.glob("*imported-spec.md"))
 
 
 def test_stage_import_translates_destination_filesystem_error(make_ctx, tmp_path):

@@ -343,6 +343,19 @@ class RunState:
             return None
         return path.read_text(encoding="utf-8").strip()
 
+    def record_import_archive(self, kind: str, archive_path: Path) -> None:
+        _atomic_write(
+            self.state_dir / f"imported-{kind}-archive-path",
+            str(archive_path.resolve()) + "\n",
+        )
+
+    def import_archive_path(self, kind: str) -> Path | None:
+        record = self.state_dir / f"imported-{kind}-archive-path"
+        if not record.is_file():
+            return None
+        archive_path = Path(record.read_text(encoding="utf-8").strip())
+        return archive_path if archive_path.is_file() else None
+
 
 def restore_or_record_base(
     state: RunState | None, name: str, head_sha: Callable[[], str]

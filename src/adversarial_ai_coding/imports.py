@@ -76,7 +76,7 @@ def import_preflight(
 ) -> None:
     """Reject bad import config before workspace setup and any AI call."""
 
-    if env.get("IMPORT_REVIEW") and not settings.import_spec:
+    if "IMPORT_REVIEW" in env and not settings.import_spec:
         raise SettingsError(
             "IMPORT_REVIEW is set but IMPORT_SPEC is not. Unset "
             "IMPORT_REVIEW, or provide IMPORT_SPEC."
@@ -113,17 +113,29 @@ def stage_import(ctx, kind: str, src_str: str, dst: Path) -> None:
         else:
             validate_import_plan(src, ctx.settings.phases)
     except SettingsError as exc:
+        archived = (
+            ctx.state.import_archive_path(kind)
+            if ctx.state is not None
+            else None
+        )
+        archive_hint = (
+            f"the archived copy is {archived}."
+            if archived is not None
+            else "no archived copy is available."
+        )
         raise WorkflowAbort(
             f"!! Cannot import the {kind}: {exc}\n"
             "   If an earlier attempt of this run imported it, the "
-            f"archived copy is {ctx.archive.art_path(archive_name)}."
+            f"{archive_hint}"
         ) from None
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
-        ctx.archive.archive_snapshot(
+        archived = ctx.archive.archive_snapshot(
             src, archive_name, "workflow", None, ctx.cur_stage, ctx.cur_round
         )
+        if archived is not None and ctx.state is not None:
+            ctx.state.record_import_archive(kind, archived)
     except OSError as exc:
         raise WorkflowAbort(
             f"!! Cannot stage imported {kind} from {src} at {dst} "

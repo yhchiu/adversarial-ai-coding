@@ -194,3 +194,9 @@ def test_import_settings_from_env_and_snapshot():
     assert settings.import_spec == "ext/spec.md"
     assert settings.import_plan == "ext/plan.md"
     assert settings.import_review is False
+
+
+@pytest.mark.parametrize("raw", ["", "2", "yes"])
+def test_import_review_accepts_only_zero_or_one(raw):
+    with pytest.raises(SettingsError, match="IMPORT_REVIEW must be 0 or 1"):
+        make({"IMPORT_SPEC": "ext/spec.md", "IMPORT_REVIEW": raw})

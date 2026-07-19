@@ -149,6 +149,38 @@ def test_dual_spec_human_gate_blocked_before_branch(
     assert current_branch(new_repo) == "main"
 
 
+def test_import_conflict_precedes_dual_spec_mode_preflight(
+    new_repo, tmp_path, monkeypatch, capsys
+):
+    from adversarial_ai_coding.gitops import current_branch
+
+    spec = tmp_path / "external-spec.md"
+    spec.write_text(
+        "# Spec\n\n## Assumptions and Open Questions\n\n- none\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+
+    rc = cli.main(
+        ["task"],
+        {
+            "AGENT_A": "sh",
+            "AGENT_B": "pwd",
+            "IMPORT_SPEC": str(spec),
+            "DUAL_SPEC": "1",
+            "HUMAN_GATE": "0",
+        },
+        stdin_isatty=False,
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "IMPORT_SPEC and DUAL_SPEC=1 are incompatible" in err
+    assert "requires HUMAN_GATE=1" not in err
+    assert current_branch(new_repo) == "main"
+
+
 def test_plan_gate_without_tty_blocked_before_branch(
     new_repo, monkeypatch, capsys
 ):

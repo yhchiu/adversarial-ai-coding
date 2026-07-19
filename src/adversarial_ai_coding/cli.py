@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -46,6 +47,12 @@ from .workflow import WorkflowContext, plan_gate_preflight, run_workflow
 USAGE = """Usage:adversarial-ai-coding "task description"
       adversarial-ai-coding task.md         # If the argument is a file, use its contents as the task
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit"""
+
+
+def _absolute_import_path(raw: str, startup_dir: Path) -> str:
+    if not raw:
+        return ""
+    return str((startup_dir / raw).resolve())
 
 
 def _configure_stdio() -> None:
@@ -87,6 +94,10 @@ def main(
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     env = dict(os.environ) if env is None else dict(env)
+    startup_dir = Path.cwd()
+    for key in ("IMPORT_SPEC", "IMPORT_PLAN"):
+        if key in env:
+            env[key] = _absolute_import_path(env[key], startup_dir)
     if stdin_isatty is None:
         stdin_isatty = sys.stdin.isatty()
 
@@ -142,6 +153,11 @@ def main(
             run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
 
         settings = Settings.from_env(env, run_id, snapshot)
+        settings = replace(
+            settings,
+            import_spec=_absolute_import_path(settings.import_spec, startup_dir),
+            import_plan=_absolute_import_path(settings.import_plan, startup_dir),
+        )
         use_worktree = settings.use_worktree
 
         # Pass the lookup explicitly so startup checks share the CLI's
@@ -153,9 +169,9 @@ def main(
                 file=sys.stderr,
             )
             return 1
+        import_preflight(settings, env, fresh_run=not resume_run)
         dual_spec_preflight(settings, stdin_isatty)
         plan_gate_preflight(settings, stdin_isatty)
-        import_preflight(settings, env, fresh_run=not resume_run)
 
         print(
             f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
