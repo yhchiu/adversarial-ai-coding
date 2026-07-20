@@ -62,13 +62,24 @@ def classify(line: str) -> str | None:
     text = line.strip()
     if text.startswith("!! "):
         return "error"
-    if text.startswith(("====", "== skip", "--- Task")):
+    if text.startswith(
+        (
+            "====",
+            "== skip",
+            "== [",
+            "--- Task",
+            "--- Phase",
+            "--- All tasks complete",
+        )
+    ):
         return "stage"
     if text.startswith("### "):
         return "checkpoint"
     if text.startswith(">>> "):
         return "progress"
     if text.startswith("(") and text.endswith(")"):
+        return "warning"
+    if text.startswith("warning: "):
         return "warning"
     if text.endswith(_SUCCESS_SUFFIXES):
         return "success"

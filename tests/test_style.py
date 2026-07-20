@@ -36,9 +36,29 @@ def make(env=None, *, out_tty=True, err_tty=True, vt_ok=True):
         ("================ [spec] ================", "stage"),
         ("== skip [spec] (already completed in run test)", "stage"),
         ("--- Task 1/3:demo task ---", "stage"),
+        (
+            "== [phase-01-write-tests] protected controls already recorded; "
+            "finishing the interrupted stage",
+            "stage",
+        ),
+        ("--- Phase 1 task 2/3:implement parser ---", "stage"),
+        (
+            "--- Phase 1 tasks complete; running the phase gate. All tests "
+            "written so far must pass. ---",
+            "stage",
+        ),
+        (
+            "--- All tasks complete; running full quality gate. Acceptance "
+            "tests must pass. ---",
+            "stage",
+        ),
         ("### Human checkpoint: review spec.md, especially scope", "checkpoint"),
         (">>> Worker(claude) is running...", "progress"),
         ("(warning: reviewer execution failed)", "warning"),
+        (
+            "warning: IMPL_MODEL is ignored for custom implementation agent custom",
+            "warning",
+        ),
         (
             "(worker left uncommitted changes; script is creating a "
             "fallback commit)",
