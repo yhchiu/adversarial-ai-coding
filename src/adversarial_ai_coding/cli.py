@@ -12,7 +12,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .agents import AgentSession, validate_agents
 from .archive import establish_run_archive
@@ -42,6 +42,7 @@ from .runstate import (
     snapshot_values,
     write_snapshot,
 )
+from .style import Styler
 from .workflow import WorkflowContext, plan_gate_preflight, run_workflow
 
 USAGE = """Usage:adversarial-ai-coding "task description"
@@ -69,20 +70,19 @@ def _print_resume_hint(
     use_worktree: bool,
     workspace: Path,
     printed: set,
+    echo_err: Callable[[str], None],
 ) -> None:
     if printed:
         return
     printed.add(True)
     if use_worktree:
-        print(
+        echo_err(
             f"To resume this run:\n  cd {workspace} && "
-            f"RESUME_RUN={run_id} adversarial-ai-coding",
-            file=sys.stderr,
+            f"RESUME_RUN={run_id} adversarial-ai-coding"
         )
     else:
-        print(
-            f"To resume this run:\n  RESUME_RUN={run_id} adversarial-ai-coding",
-            file=sys.stderr,
+        echo_err(
+            f"To resume this run:\n  RESUME_RUN={run_id} adversarial-ai-coding"
         )
 
 
@@ -119,13 +119,15 @@ def main(
     run_id = ""
     use_worktree = False
     workspace = Path.cwd()
+    styler = Styler.plain()
     try:
+        styler = Styler.from_env(env)
         task_source_kind, task_source_path = "literal", ""
         task = task_arg
         if task_arg and Path(task_arg).is_file():
             task_source_kind = "file"
             task_source_path = str(Path(task_arg).resolve())
-            print(f"Reading task description from file:{task_arg}")
+            styler.out(f"Reading task description from file:{task_arg}")
             task = Path(task_arg).read_text(encoding="utf-8")
 
         snapshot: dict[str, str] = {}
@@ -146,8 +148,8 @@ def main(
             task_arg = snapshot.get("TASK_ARG", "")
             task_source_kind = snapshot.get("TASK_SOURCE_KIND", "literal")
             task_source_path = snapshot.get("TASK_SOURCE_PATH", "")
-            print(
-                f"Resuming run {run_id} (state: {state.state_dir})", file=sys.stderr
+            styler.err(
+                f"Resuming run {run_id} (state: {state.state_dir})"
             )
         else:
             run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -164,16 +166,15 @@ def main(
         # injectable command resolver instead of a definition-time default.
         validate_agents(settings, which=shutil.which)
         if not is_inside_work_tree(Path.cwd()):
-            print(
-                "Run this script from the root of the target git repository.",
-                file=sys.stderr,
+            styler.err(
+                "Run this script from the root of the target git repository."
             )
             return 1
         import_preflight(settings, env, fresh_run=not resume_run)
         dual_spec_preflight(settings, stdin_isatty)
         plan_gate_preflight(settings, stdin_isatty)
 
-        print(
+        styler.out(
             f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
             f"DUAL_SPEC={'1' if settings.dual_spec else '0'}  "
             f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}  "
@@ -181,7 +182,7 @@ def main(
         )
         print(f"Task:{task}")
         if settings.import_spec:
-            print(
+            styler.out(
                 f"Importing spec:{settings.import_spec}"
                 + (
                     f"  plan:{settings.import_plan}"
@@ -196,13 +197,13 @@ def main(
                 snapshot.get("BRANCH", ""),
                 state,
                 Path.cwd(),
-                lambda message: print(message, file=sys.stderr),
+                styler.err,
             )
         else:
             workspace = setup_workspace(settings, run_id, Path.cwd())
             if workspace != Path.cwd():
                 os.chdir(workspace)
-                print(
+                styler.out(
                     f"Created worktree:{workspace} (branch auto/{run_id}; "
                     "remove later with git worktree remove)"
                 )
@@ -227,8 +228,8 @@ def main(
         bootstrap_agents_md(
             workspace,
             default_agents_template(env),
-            print,
-            lambda message: print(message, file=sys.stderr),
+            styler.out,
+            styler.err,
         )
 
         gate_cmd = (
@@ -245,12 +246,11 @@ def main(
             env.get("PHASE_GATE_CMD") or snapshot.get("PHASE_GATE_CMD") or ""
         )
         if gate_cmd:
-            print(f"Quality gate:{gate_cmd}")
+            styler.out(f"Quality gate:{gate_cmd}")
         else:
-            print(
+            styler.err(
                 "(warning: no quality gate command detected; deterministic "
-                "gates are disabled. Set GATE_CMD to enable one.)",
-                file=sys.stderr,
+                "gates are disabled. Set GATE_CMD to enable one.)"
             )
 
         ctx = WorkflowContext(
@@ -266,6 +266,8 @@ def main(
             build_gate_cmd=build_gate_cmd,
             phase_gate_cmd=phase_gate_cmd,
             run_id=run_id,
+            echo=styler.out,
+            echo_err=styler.err,
         )
         ctx.spec_dir.mkdir(parents=True, exist_ok=True)
 
@@ -288,18 +290,23 @@ def main(
 
     except KeyboardInterrupt:
         _abort_message(
-            130, state, run_id, use_worktree, workspace, hint_printed
+            130, state, run_id, use_worktree, workspace, hint_printed,
+            styler.err,
         )
         return 130
     except WorkflowAbort as exc:
-        print(exc, file=sys.stderr)
+        styler.err(str(exc))
         _abort_message(
-            exc.rc, state, run_id, use_worktree, workspace, hint_printed
+            exc.rc, state, run_id, use_worktree, workspace, hint_printed,
+            styler.err,
         )
         return exc.rc
     except (SettingsError, RunStateError, PromptTemplateError) as exc:
-        print(exc, file=sys.stderr)
-        _abort_message(1, state, run_id, use_worktree, workspace, hint_printed)
+        styler.err(str(exc))
+        _abort_message(
+            1, state, run_id, use_worktree, workspace, hint_printed,
+            styler.err,
+        )
         return 1
     finally:
         if state is not None:
@@ -313,11 +320,12 @@ def _abort_message(
     use_worktree,
     workspace,
     hint_printed,
+    echo_err,
 ) -> None:
     if rc != 0 and state is not None and not state.is_completed():
-        print(f"!! Workflow interrupted (exit={rc}).", file=sys.stderr)
+        echo_err(f"!! Workflow interrupted (exit={rc}).")
         _print_resume_hint(
-            run_id, use_worktree, workspace, hint_printed
+            run_id, use_worktree, workspace, hint_printed, echo_err
         )
 
 
