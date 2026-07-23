@@ -1,6 +1,8 @@
 # adversarial-ai-coding
 
-`adversarial-ai-coding` is a Python workflow for agentic software development.
+English | [繁體中文](README.zh-TW.md)
+
+`adversarial-ai-coding` is a workflow orchestrator for agentic software development.
 
 ## Multi-Agent Adversarial Coding Workflow
 
@@ -11,29 +13,49 @@ The workflow is designed around spec-driven development (SDD), adversarial
 test-driven development with protected acceptance tests, deterministic quality
 gates, small commits, and human review before costly implementation starts.
 
-The Traditional Chinese (中文) README is available at [`README.zh-TW.md`].
-
 ## How It Works
 
-Every run drives two agent slots: `A` is the worker and `B` is the adversarial
-reviewer. Use different AI brands for the two slots — their blind spots differ.
-Each slot can be `claude` (Claude Code), `codex` (Codex CLI), `agy`
-(Antigravity CLI), or a custom wrapper command, and the implementation step can
-optionally use a third slot `I` (see
+Every run drives two agent slots: 
+
+  - `A` is the worker
+  - `B` is the adversarial reviewer
+
+Use different AI brands for the two slots — their blind spots differ. Each slot can be `claude` (Claude Code), `codex` (Codex CLI), `agy`
+(Antigravity CLI), or a custom wrapper command. 
+
+The implementation step can optionally use a third slot `I` (see
 [Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
 
 The default pipeline:
 
-```mermaid
-flowchart TD
-    spec["<b>Spec</b> — A writes · B reviews · human approves"]
-    plan["<b>Plan</b> — A writes a checkbox task list · B reviews"]
-    tests["<b>Acceptance tests</b> — B writes · A reviews · files become protected"]
-    impl["<b>Implement</b> — one task per commit · compile gate per task"]
-    gate["<b>Full gate + branch review</b> — workflow runs GATE_CMD · B reviews the whole diff"]
-    final["<b>Final</b> — A self-review · B final acceptance"]
-    fin(["<b>Finish</b> — print push / PR commands"])
-    spec --> plan --> tests --> impl --> gate --> final --> fin
+```text
+Spec (A writes, B reviews)
+human gate
+commit
+  ↓
+Plan into a checkbox task list (- [ ], A writes, B reviews)
+(HUMAN_GATE_PLAN=1) human gate
+commit
+  ↓
+B writes all acceptance tests at once (TDD red; the workflow does not verify red)
+A reviews
+commit acceptance tests
+record + arm the protected-test guard (whole list at once; re-checked after every later worker call)
+  ↓
+For each task (- [ ] in plan.md):
+    A implements (IMPL_AGENT swaps the implementer; default A)
+    build gate
+    commit
+  ↓
+Full gate (acceptance tests must all be green)
+  ↓
+B reviews the whole branch diff → commit if dirty
+  ↓
+A self-review → full gate
+  ↓
+B final acceptance → commit if dirty
+  ↓
+finish: write pr-body.md, (OPEN_PR=1) push + gh pr create
 ```
 
 Four rules make the pipeline adversarial instead of cooperative:
@@ -182,14 +204,24 @@ Set `DUAL_SPEC=1` to make both slots write independent candidate specs before
 implementation planning starts. The workflow becomes:
 
 ```text
-A writes spec-a.md independently
-B writes spec-b.md independently
-B reviews A once, A reviews B once
-A writes spec-comparison-a.md, B writes spec-comparison-b.md
-Human chooses a, b, ma, or mb
-Selected owner produces final spec.md
-Other slot reviews final spec.md to approval
-Human approves final spec.md
+DUAL_SPEC=1: replaces the Spec stage of the default/phased flow; the rest is unchanged
+(preflight: requires HUMAN_GATE=1 and an interactive terminal)
+
+A writes candidate spec-a.md, B writes candidate spec-b.md (independently; reading the other is forbidden)
+  ↓
+Cross review: B reviews spec-a, A reviews spec-b (report + verdict inform the human only; never block, no repair loop)
+  ↓
+A and B each write a comparison table (spec-comparison-a/b.md); workflow writes the spec-comparison.md index
+  ↓
+Human chooses a / b / ma / mb:
+    a, b:   adopt that candidate as the base
+    ma, mb: that candidate is the base; the human edits spec-merge-request.md listing items to adopt from the other (workflow verifies it has real content)
+    the chosen slot becomes owner and takes over the "A" role; the other becomes reviewer "B"
+  ↓
+base is copied to spec.md; (merge) the owner merges per the merge request
+reviewer reviews spec.md (merge: adopted items must arrive intact and undistorted) + human gate → commit
+  ↓
+continues at the Plan stage of the default or phased flow (A = owner, B = reviewer)
 ```
 
 Decision commands:
@@ -230,6 +262,40 @@ boundary and at least one `- [ ]` task. Phases must be vertical functional
 slices (a working behavior increment), never horizontal technical layers.
 The workflow parses the plan deterministically after the plan review and
 sends structure problems back to the owner before anything is implemented.
+
+```text
+Spec (A writes, B reviews)
+human gate
+commit
+  ↓
+Plan into vertical phases (A writes, B reviews) 
+(HUMAN_GATE_PLAN=1) human gate
+workflow validates plan structure
+commit
+  ↓
+For each phase:
+    B writes this phase's acceptance/component/contract tests
+    A reviews
+    workflow verifies the tests are correctly red (regression-guard phase must be green instead)
+    commit phase tests
+    record + arm the protected-test guard (append; re-checked after every later worker call)
+    For each task:
+        A implements (IMPL_AGENT swaps the implementer; default A)
+        build gate
+        commit
+    phase gate: earlier phases + current phase all green
+    (PHASE_REVIEW=1) B reviews the phase diff → commit if dirty
+  ↓
+Full gate
+  ↓
+B reviews the whole branch diff → commit if dirty
+  ↓
+A self-review → full gate
+  ↓
+B final acceptance → commit if dirty
+  ↓
+finish: write pr-body.md, (OPEN_PR=1) push + gh pr create
+```
 
 For each phase, in order:
 

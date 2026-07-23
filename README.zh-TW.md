@@ -1,34 +1,56 @@
-# adversarial-ai-coding — 雙 AI 對抗式程式開發工作流
+# adversarial-ai-coding
 
-用 Python CLI 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
+[English](README.md) | 繁體中文
 
-```bash
-for work in "訂規格" "規劃實作計畫" "撰寫程式碼" "整體review" "修bug"; do
-  用 A 做 $work
-  上個步驟的成果交給 B review
-  讓 A 確認 review 結果後修改
-  要求 B 做最後確認
-done
-```
+`adversarial-ai-coding` 是一個 AI Agent 開發軟體的流程編排器。
+
+# 多重 AI 對抗式程式開發工作流
+
+自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
 
 其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI**、**Antigravity CLI** 或自訂 wrapper,透過各家的 headless(非互動)模式驅動。Stage 5 還可使用獨立的實作 slot I。
 
 ## 流程
 
-每次執行由兩個 agent slot 驅動:`A` 是工作者、`B` 是對抗式審查者,建議兩個 slot 用不同廠牌的模型(盲點不同)。每個 slot 可以是 `claude`、`codex`、`agy` 或自訂 wrapper;實作步驟可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
+每次執行由兩個 agent slot 驅動:
+
+  - `A` 是工作者
+  - `B` 是對抗式審查者
+
+建議兩個 slot 用不同廠牌的模型(盲點不同)。每個 slot 可以是 `claude`、`codex`、`agy` 或自訂 wrapper。
+
+實作步驟可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
 
 預設流程:
 
-```mermaid
-flowchart TD
-    spec["<b>訂規格</b> — A 寫 · B 審 · 人工核准"]
-    plan["<b>實作計畫</b> — A 寫 checkbox 任務清單 · B 審"]
-    tests["<b>驗收測試</b> — B 寫 · A 審 · 測試檔進入保護"]
-    impl["<b>逐任務實作</b> — 一任務一 commit · 逐任務編譯關卡"]
-    gate["<b>完整關卡 + 整體審查</b> — workflow 跑 GATE_CMD · B 審整條 diff"]
-    final["<b>最終 review</b> — A 自我 review · B 最終驗收"]
-    fin(["<b>收尾</b> — 印出 push / PR 指令"])
-    spec --> plan --> tests --> impl --> gate --> final --> fin
+```text
+Spec(A 寫、B review)
+Human Gate
+commit
+  ↓
+Plan 拆成 task 清單(- [ ], A 寫、B review)
+(HUMAN_GATE_PLAN=1)Human Gate)
+commit
+  ↓
+B 一次寫完全部 acceptance tests(TDD red;但 workflow 不驗證 Red)
+A review
+commit acceptance tests
+記錄 + 啟動 protected-test 保護(一次記錄整份清單;此後每次 worker 呼叫都檢查)
+  ↓
+For each task(plan.md 的 - [ ]):
+    A 實作(IMPL_AGENT 可換實作 agent;預設 A)
+    build gate
+    commit
+  ↓
+Full gate(acceptance tests 必須全綠)
+  ↓
+B review 整條 branch diff → 有改動才 commit
+  ↓
+A self-review → Full gate
+  ↓
+B final acceptance → 有改動才 commit
+  ↓
+finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 ```
 
 兩個選用模式會改寫部分流程:
@@ -120,14 +142,24 @@ IMPL_ARGS='-c model_reasoning_effort="low"' \
 設定 `DUAL_SPEC=1` 後,規格階段會改成:
 
 ```text
-A 獨立寫 spec-a.md
-B 獨立寫 spec-b.md
-B 對 A 候選審一次,A 對 B 候選審一次
-A 寫 spec-comparison-a.md,B 寫 spec-comparison-b.md
-人類選 a、b、ma 或 mb
-選定 owner 產出最終 spec.md
-另一方用既有 review_loop 將最終 spec 審到通過
-人類核准最終 spec.md 後才開始 plan
+DUAL_SPEC=1:取代預設/分階段流程的第一行 Spec 階段,其餘流程不變
+(前置檢查:必須 HUMAN_GATE=1 且互動終端)
+
+A 寫候選 spec-a.md、B 寫候選 spec-b.md(各自獨立,禁止看對方的)
+  ↓
+交叉 review:B 審 spec-a、A 審 spec-b(只留報告與 verdict 供人參考,不擋流程、不進修復迴圈)
+  ↓
+A、B 各寫比較表 spec-comparison-a/b.md;workflow 產索引 spec-comparison.md
+  ↓
+Human 選擇 a / b / ma / mb:
+    a、b:採用該候選為 base
+    ma、mb:該候選為 base,人工編輯 spec-merge-request.md 列出要從另一份採納的項目(workflow 驗有實際內容)
+    選中的 slot 成為 owner,接手後續流程的「A」角色;另一方成為 reviewer「B」
+  ↓
+base 複製為 spec.md;(merge 時)owner 依 merge request 合併
+reviewer review spec.md(merge 時加驗採納項目沒漏、沒被扭曲)+ Human Gate → commit
+  ↓
+接預設或分階段流程的 Plan 之後(A=owner、B=reviewer)
 ```
 
 裁決命令:
@@ -159,6 +191,40 @@ review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
 `- [ ]` 任務。Phase 必須是垂直功能切片(一個可運作的行為增量),不可是
 水平技術分層。Plan review 完成後,workflow 會確定性解析 plan;若結構有
 問題,會在任何實作開始前交回 owner 修正。
+
+```text
+Spec(A 寫、B review)
+Human Gate
+commit
+  ↓
+Plan 拆成 vertical phases(A 寫、B review)
+(HUMAN_GATE_PLAN=1)Human Gate
+workflow 驗 plan 結構
+commit
+  ↓
+For each Phase:
+    B 寫該 Phase acceptance/component/contract tests
+    A review
+    workflow 驗證測試正確 Red(regression-guard Phase 則必須 Green)
+    commit Phase tests
+    記錄 + 啟動 protected-test 保護(append;此後每次 worker 呼叫都檢查)
+    For each task:
+        A 實作(IMPL_AGENT 可換實作 agent;預設 A)
+        build gate
+        commit
+    phase gate:歷史 Phase + 當前 Phase 全綠
+    (PHASE_REVIEW=1)B review Phase diff → 有改動才 commit
+  ↓
+Full gate
+  ↓
+B review 整條 branch diff → 有改動才 commit
+  ↓
+A self-review → Full gate
+  ↓
+B final acceptance → 有改動才 commit
+  ↓
+finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
+```
 
 每個 phase 依序執行:
 
