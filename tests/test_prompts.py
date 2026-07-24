@@ -211,3 +211,32 @@ def test_write_phase_tests_first_line_is_stable():
     assert rendered.startswith(
         'Write acceptance tests for exactly one phase of the plan: "phase-title"'
     )
+
+
+def test_phased_plan_splits_by_feature_not_by_layer():
+    # A shopping site must slice by user-facing capability (login, checkout),
+    # never database -> backend -> frontend. Both the plan-authoring prompt
+    # and the reviewer scope must keep saying so, or the guidance silently
+    # regresses to horizontal technical layers.
+    prompts_dir = default_prompts_dir({})
+    plan = " ".join(
+        render_prompt(
+            prompts_dir,
+            "write-implementation-plan-phased",
+            {"SPEC_FILE": "spec.md", "PLAN_FILE": "plan.md"},
+        ).split()
+    )
+    review = " ".join(
+        render_prompt(
+            prompts_dir,
+            "review-scope-plan-phased",
+            {"SPEC_FILE": "spec.md", "PLAN_FILE": "plan.md"},
+        ).split()
+    )
+    # A web UI is a valid stable boundary and layers must not be split off.
+    assert "web UI" in plan
+    assert "split by user-facing capability" in plan
+    assert 'never a standalone "frontend", "backend", or "database" phase' in plan
+    # The reviewer must block a standalone layer phase, naming the frontend.
+    assert "horizontal technical layer" in review
+    assert '"frontend"' in review
