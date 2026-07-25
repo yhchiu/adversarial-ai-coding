@@ -242,6 +242,10 @@ def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatc
     monkeypatch.setattr("builtins.input", fake_input)
     monkeypatch.chdir(new_repo)
     monkeypatch.setenv("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "FAKE_PHASED_SUGGESTION",
+        '{"phased": true, "reason": "two independent features"}',
+    )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
@@ -270,6 +274,10 @@ def test_spec_gate_suggestion_declined_stays_single_shot(
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     monkeypatch.chdir(new_repo)
     monkeypatch.setenv("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "FAKE_PHASED_SUGGESTION",
+        '{"phased": true, "reason": "two independent features"}',
+    )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
