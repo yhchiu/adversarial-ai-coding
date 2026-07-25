@@ -333,3 +333,63 @@ def test_review_loop_starts_with_a_clean_review_file(make_ctx, monkeypatch):
     monkeypatch.setattr(review_mod, "run_reviewer", reviewer)
     review_loop(ctx, ctx.ref("B"), ctx.ref("A"), "scope")
     assert seen["review"] == ""
+
+
+def test_phased_suggestion_instruction_renders_wf_path():
+    from adversarial_ai_coding.prompts import render_prompt
+
+    text = render_prompt(
+        PROMPTS, "phased-suggestion-instruction", {"WF": "X:/wf"}
+    )
+    assert "X:/wf/phased-suggestion.json" in text
+    assert '{"phased": true|false' in text
+    assert "must not influence" in text
+
+
+def test_run_review_resets_and_archives_phased_suggestion(make_ctx, monkeypatch):
+    from adversarial_ai_coding.phased_suggestion import suggestion_path
+
+    ctx = make_ctx()
+    ctx.cur_stage = "write-spec"
+    ctx.phased_suggestion_active = True
+    suggestion_path(ctx.wf).write_text(
+        '{"phased": true, "reason": "stale from an earlier round"}',
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def reviewer(name, prompt, settings, session, io):
+        seen["suggestion"] = suggestion_path(ctx.wf).read_text(encoding="utf-8")
+        suggestion_path(ctx.wf).write_text(
+            '{"phased": true, "reason": "fits"}', encoding="utf-8"
+        )
+        ctx.review_path.write_text("approved\n", encoding="utf-8")
+        io.verdict_path.write_text(
+            '{"approved":true,"blockers":[],"suggestions":[]}', encoding="utf-8"
+        )
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
+        return AgentResult(0, "ok")
+
+    monkeypatch.setattr(review_mod, "run_reviewer", reviewer)
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    # The stale value was replaced with the default before the reviewer ran.
+    assert json.loads(seen["suggestion"]) == {"phased": False, "reason": ""}
+    archived = list(
+        ctx.archive.run_dir.glob("*phased-suggestion-write-spec-r1.json")
+    )
+    assert archived
+    assert "fits" in archived[0].read_text(encoding="utf-8")
+
+
+def test_run_review_ignores_suggestion_when_inactive(make_ctx, monkeypatch):
+    from adversarial_ai_coding.phased_suggestion import suggestion_path
+
+    ctx = make_ctx()
+    ctx.cur_stage = "write-code"
+    stale = '{"phased": true, "reason": "from the spec stage"}'
+    suggestion_path(ctx.wf).write_text(stale, encoding="utf-8")
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+    run_review(ctx, ctx.ref("B"), "scope")
+    # Untouched and unarchived: only the spec review manages this file.
+    assert suggestion_path(ctx.wf).read_text(encoding="utf-8") == stale
+    assert not list(ctx.archive.run_dir.glob("*phased-suggestion-*"))

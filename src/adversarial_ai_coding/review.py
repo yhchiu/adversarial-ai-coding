@@ -14,6 +14,7 @@ from .agents import AgentRef, run_reviewer
 from .archive import safe_slug
 from .config import WorkflowAbort
 from .gates import gate_loop
+from .phased_suggestion import DEFAULT_SUGGESTION, reset_suggestion, suggestion_path
 from .prompts import prompt_file_instruction, render_prompt
 from .ratelimit import QUOTA_ABORT_RC, agent_call
 from .workflow import WorkflowContext, _retry_events, work
@@ -162,6 +163,8 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.review_path.write_text("", encoding="utf-8")
     # A reviewer that omits structured output must fail closed.
     ctx.verdict_path.write_text(FAILED_VERDICT, encoding="utf-8")
+    if ctx.phased_suggestion_active:
+        reset_suggestion(ctx.wf)
     io = ctx.agent_io()
     result = agent_call(
         lambda: run_reviewer(
@@ -231,6 +234,19 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_stage,
         ctx.cur_round,
     )
+    if ctx.phased_suggestion_active:
+        _recover_unreadable_output(
+            ctx, suggestion_path(ctx.wf), DEFAULT_SUGGESTION
+        )
+        if suggestion_path(ctx.wf).is_file():
+            ctx.archive.archive_snapshot(
+                suggestion_path(ctx.wf),
+                f"phased-suggestion-{stage_slug}-r{ctx.cur_round}.json",
+                "reviewer",
+                agent,
+                ctx.cur_stage,
+                ctx.cur_round,
+            )
     if review_unreadable or review_missing:
         ctx.echo_err(
             "(reviewer review.md was unreadable or missing; treating the "
