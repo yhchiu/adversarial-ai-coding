@@ -12,6 +12,7 @@ from test_resume_integration import (
     wf_env,
 )
 
+from adversarial_ai_coding import cli
 from adversarial_ai_coding.runstate import RunState
 
 EXPECTED_STAGES = [
@@ -208,3 +209,75 @@ def test_resume_after_controls_recorded_before_stage_end(
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
+
+
+def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatch):
+    """PHASES unset; the reviewer suggests phased; the human says y twice."""
+
+    import json
+
+    from adversarial_ai_coding import workflow as wf_mod
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    (work / "check_impl.py").write_text(
+        "import pathlib, sys\n"
+        "sys.exit(0 if pathlib.Path('src.txt').exists() else 1)\n",
+        encoding="utf-8",
+    )
+    env = wf_env(
+        work,
+        HUMAN_GATE="1",
+        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}',
+    )
+    assert "PHASES" not in env
+    asked = []
+    answers = iter(["y", "y"])
+
+    def fake_input(prompt=""):
+        asked.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setenv("PYTHONPATH", "")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    assert cli.main(["demo task"], env, stdin_isatty=True) == 0
+    assert len(asked) == 2
+    assert "Enable Phased ATDD" in asked[1]
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    assert st.completed_stages() == EXPECTED_STAGES
+    snap = json.loads((state / "settings.json").read_text(encoding="utf-8"))
+    assert snap["phases"] == "1"
+
+
+def test_spec_gate_suggestion_declined_stays_single_shot(
+    new_repo, tmp_path, monkeypatch
+):
+    import json
+
+    from adversarial_ai_coding import workflow as wf_mod
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = wf_env(work, HUMAN_GATE="1")
+    answers = iter(["y", "n"])
+    monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setenv("PYTHONPATH", "")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    assert cli.main(["demo task"], env, stdin_isatty=True) == 0
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    stages = st.completed_stages()
+    assert "write-acceptance-tests" in stages
+    assert not any(stage.startswith("phase-") for stage in stages)
+    snap = json.loads((state / "settings.json").read_text(encoding="utf-8"))
+    assert snap["phases"] == "0"

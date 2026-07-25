@@ -102,6 +102,15 @@ def main() -> int:
             '{"approved":true,"blockers":[],"suggestions":[]}\n',
             encoding="utf-8",
         )
+        if "phased-suggestion.json" in prompt:
+            Path(".workflow/phased-suggestion.json").write_text(
+                os.environ.get(
+                    "FAKE_PHASED_SUGGESTION",
+                    '{"phased": true, "reason": "two independent features"}',
+                )
+                + "\n",
+                encoding="utf-8",
+            )
     elif kind == "write-spec":
         target = grep_target(r"specs[\\/][^ \r\n]+[\\/]spec\.md")
         Path(target).parent.mkdir(parents=True, exist_ok=True)
