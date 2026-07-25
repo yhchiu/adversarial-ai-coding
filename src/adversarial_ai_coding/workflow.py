@@ -11,7 +11,7 @@ import time
 import shutil
 import stat
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -556,13 +556,59 @@ def _human_approval(
 
 
 def human_gate_spec(ctx: WorkflowContext) -> None:
-    if not ctx.settings.human_gate:
+    if ctx.settings.human_gate:
+        _human_approval(
+            ctx,
+            subject="spec",
+            path=ctx.spec_dir / "spec.md",
+            focus="the Assumptions and Open Questions section.",
+        )
+    offer_phased_suggestion(ctx)
+
+
+def offer_phased_suggestion(ctx: WorkflowContext) -> None:
+    """Offer to enable Phased ATDD when the spec reviewer recommended it."""
+
+    if not ctx.phased_suggestion_valid:
         return
-    _human_approval(
-        ctx,
-        subject="spec",
-        path=ctx.spec_dir / "spec.md",
-        focus="the Assumptions and Open Questions section.",
+
+    from .phased_suggestion import read_suggestion, suggestion_armed
+
+    if not suggestion_armed(ctx.settings):
+        return
+    phased, reason = read_suggestion(ctx.wf)
+    if not phased:
+        return
+    if not ctx.settings.human_gate:
+        ctx.log(
+            f"reviewer suggests Phased ATDD: {reason}; HUMAN_GATE=0, not asking"
+        )
+        return
+    ctx.echo("")
+    ctx.echo(f"### Reviewer suggests Phased ATDD: {reason}")
+    answer = ctx.ask("Enable Phased ATDD for this run? [y/N]:")
+    if answer not in ("y", "Y"):
+        ctx.log("Phased ATDD suggestion declined; keeping the single-shot flow")
+        return
+    ctx.settings = replace(ctx.settings, phases=True)
+    if ctx.state is not None:
+        from .runstate import enable_snapshot_phases
+
+        enable_snapshot_phases(ctx.state.state_dir)
+    ctx.log("Phased ATDD enabled at the spec gate")
+    ctx.notify("adversarial-ai-coding: Phased ATDD enabled at the spec gate")
+
+
+def append_phased_suggestion_scope(ctx: WorkflowContext, scope: str) -> str:
+    """Arm the spec review to also judge phased fitness, when applicable."""
+
+    from .phased_suggestion import suggestion_armed
+
+    if not suggestion_armed(ctx.settings):
+        return scope
+    ctx.phased_suggestion_active = True
+    return scope + render_prompt(
+        ctx.prompts_dir, "phased-suggestion-instruction", {"WF": str(ctx.wf)}
     )
 
 
@@ -785,10 +831,13 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
                     ),
                 )
             if not ctx.settings.import_spec or ctx.settings.import_review:
-                scope = render_prompt(
-                    ctx.prompts_dir,
-                    "review-scope-spec",
-                    {"SPEC_FILE": str(spec_file)},
+                scope = append_phased_suggestion_scope(
+                    ctx,
+                    render_prompt(
+                        ctx.prompts_dir,
+                        "review-scope-spec",
+                        {"SPEC_FILE": str(spec_file)},
+                    ),
                 )
                 review_loop_ref(
                     ctx,
@@ -796,6 +845,7 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
                     ctx.spec_roles.owner_agent,
                     scope,
                 )
+                ctx.phased_suggestion_active = False
             human_gate_spec(ctx)
             end_stage(ctx)
 

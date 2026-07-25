@@ -112,6 +112,138 @@ def test_human_gate_approval_and_abort(make_ctx):
         human_gate_spec(ctx)
 
 
+def _write_suggestion(ctx, phased=True, reason="two independent features"):
+    import json
+
+    (ctx.wf / "phased-suggestion.json").write_text(
+        json.dumps({"phased": phased, "reason": reason}), encoding="utf-8"
+    )
+
+
+def _write_settings_snapshot(ctx):
+    from adversarial_ai_coding.runstate import snapshot_values, write_snapshot
+
+    write_snapshot(
+        ctx.state.state_dir,
+        snapshot_values(
+            ctx.settings,
+            branch="main",
+            gate_cmd="",
+            build_gate_cmd="",
+            phase_gate_cmd="",
+            task_arg="t",
+            task_source_kind="arg",
+            task_source_path="",
+        ),
+    )
+
+
+def test_spec_gate_offer_flips_settings_and_snapshot(make_ctx, new_repo):
+    from adversarial_ai_coding.runstate import load_snapshot
+
+    ctx = with_state(
+        make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"}), new_repo
+    )
+    _write_settings_snapshot(ctx)
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    asked = []
+    answers = iter(["y", "y"])
+    ctx.ask = lambda prompt: (asked.append(prompt), next(answers))[1]
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is True
+    assert len(asked) == 2
+    assert asked[1] == "Enable Phased ATDD for this run? [y/N]:"
+    assert load_snapshot(ctx.state.state_dir)["PHASES"] == "1"
+
+
+def test_spec_gate_offer_declined_changes_nothing(make_ctx, new_repo):
+    from adversarial_ai_coding.runstate import load_snapshot
+
+    ctx = with_state(
+        make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"}), new_repo
+    )
+    _write_settings_snapshot(ctx)
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    answers = iter(["y", "n"])
+    ctx.ask = lambda prompt: next(answers)
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is False
+    assert load_snapshot(ctx.state.state_dir)["PHASES"] == "0"
+
+
+def test_spec_gate_ignores_stale_positive_suggestion(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    _write_suggestion(ctx)
+    asked = []
+    ctx.ask = lambda prompt: (asked.append(prompt), "y")[1]
+
+    human_gate_spec(ctx)
+
+    assert len(asked) == 1
+    assert ctx.settings.phases is False
+
+
+def test_spec_gate_stays_silent_without_a_recommendation(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    _write_suggestion(ctx, phased=False)
+    ctx.phased_suggestion_valid = True
+    asked = []
+    ctx.ask = lambda prompt: (asked.append(prompt), "y")[1]
+
+    human_gate_spec(ctx)
+
+    assert len(asked) == 1  # only the spec approval question
+
+
+def test_spec_gate_respects_explicit_phases_zero(make_ctx):
+    ctx = make_ctx({"PHASES": "0", "HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    asked = []
+    ctx.ask = lambda prompt: (asked.append(prompt), "y")[1]
+
+    human_gate_spec(ctx)
+
+    assert len(asked) == 1
+    assert ctx.settings.phases is False
+
+
+def test_spec_gate_logs_only_without_human_gate(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE": "0", "RETRY_ON_LIMIT": "0"})
+    _write_suggestion(ctx, reason="fits nicely")
+    ctx.phased_suggestion_valid = True
+    logged = []
+    ctx.echo = logged.append
+    ctx.ask = lambda prompt: pytest.fail("HUMAN_GATE=0 must never ask")
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is False
+    assert any(
+        "reviewer suggests Phased ATDD: fits nicely" in line for line in logged
+    )
+
+
+def test_append_phased_suggestion_scope_only_when_armed(make_ctx):
+    from adversarial_ai_coding.workflow import append_phased_suggestion_scope
+
+    ctx = make_ctx()
+    scope = append_phased_suggestion_scope(ctx, "base scope\n")
+    assert scope.startswith("base scope\n")
+    assert "phased-suggestion.json" in scope
+    assert ctx.phased_suggestion_active is True
+
+    ctx2 = make_ctx({"PHASES": "0", "RETRY_ON_LIMIT": "0"})
+    assert append_phased_suggestion_scope(ctx2, "base scope\n") == "base scope\n"
+    assert ctx2.phased_suggestion_active is False
+
+
 def test_plan_gate_is_off_by_default(make_ctx):
     ctx = make_ctx({"RETRY_ON_LIMIT": "0"})
     ctx.ask = lambda prompt: pytest.fail("plan gate must not ask when disabled")
