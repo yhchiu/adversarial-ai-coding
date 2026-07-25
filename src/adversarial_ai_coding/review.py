@@ -77,6 +77,25 @@ def _reset_review_file(ctx: WorkflowContext) -> None:
     ctx.review_path.write_text("", encoding="utf-8")
 
 
+def _disable_phased_suggestion(ctx: WorkflowContext, exc: OSError | WorkflowAbort) -> None:
+    """Discard an optional suggestion failure without affecting review flow."""
+
+    ctx.phased_suggestion_valid = False
+    ctx.echo_err(f"(warning: ignoring phased suggestion: {exc})")
+
+
+def _reset_phased_suggestion(ctx: WorkflowContext) -> None:
+    """Prepare the optional side file, never letting its failure block review."""
+
+    ctx.phased_suggestion_valid = False
+    try:
+        reset_suggestion(ctx.wf)
+    except OSError as exc:
+        _disable_phased_suggestion(ctx, exc)
+    else:
+        ctx.phased_suggestion_valid = True
+
+
 def verdict_approved(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -164,7 +183,7 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
     # A reviewer that omits structured output must fail closed.
     ctx.verdict_path.write_text(FAILED_VERDICT, encoding="utf-8")
     if ctx.phased_suggestion_active:
-        reset_suggestion(ctx.wf)
+        _reset_phased_suggestion(ctx)
     io = ctx.agent_io()
     result = agent_call(
         lambda: run_reviewer(
@@ -234,19 +253,22 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_stage,
         ctx.cur_round,
     )
-    if ctx.phased_suggestion_active:
-        _recover_unreadable_output(
-            ctx, suggestion_path(ctx.wf), DEFAULT_SUGGESTION
-        )
-        if suggestion_path(ctx.wf).is_file():
-            ctx.archive.archive_snapshot(
-                suggestion_path(ctx.wf),
-                f"phased-suggestion-{stage_slug}-r{ctx.cur_round}.json",
-                "reviewer",
-                agent,
-                ctx.cur_stage,
-                ctx.cur_round,
+    if ctx.phased_suggestion_active and ctx.phased_suggestion_valid:
+        try:
+            _recover_unreadable_output(
+                ctx, suggestion_path(ctx.wf), DEFAULT_SUGGESTION
             )
+            if suggestion_path(ctx.wf).is_file():
+                ctx.archive.archive_snapshot(
+                    suggestion_path(ctx.wf),
+                    f"phased-suggestion-{stage_slug}-r{ctx.cur_round}.json",
+                    "reviewer",
+                    agent,
+                    ctx.cur_stage,
+                    ctx.cur_round,
+                )
+        except (OSError, WorkflowAbort) as exc:
+            _disable_phased_suggestion(ctx, exc)
     if review_unreadable or review_missing:
         ctx.echo_err(
             "(reviewer review.md was unreadable or missing; treating the "

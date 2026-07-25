@@ -393,3 +393,69 @@ def test_run_review_ignores_suggestion_when_inactive(make_ctx, monkeypatch):
     # Untouched and unarchived: only the spec review manages this file.
     assert suggestion_path(ctx.wf).read_text(encoding="utf-8") == stale
     assert not list(ctx.archive.run_dir.glob("*phased-suggestion-*"))
+
+
+def test_run_review_disables_phased_suggestion_when_reset_fails(
+    make_ctx, monkeypatch
+):
+    from adversarial_ai_coding.phased_suggestion import suggestion_path
+
+    ctx = make_ctx()
+    ctx.cur_stage = "write-spec"
+    ctx.phased_suggestion_active = True
+    suggestion_path(ctx.wf).write_text(
+        '{"phased": true, "reason": "stale"}', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        review_mod,
+        "reset_suggestion",
+        lambda wf: (_ for _ in ()).throw(OSError("cannot reset suggestion")),
+    )
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    assert ctx.phased_suggestion_valid is False
+    assert not list(ctx.archive.run_dir.glob("*phased-suggestion-*"))
+
+
+def test_run_review_disables_phased_suggestion_when_recovery_fails(
+    make_ctx, monkeypatch
+):
+    from adversarial_ai_coding.phased_suggestion import suggestion_path
+
+    ctx = make_ctx()
+    ctx.cur_stage = "write-spec"
+    ctx.phased_suggestion_active = True
+    recover_output = review_mod._recover_unreadable_output
+
+    def recovery(ctx_arg, path, fallback):
+        if path == suggestion_path(ctx.wf):
+            raise WorkflowAbort("suggestion cannot be recovered")
+        return recover_output(ctx_arg, path, fallback)
+
+    monkeypatch.setattr(review_mod, "_recover_unreadable_output", recovery)
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    assert ctx.phased_suggestion_valid is False
+    assert not list(ctx.archive.run_dir.glob("*phased-suggestion-*"))
+
+
+def test_run_review_disables_phased_suggestion_when_archive_fails(
+    make_ctx, monkeypatch
+):
+    ctx = make_ctx()
+    ctx.cur_stage = "write-spec"
+    ctx.phased_suggestion_active = True
+    archive_snapshot = ctx.archive.archive_snapshot
+
+    def archive(src, name, *args, **kwargs):
+        if name.startswith("phased-suggestion-"):
+            raise OSError("cannot archive suggestion")
+        return archive_snapshot(src, name, *args, **kwargs)
+
+    monkeypatch.setattr(ctx.archive, "archive_snapshot", archive)
+    monkeypatch.setattr(review_mod, "run_reviewer", approving_reviewer())
+
+    assert run_review(ctx, ctx.ref("B"), "scope") is True
+    assert ctx.phased_suggestion_valid is False

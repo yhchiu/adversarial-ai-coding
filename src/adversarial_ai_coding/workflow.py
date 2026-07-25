@@ -94,6 +94,9 @@ class WorkflowContext:
     cur_round: int = 1
     collect_review_suggestions: bool = True
     phased_suggestion_active: bool = False
+    # A later consumer may read phased-suggestion.json only when this is true.
+    # run_review clears it before each armed round and on every side-file error.
+    phased_suggestion_valid: bool = False
     checking_protected: bool = False
     gate_cmd: str = ""
     build_gate_cmd: str = ""
