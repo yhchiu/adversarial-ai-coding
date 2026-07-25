@@ -269,3 +269,56 @@ def test_import_missing_from_old_snapshot_refuses_enabling():
     with pytest.raises(RunStateError, match="IMPORT_REVIEW"):
         check_immutable({"IMPORT_REVIEW": "0"}, {})
     check_immutable({"IMPORT_REVIEW": "1"}, {})
+
+
+def test_enable_snapshot_phases_flips_and_stays_resumable(tmp_path):
+    import pytest
+
+    from adversarial_ai_coding.config import Settings
+    from adversarial_ai_coding.runstate import (
+        RunStateError,
+        check_immutable,
+        enable_snapshot_phases,
+        load_snapshot,
+        snapshot_values,
+        write_snapshot,
+    )
+
+    settings = Settings.from_env({}, run_id="t")
+    write_snapshot(
+        tmp_path,
+        snapshot_values(
+            settings,
+            branch="main",
+            gate_cmd="",
+            build_gate_cmd="",
+            phase_gate_cmd="",
+            task_arg="t",
+            task_source_kind="arg",
+            task_source_path="",
+        ),
+    )
+    enable_snapshot_phases(tmp_path)
+    snap = load_snapshot(tmp_path)
+    assert snap["PHASES"] == "1"
+    # Resume with a clean environment: no immutable-key conflict, and the
+    # resumed settings run phased without being "explicit".
+    check_immutable({}, snap)
+    resumed = Settings.from_env({}, run_id="t", snapshot=snap)
+    assert resumed.phases is True
+    assert resumed.phases_explicit is False
+    # A stale explicit PHASES=0 in the resume environment still conflicts.
+    with pytest.raises(RunStateError, match="PHASES=0 conflicts"):
+        check_immutable({"PHASES": "0"}, snap)
+
+
+def test_enable_snapshot_phases_requires_a_snapshot(tmp_path):
+    import pytest
+
+    from adversarial_ai_coding.runstate import (
+        RunStateError,
+        enable_snapshot_phases,
+    )
+
+    with pytest.raises(RunStateError, match="cannot record the Phased ATDD"):
+        enable_snapshot_phases(tmp_path)

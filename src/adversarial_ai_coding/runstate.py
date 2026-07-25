@@ -167,6 +167,26 @@ def load_snapshot(state_dir: Path) -> dict[str, str]:
     return snapshot
 
 
+def enable_snapshot_phases(state_dir: Path) -> None:
+    """Record the spec-gate Phased ATDD flip so resume sees PHASES=1.
+
+    The snapshot is the resume source of truth for PHASES. The flip must
+    land atomically before the plan stage can run under phased templates;
+    losing it would let a resumed attempt silently run the single-shot flow.
+    """
+
+    path = state_dir / SNAPSHOT_FILE
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        load_snapshot(state_dir)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, RunStateError) as exc:
+        raise RunStateError(
+            f"{path}: cannot record the Phased ATDD flip ({exc})."
+        ) from None
+    payload["phases"] = "1"
+    _atomic_write(path, json.dumps(payload, indent=2) + "\n")
+
+
 def check_immutable(
     env: Mapping[str, str], snapshot: Mapping[str, str]
 ) -> None:
