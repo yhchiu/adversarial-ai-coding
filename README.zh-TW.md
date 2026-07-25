@@ -183,6 +183,8 @@ review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
 [resources/import-authoring-prompt.md](resources/import-authoring-prompt.md)
 是可直接貼進你自己工具的 prompt。
 
+若以停用 review 的方式匯入 spec (`IMPORT_SPEC` + `IMPORT_REVIEW=0`)，不會執行 spec reviewer，因此不會產生或提供分階段模式建議。
+
 ## 分階段 ATDD 模式(Phased ATDD)
 
 設定 `PHASES=1` 後,單次預先撰寫驗收測試的 stage 會改成逐 phase

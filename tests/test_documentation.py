@@ -102,3 +102,22 @@ def test_phased_suggestion_is_documented_bilingually():
         context = document[max(0, suggestion - 300) : suggestion + 300]
         assert "`PHASES`" in context
         assert "`IMPORT_PLAN`" in context
+
+
+def test_imported_spec_without_review_has_no_phased_suggestion_bilingually():
+    required_details = {
+        "README.md": (
+            "IMPORT_SPEC` + `IMPORT_REVIEW=0",
+            "no spec reviewer runs",
+            "no phased suggestion is produced or offered",
+        ),
+        "README.zh-TW.md": (
+            "IMPORT_SPEC` + `IMPORT_REVIEW=0",
+            "不會執行 spec reviewer",
+            "不會產生或提供分階段模式建議",
+        ),
+    }
+    for name, details in required_details.items():
+        readme = _read(name)
+        for detail in details:
+            assert detail in readme

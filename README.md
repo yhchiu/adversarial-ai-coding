@@ -253,6 +253,8 @@ rules are in [docs/import-format.md](docs/import-format.md), and
 [resources/import-authoring-prompt.md](resources/import-authoring-prompt.md)
 is a paste-ready prompt for your own tool.
 
+When a spec is imported with review disabled (`IMPORT_SPEC` + `IMPORT_REVIEW=0`), no spec reviewer runs, so no phased suggestion is produced or offered.
+
 ## Phased ATDD Mode
 
 Set `PHASES=1` to replace the single up-front acceptance-test stage with a
