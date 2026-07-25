@@ -85,6 +85,20 @@ def test_color_settings_are_documented_bilingually():
 def test_phased_suggestion_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "phased-suggestion.json" in readme
-        assert "Enable Phased ATDD for this run?" in readme
+        assert "Enable Phased ATDD for this run? [y/N]:" in readme
+        phases_rows = [
+            line for line in readme.splitlines() if line.startswith("| `PHASES` |")
+        ]
+        assert len(phases_rows) == 1
+        assert "`IMPORT_PLAN`" in phases_rows[0]
     assert "phased-suggestion.json" in _read("resources/AGENTS.template.md")
-    assert "phased-suggestion.json" in _read("docs/python-port-parity.md")
+    for name in (
+        "docs/how-it-works.md",
+        "docs/how-it-works.zh-TW.md",
+        "docs/python-port-parity.md",
+    ):
+        document = _read(name)
+        suggestion = document.index("phased-suggestion.json")
+        context = document[max(0, suggestion - 300) : suggestion + 300]
+        assert "`PHASES`" in context
+        assert "`IMPORT_PLAN`" in context
