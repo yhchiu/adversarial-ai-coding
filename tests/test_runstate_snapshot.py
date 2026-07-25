@@ -322,3 +322,34 @@ def test_enable_snapshot_phases_requires_a_snapshot(tmp_path):
 
     with pytest.raises(RunStateError, match="cannot record the Phased ATDD"):
         enable_snapshot_phases(tmp_path)
+
+
+def test_enable_snapshot_phases_wraps_atomic_write_failure_and_preserves_snapshot(
+    tmp_path, monkeypatch
+):
+    from adversarial_ai_coding import runstate
+
+    settings = Settings.from_env({}, run_id="t")
+    write_snapshot(
+        tmp_path,
+        snapshot_values(
+            settings,
+            branch="main",
+            gate_cmd="",
+            build_gate_cmd="",
+            phase_gate_cmd="",
+            task_arg="t",
+            task_source_kind="arg",
+            task_source_path="",
+        ),
+    )
+
+    def fail_atomic_write(path, text):
+        raise OSError("replace denied")
+
+    monkeypatch.setattr(runstate, "_atomic_write", fail_atomic_write)
+
+    with pytest.raises(RunStateError, match="cannot record the Phased ATDD"):
+        runstate.enable_snapshot_phases(tmp_path)
+
+    assert load_snapshot(tmp_path)["PHASES"] == "0"

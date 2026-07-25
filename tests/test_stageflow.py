@@ -6,7 +6,7 @@ from adversarial_ai_coding import agents
 from adversarial_ai_coding import workflow as wf_mod
 from adversarial_ai_coding.config import WorkflowAbort
 from adversarial_ai_coding.gitops import head_sha
-from adversarial_ai_coding.runstate import RunState
+from adversarial_ai_coding.runstate import RunState, RunStateError
 from adversarial_ai_coding.workflow import (
     begin_stage,
     commit_if_dirty,
@@ -157,6 +157,48 @@ def test_spec_gate_offer_flips_settings_and_snapshot(make_ctx, new_repo):
     assert len(asked) == 2
     assert asked[1] == "Enable Phased ATDD for this run? [y/N]:"
     assert load_snapshot(ctx.state.state_dir)["PHASES"] == "1"
+
+
+def test_spec_gate_offer_without_state_still_flips_runtime_settings(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    asked = []
+    answers = iter(["y", "y"])
+    ctx.ask = lambda prompt: (asked.append(prompt), next(answers))[1]
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is True
+    assert asked == [
+        "Enter y to approve and continue; anything else aborts:",
+        "Enable Phased ATDD for this run? [y/N]:",
+    ]
+
+
+def test_spec_gate_offer_keeps_runtime_phases_off_when_snapshot_write_fails(
+    make_ctx, new_repo, monkeypatch
+):
+    from adversarial_ai_coding import runstate
+
+    ctx = with_state(
+        make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"}), new_repo
+    )
+    _write_settings_snapshot(ctx)
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    answers = iter(["y", "y"])
+    ctx.ask = lambda prompt: next(answers)
+
+    def fail_snapshot_write(state_dir):
+        raise RunStateError("snapshot persistence failed")
+
+    monkeypatch.setattr(runstate, "enable_snapshot_phases", fail_snapshot_write)
+
+    with pytest.raises(RunStateError, match="snapshot persistence failed"):
+        human_gate_spec(ctx)
+
+    assert ctx.settings.phases is False
 
 
 def test_spec_gate_offer_declined_changes_nothing(make_ctx, new_repo):

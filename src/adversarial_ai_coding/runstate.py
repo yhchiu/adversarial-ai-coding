@@ -179,12 +179,12 @@ def enable_snapshot_phases(state_dir: Path) -> None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         load_snapshot(state_dir)
+        payload["phases"] = "1"
+        _atomic_write(path, json.dumps(payload, indent=2) + "\n")
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, RunStateError) as exc:
         raise RunStateError(
             f"{path}: cannot record the Phased ATDD flip ({exc})."
         ) from None
-    payload["phases"] = "1"
-    _atomic_write(path, json.dumps(payload, indent=2) + "\n")
 
 
 def check_immutable(

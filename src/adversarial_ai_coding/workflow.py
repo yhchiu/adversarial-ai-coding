@@ -590,11 +590,11 @@ def offer_phased_suggestion(ctx: WorkflowContext) -> None:
     if answer not in ("y", "Y"):
         ctx.log("Phased ATDD suggestion declined; keeping the single-shot flow")
         return
-    ctx.settings = replace(ctx.settings, phases=True)
     if ctx.state is not None:
         from .runstate import enable_snapshot_phases
 
         enable_snapshot_phases(ctx.state.state_dir)
+    ctx.settings = replace(ctx.settings, phases=True)
     ctx.log("Phased ATDD enabled at the spec gate")
     ctx.notify("adversarial-ai-coding: Phased ATDD enabled at the spec gate")
 
