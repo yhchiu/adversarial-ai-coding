@@ -459,3 +459,31 @@ def test_run_review_disables_phased_suggestion_when_archive_fails(
 
     assert run_review(ctx, ctx.ref("B"), "scope") is True
     assert ctx.phased_suggestion_valid is False
+
+
+def test_run_review_archives_phased_suggestion_when_verdict_is_missing(
+    make_ctx, monkeypatch
+):
+    from adversarial_ai_coding.phased_suggestion import suggestion_path
+
+    ctx = make_ctx()
+    ctx.cur_stage = "write-spec"
+    ctx.phased_suggestion_active = True
+
+    def reviewer(name, prompt, settings, session, io):
+        suggestion_path(ctx.wf).write_text(
+            '{"phased": true, "reason": "fits"}', encoding="utf-8"
+        )
+        ctx.review_path.write_text("approved\n", encoding="utf-8")
+        io.verdict_path.unlink()
+        io.agent_out.write_text("reviewed\n", encoding="utf-8")
+        return AgentResult(0, "ok")
+
+    monkeypatch.setattr(review_mod, "run_reviewer", reviewer)
+
+    assert run_review(ctx, ctx.ref("B"), "scope") is False
+    archived = list(
+        ctx.archive.run_dir.glob("*phased-suggestion-write-spec-r1.json")
+    )
+    assert archived
+    assert "fits" in archived[0].read_text(encoding="utf-8")

@@ -230,29 +230,7 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
     review_unreadable = _recover_unreadable_output(
         ctx, ctx.review_path, REVIEW_UNREADABLE_STUB
     )
-    if not ctx.verdict_path.is_file():
-        ctx.echo_err("(reviewer did not write verdict.json; treating as failed)")
-        return False
-    review_missing = not ctx.review_path.is_file()
-    if ctx.collect_review_suggestions and not (review_unreadable or review_missing):
-        collect_suggestions(ctx)
     stage_slug = safe_slug(ctx.cur_stage)
-    ctx.archive.archive_snapshot(
-        ctx.review_path,
-        f"review-{stage_slug}-r{ctx.cur_round}.md",
-        "reviewer",
-        agent,
-        ctx.cur_stage,
-        ctx.cur_round,
-    )
-    ctx.archive.archive_snapshot(
-        ctx.verdict_path,
-        f"verdict-{stage_slug}-r{ctx.cur_round}.json",
-        "reviewer",
-        agent,
-        ctx.cur_stage,
-        ctx.cur_round,
-    )
     if ctx.phased_suggestion_active and ctx.phased_suggestion_valid:
         try:
             _recover_unreadable_output(
@@ -269,6 +247,28 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
                 )
         except (OSError, WorkflowAbort) as exc:
             _disable_phased_suggestion(ctx, exc)
+    if not ctx.verdict_path.is_file():
+        ctx.echo_err("(reviewer did not write verdict.json; treating as failed)")
+        return False
+    review_missing = not ctx.review_path.is_file()
+    if ctx.collect_review_suggestions and not (review_unreadable or review_missing):
+        collect_suggestions(ctx)
+    ctx.archive.archive_snapshot(
+        ctx.review_path,
+        f"review-{stage_slug}-r{ctx.cur_round}.md",
+        "reviewer",
+        agent,
+        ctx.cur_stage,
+        ctx.cur_round,
+    )
+    ctx.archive.archive_snapshot(
+        ctx.verdict_path,
+        f"verdict-{stage_slug}-r{ctx.cur_round}.json",
+        "reviewer",
+        agent,
+        ctx.cur_stage,
+        ctx.cur_round,
+    )
     if review_unreadable or review_missing:
         ctx.echo_err(
             "(reviewer review.md was unreadable or missing; treating the "
