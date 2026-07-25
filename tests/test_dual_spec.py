@@ -220,6 +220,7 @@ def test_restore_existing_decision_left_alone(make_ctx):
 def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):
     ctx = dual_ctx(make_ctx)
     calls = []
+    candidate_scopes = []
 
     def fake_work(ctx_arg, agent, prompt):
         for name in (
@@ -234,14 +235,16 @@ def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):
                 )
                 return
 
+    def fake_candidate_review(ctx_arg, reviewer, scope, review_out, verdict_out):
+        candidate_scopes.append(scope)
+        review_out.write_text("review\n", encoding="utf-8")
+        verdict_out.write_text("{}", encoding="utf-8")
+
     monkeypatch.setattr(ds, "work", fake_work)
     monkeypatch.setattr(
         ds,
         "run_candidate_spec_review",
-        lambda ctx, reviewer, scope, review_out, verdict_out: (
-            review_out.write_text("review\n", encoding="utf-8"),
-            verdict_out.write_text("{}", encoding="utf-8"),
-        ),
+        fake_candidate_review,
     )
 
     def fake_selection(ctx_arg):
@@ -257,4 +260,6 @@ def test_run_dual_spec_stage_uses_decision_variable(make_ctx, monkeypatch):
     ds.run_dual_spec_spec_stage(ctx, "task text")
     assert (ctx.spec_dir / "spec.md").read_text(encoding="utf-8") == "made spec-a.md\n"
     assert calls == ["review", "human"]
+    assert len(candidate_scopes) == 2
+    assert all("phased-suggestion.json" not in scope for scope in candidate_scopes)
     assert (ctx.spec_dir / "spec-comparison.md").is_file()
