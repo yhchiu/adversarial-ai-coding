@@ -25,7 +25,7 @@
 
 ```text
 Spec(A 寫、B review)
-Human Gate
+Human Gate(可能提議啟用 Phased ATDD;詳見下文)
 commit
   ↓
 Plan 拆成 task 清單(- [ ], A 寫、B review)
@@ -240,7 +240,16 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 因為測試是及時撰寫,在 phase 邊界「全部執行」本來就代表「所有已完成
 phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取。最後
 一個 phase 結束後,既有的完整關卡、branch review 與 final review 仍照常
-執行。Resume 時不可變更 `PHASES`。
+執行。Resume 時不可變更 `PHASES`:run 啟動時會將其值寫入 snapshot,
+若 resume 時的環境設定與之衝突,workflow 會拒絕執行。不過有一個允許的
+run 內切換方式。未設定 `PHASES` 且未匯入 plan 時,spec reviewer 也會
+判斷工作是否適合分階段模式——至少有兩個可各自獨立驗收的垂直功能——
+並將判斷寫入 `.workflow/phased-suggestion.json`。若 reviewer 建議採用,
+spec human gate 會顯示理由並詢問
+`Enable Phased ATDD for this run? [y/N]`。回答 `y` 會啟用分階段模式,
+並以不可分割的方式重寫 run snapshot,因此後續每次 resume 仍會讀到一致
+的設定。使用 `HUMAN_GATE=0` 時只會記錄建議,絕不自動啟用。若環境中明確
+設定 `PHASES=0`,則完全停用這項建議。
 
 ### 任務怎麼寫
 
@@ -279,7 +288,7 @@ phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取�
 | `IMPORT_SPEC` | 空 | 使用此檔案作為 `spec.md`;跳過「worker 撰寫 spec」步驟。 |
 | `IMPORT_PLAN` | 空 | 使用此檔案作為 `plan.md`;跳過「worker 撰寫 plan」步驟。需要 `IMPORT_SPEC`。 |
 | `IMPORT_REVIEW` | `1` | 匯入的產物仍會經過 reviewer 的 review loop。`0` 只會跳過匯入產物的 AI review。需要 `IMPORT_SPEC`。 |
-| `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。 |
+| `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。未設定 `PHASES` 時,spec reviewer 也會判斷是否適合分階段模式,spec human gate 可能提議啟用(詳見[分階段 ATDD 模式](#分階段-atdd-模式phased-atdd))。 |
 | `PHASE_GATE_CMD` | 空 | 每個 phase 的 red check 與 phase gate 命令。空值時改用 `GATE_CMD`。 |
 | `PHASE_REVIEW` | `0` | `1` 時每個 phase 結尾由 reviewer 審該 phase 的 diff(含 blocker 迴圈)。預設關閉,因為 phase gate 本身就是 reviewer 寫的受保護測試在把關。 |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |

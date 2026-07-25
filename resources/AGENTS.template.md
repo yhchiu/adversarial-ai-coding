@@ -33,6 +33,14 @@ All AI participants must follow these rules.
   in the final stage.
 - Set `"approved": true` only when there are zero blockers.
 
+## Phased suggestion (.workflow/phased-suggestion.json)
+
+When the review prompt asks for it, the spec reviewer also writes
+.workflow/phased-suggestion.json as one line of JSON:
+{"phased": true|false, "reason": "one or two sentences"}. This judgment
+is separate from the verdict: never put it in verdict.json, and never
+let it influence approved or blockers.
+
 ## Test integrity
 
 - Files listed in `.workflow/protected-tests.txt` are acceptance tests.

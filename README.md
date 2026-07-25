@@ -30,7 +30,7 @@ The default pipeline:
 
 ```text
 Spec (A writes, B reviews)
-human gate
+human gate (may offer Phased ATDD; see below)
 commit
   ↓
 Plan into a checkbox task list (- [ ], A writes, B reviews)
@@ -315,7 +315,18 @@ Because tests are written just in time, "run everything" at a phase
 boundary already means "all completed phases plus the current phase are
 green" — no test tagging or per-phase selection is needed. After the last
 phase, the normal full gate, branch review, and final review run
-unchanged. `PHASES` cannot change across resume.
+unchanged. `PHASES` cannot change across resume: the value is snapshotted at run
+start and conflicting resume environments are rejected. There is one
+sanctioned in-run switch. When `PHASES` is unset and no plan is
+imported, the spec reviewer also judges whether the task suits phased
+mode — two or more vertical features that can each be accepted
+independently — and writes its judgment to
+`.workflow/phased-suggestion.json`. If it recommends phased, the spec
+human gate shows the reason and asks `Enable Phased ATDD for this run? [y/N]`.
+Answering `y` enables phased mode and rewrites the run snapshot atomically,
+so every later resume still sees one consistent value. With `HUMAN_GATE=0`
+the recommendation is only logged; nothing is ever enabled automatically.
+An explicit `PHASES=0` in the environment disables the suggestion entirely.
 
 ## Custom Agent Commands
 
@@ -401,7 +412,7 @@ Add `--json` output to the CLI.
 | `IMPORT_SPEC` | empty | Use this file as `spec.md`; skip the "worker writes the spec" step. |
 | `IMPORT_PLAN` | empty | Use this file as `plan.md`; skip the "worker writes the plan" step. Requires `IMPORT_SPEC`. |
 | `IMPORT_REVIEW` | `1` | Imported artifacts still go through the reviewer's review loop. `0` skips the AI review of imported artifacts only. Requires `IMPORT_SPEC`. |
-| `PHASES` | `0` | `1` enables the phased ATDD flow: the plan is split into vertical phases, and each phase writes its own protected acceptance tests before its tasks are implemented. Decides the stage graph, so it cannot change across resume. |
+| `PHASES` | `0` | `1` enables the phased ATDD flow: the plan is split into vertical phases, and each phase writes its own protected acceptance tests before its tasks are implemented. Decides the stage graph, so it cannot change across resume. When `PHASES` is unset, the spec reviewer also judges fitness and the spec human gate may offer to enable it (see [Phased ATDD Mode](#phased-atdd-mode)). |
 | `PHASE_GATE_CMD` | empty | Gate command for the per-phase red check and phase gate. Empty falls back to `GATE_CMD`. |
 | `PHASE_REVIEW` | `0` | `1` adds a reviewer pass over each phase diff, with blocker loops. Off by default because the phase gate already enforces the reviewer's protected tests. |
 | `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`, npm projects with a `test` script use `npm test`, Cargo projects use `cargo test`, and projects without a detected gate skip deterministic gates unless you set it. |

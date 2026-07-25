@@ -75,6 +75,9 @@ Stage notes:
    With `IMPORT_SPEC=path`, the workflow copies your file in instead of
    asking A to write it; see the import contract in
    [import-format.md](import-format.md).
+   When `PHASES` is unset, the spec reviewer also writes a phased-fitness
+   judgment to `.workflow/phased-suggestion.json`, and the spec human gate
+   may offer to enable Phased ATDD before the plan is written.
 2. **Human approval**: the highest-leverage checkpoint. A bad spec amplifies
    into many bad changes, so a human approves the spec (and may edit it first)
    before costly implementation starts. `HUMAN_GATE=0` skips this gate.

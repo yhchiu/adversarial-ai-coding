@@ -80,3 +80,11 @@ def test_color_settings_are_documented_bilingually():
         assert "1;91" in readme
         for detail in redirect_details:
             assert detail in readme
+
+
+def test_phased_suggestion_is_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "phased-suggestion.json" in readme
+        assert "Enable Phased ATDD for this run?" in readme
+    assert "phased-suggestion.json" in _read("resources/AGENTS.template.md")
+    assert "phased-suggestion.json" in _read("docs/python-port-parity.md")
