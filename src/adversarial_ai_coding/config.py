@@ -73,6 +73,7 @@ class Settings:
     import_plan: str
     import_review: bool
     phases: bool
+    phases_explicit: bool
     phase_review: bool
     open_pr: bool
     notify_cmd: str
@@ -126,6 +127,10 @@ class Settings:
             import_plan=persisted("IMPORT_PLAN", ""),
             import_review=_to_binary_flag("IMPORT_REVIEW", import_review_raw),
             phases=persisted("PHASES", "0") == "1",
+            # Explicit PHASES in the launching environment (empty string
+            # behaves as unset, matching persisted()). Deliberately never
+            # snapshotted: it describes this attempt's command line.
+            phases_explicit=bool(env.get("PHASES")),
             phase_review=persisted("PHASE_REVIEW", "0") == "1",
             open_pr=persisted("OPEN_PR", "0") == "1",
             # Deliberately never from the snapshot (bash line 307): provide per attempt.

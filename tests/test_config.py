@@ -178,6 +178,20 @@ def test_phase_settings_resume_from_snapshot():
     assert settings.phase_review is True
 
 
+def test_phases_explicit_tracks_environment_presence():
+    from adversarial_ai_coding.config import Settings
+
+    assert Settings.from_env({"PHASES": "0"}, run_id="t").phases_explicit
+    assert Settings.from_env({"PHASES": "1"}, run_id="t").phases_explicit
+    assert not Settings.from_env({}, run_id="t").phases_explicit
+    # Empty string behaves as unset, matching persisted() semantics.
+    assert not Settings.from_env({"PHASES": ""}, run_id="t").phases_explicit
+    # A snapshot value is not "explicit": the user did not type it now.
+    resumed = Settings.from_env({}, run_id="t", snapshot={"PHASES": "1"})
+    assert resumed.phases is True
+    assert resumed.phases_explicit is False
+
+
 def test_import_settings_default_off():
     settings = Settings.from_env({}, run_id="r")
     assert settings.import_spec == ""
