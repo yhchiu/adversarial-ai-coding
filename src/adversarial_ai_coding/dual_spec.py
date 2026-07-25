@@ -15,6 +15,7 @@ from .prompts import render_prompt
 from .review import review_loop, run_review
 from .workflow import (
     WorkflowContext,
+    append_phased_suggestion_scope,
     begin_stage,
     end_stage,
     human_gate_spec,
@@ -361,12 +362,16 @@ def apply_dual_spec_decision(
             },
         )
         work(ctx, ctx.spec_roles.owner_agent, prompt)
+    scope = append_phased_suggestion_scope(
+        ctx, dual_spec_final_review_scope(ctx, decision)
+    )
     review_loop(
         ctx,
         ctx.spec_roles.reviewer_agent,
         ctx.spec_roles.owner_agent,
-        dual_spec_final_review_scope(ctx, decision),
+        scope,
     )
+    ctx.phased_suggestion_active = False
     human_gate_spec(ctx)
 
 

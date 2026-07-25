@@ -114,6 +114,36 @@ def test_apply_adopt_reviews_and_gates(make_ctx, monkeypatch):
     assert calls == [("review", ctx.ref("B"), ctx.ref("A")), ("human",)]
 
 
+def test_apply_decision_arms_phased_suggestion_on_final_review(
+    make_ctx, monkeypatch
+):
+    ctx = dual_ctx(make_ctx)
+    (ctx.spec_dir / "spec-a.md").write_text("candidate A\n", encoding="utf-8")
+    (ctx.spec_dir / "spec-b.md").write_text("candidate B\n", encoding="utf-8")
+    seen = {}
+
+    def fake_review(ctx_arg, reviewer, worker, scope):
+        seen["scope"] = scope
+        seen["active_during_review"] = ctx_arg.phased_suggestion_active
+        ctx_arg.phased_suggestion_valid = True
+
+    def fake_gate(ctx_arg):
+        seen["gate_state"] = (
+            ctx_arg.phased_suggestion_active,
+            ctx_arg.phased_suggestion_valid,
+        )
+
+    monkeypatch.setattr(ds, "review_loop", fake_review)
+    monkeypatch.setattr(ds, "human_gate_spec", fake_gate)
+    ds.apply_dual_spec_decision(ctx, "adopt-a", "task text")
+
+    assert "phased-suggestion.json" in seen["scope"]
+    assert seen["active_during_review"] is True
+    # The active flag is scoped to the loop, while review_loop's validity
+    # handoff remains available to the human gate.
+    assert seen["gate_state"] == (False, True)
+
+
 def test_apply_merge_calls_owner_then_reviews(make_ctx, monkeypatch):
     ctx = dual_ctx(make_ctx)
     (ctx.spec_dir / "spec-a.md").write_text("candidate A\n", encoding="utf-8")
