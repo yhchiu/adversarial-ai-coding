@@ -228,7 +228,7 @@ def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatc
     env = wf_env(
         work,
         HUMAN_GATE="1",
-        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}',
+        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}"',
     )
     assert "PHASES" not in env
     asked = []
