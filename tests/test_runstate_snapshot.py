@@ -320,8 +320,10 @@ def test_enable_snapshot_phases_requires_a_snapshot(tmp_path):
         enable_snapshot_phases,
     )
 
-    with pytest.raises(RunStateError, match="cannot record the Phased ATDD"):
+    with pytest.raises(RunStateError, match="cannot record the Phased ATDD") as err:
         enable_snapshot_phases(tmp_path)
+    # The human just answered y, so the abort must say what happens next.
+    assert "a resume runs it again and offers Phased ATDD again" in str(err.value)
 
 
 def test_enable_snapshot_phases_wraps_atomic_write_failure_and_preserves_snapshot(

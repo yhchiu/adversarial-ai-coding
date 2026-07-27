@@ -183,7 +183,11 @@ def enable_snapshot_phases(state_dir: Path) -> None:
         _atomic_write(path, json.dumps(payload, indent=2) + "\n")
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, RunStateError) as exc:
         raise RunStateError(
-            f"{path}: cannot record the Phased ATDD flip ({exc})."
+            f"!! {path}: cannot record the Phased ATDD flip ({exc}).\n"
+            "   Stopping here so the snapshot and this attempt cannot "
+            "disagree about PHASES.\n"
+            "   The spec stage is not recorded complete, so a resume runs "
+            "it again and offers Phased ATDD again."
         ) from None
 
 
