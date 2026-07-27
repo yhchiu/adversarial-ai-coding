@@ -159,6 +159,25 @@ def test_spec_gate_offer_flips_settings_and_snapshot(make_ctx, new_repo):
     assert load_snapshot(ctx.state.state_dir)["PHASES"] == "1"
 
 
+def test_spec_gate_flip_reaches_every_settings_holder(make_ctx, new_repo):
+    """RunArchive keeps its own reference and must not describe a stale run."""
+
+    ctx = with_state(
+        make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"}), new_repo
+    )
+    _write_settings_snapshot(ctx)
+    _write_suggestion(ctx)
+    ctx.phased_suggestion_valid = True
+    assert ctx.archive.settings is ctx.settings
+    answers = iter(["y", "y"])
+    ctx.ask = lambda prompt: next(answers)
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is True
+    assert ctx.archive.settings is ctx.settings
+
+
 def test_spec_gate_offer_without_state_still_flips_runtime_settings(make_ctx):
     ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
     _write_suggestion(ctx)

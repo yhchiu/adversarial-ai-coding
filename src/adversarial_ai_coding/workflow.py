@@ -117,6 +117,17 @@ class WorkflowContext:
     def ref(self, slot: str) -> AgentRef:
         return agent_ref(slot, self.settings)
 
+    def update_settings(self, **changes) -> None:
+        """Change settings for every holder, not just this context.
+
+        Settings is frozen and RunArchive keeps its own reference for run
+        metadata, so a plain ctx.settings assignment would leave the
+        archive describing the run as it was before the change.
+        """
+
+        self.settings = replace(self.settings, **changes)
+        self.archive.settings = self.settings
+
     @property
     def agent_out(self) -> Path:
         return self.wf / "last-agent-output.txt"
@@ -595,7 +606,7 @@ def offer_phased_suggestion(ctx: WorkflowContext) -> None:
         from .runstate import enable_snapshot_phases
 
         enable_snapshot_phases(ctx.state.state_dir)
-    ctx.settings = replace(ctx.settings, phases=True)
+    ctx.update_settings(phases=True)
     ctx.log("Phased ATDD enabled at the spec gate")
     ctx.notify("adversarial-ai-coding: Phased ATDD enabled at the spec gate")
 
