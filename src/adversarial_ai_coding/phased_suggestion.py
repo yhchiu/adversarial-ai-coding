@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable
 
 from .config import Settings
 
@@ -40,17 +41,42 @@ def reset_suggestion(wf: Path) -> None:
     suggestion_path(wf).write_text(DEFAULT_SUGGESTION, encoding="utf-8")
 
 
-def read_suggestion(wf: Path) -> tuple[bool, str]:
-    """Return ``(phased, reason)``; malformed input becomes ``(False, "")``."""
+def read_suggestion(
+    wf: Path, warn: Callable[[str], None] | None = None
+) -> tuple[bool, str]:
+    """Return ``(phased, reason)``; unusable input becomes ``(False, "")``.
+
+    A recommendation survives a missing or non-string ``reason``: the
+    judgment is what the gate needs, and dropping it over its prose would
+    lose the reviewer's answer entirely. ``warn`` reports input the
+    workflow did not expect; a missing file and a well-formed negative
+    judgment are normal and stay quiet.
+    """
+
+    def report(message: str) -> None:
+        if warn is not None:
+            warn(f"(warning: {SUGGESTION_NAME} {message})")
 
     try:
-        payload = json.loads(suggestion_path(wf).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        text = suggestion_path(wf).read_text(encoding="utf-8")
+    except FileNotFoundError:
         return (False, "")
-    if (
-        not isinstance(payload, dict)
-        or payload.get("phased") is not True
-        or not isinstance(payload.get("reason"), str)
-    ):
+    except (OSError, UnicodeDecodeError) as exc:
+        report(f"is unreadable ({exc}); treating it as no suggestion")
         return (False, "")
-    return (True, payload["reason"])
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        report(f"is unreadable as JSON ({exc}); treating it as no suggestion")
+        return (False, "")
+    phased = payload.get("phased") if isinstance(payload, dict) else None
+    if not isinstance(phased, bool):
+        report('has no boolean "phased" field; treating it as no suggestion')
+        return (False, "")
+    if not phased:
+        return (False, "")
+    reason = payload.get("reason")
+    if not isinstance(reason, str):
+        report('has no string "reason"; keeping the recommendation without one')
+        return (True, "")
+    return (True, reason)

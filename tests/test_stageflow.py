@@ -272,6 +272,49 @@ def test_spec_gate_logs_only_without_human_gate(make_ctx):
     )
 
 
+def test_spec_gate_still_offers_when_the_reason_is_missing(make_ctx):
+    """A reviewer that omits the prose must not lose its recommendation."""
+
+    ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    (ctx.wf / "phased-suggestion.json").write_text(
+        '{"phased": true}', encoding="utf-8"
+    )
+    ctx.phased_suggestion_valid = True
+    logged = []
+    warned = []
+    ctx.echo = logged.append
+    ctx.echo_err = warned.append
+    answers = iter(["y", "y"])
+    ctx.ask = lambda prompt: next(answers)
+
+    human_gate_spec(ctx)
+
+    assert ctx.settings.phases is True
+    assert any(
+        "Reviewer suggests Phased ATDD (no reason given)" in line
+        for line in logged
+    )
+    assert any('has no string "reason"' in line for line in warned)
+
+
+def test_spec_gate_reports_an_unreadable_suggestion(make_ctx):
+    ctx = make_ctx({"HUMAN_GATE": "1", "RETRY_ON_LIMIT": "0"})
+    (ctx.wf / "phased-suggestion.json").write_text(
+        "not json at all", encoding="utf-8"
+    )
+    ctx.phased_suggestion_valid = True
+    warned = []
+    ctx.echo_err = warned.append
+    asked = []
+    ctx.ask = lambda prompt: (asked.append(prompt), "y")[1]
+
+    human_gate_spec(ctx)
+
+    assert len(asked) == 1  # only the spec approval question
+    assert ctx.settings.phases is False
+    assert any("unreadable as JSON" in line for line in warned)
+
+
 def test_append_phased_suggestion_scope_only_when_armed(make_ctx):
     from adversarial_ai_coding.workflow import append_phased_suggestion_scope
 

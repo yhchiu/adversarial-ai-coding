@@ -44,7 +44,6 @@ def test_read_suggestion_fails_open(tmp_path):
         '{"phased": "yes"}',
         '{"reason": "no phased key"}',
         '{"phased": false, "reason": "explicitly not a fit"}',
-        '{"phased": true, "reason": 5}',
     ]
     for text in cases:
         suggestion_path(tmp_path).write_text(text, encoding="utf-8")
@@ -57,3 +56,43 @@ def test_read_suggestion_accepts_a_recommendation(tmp_path):
         encoding="utf-8",
     )
     assert read_suggestion(tmp_path) == (True, "two independent features")
+
+
+def test_read_suggestion_keeps_a_recommendation_with_an_unusable_reason(tmp_path):
+    """A bad reason must not silently discard the recommendation itself."""
+
+    for text in ('{"phased": true, "reason": 5}', '{"phased": true}'):
+        suggestion_path(tmp_path).write_text(text, encoding="utf-8")
+        warnings = []
+        assert read_suggestion(tmp_path, warn=warnings.append) == (True, ""), text
+        assert len(warnings) == 1
+        assert "reason" in warnings[0]
+
+
+def test_read_suggestion_warns_about_unusable_input(tmp_path):
+    cases = [
+        ("not json at all", "unreadable"),
+        ("[true]", "phased"),
+        ('{"phased": "yes"}', "phased"),
+        ('{"reason": "no phased key"}', "phased"),
+    ]
+    for text, detail in cases:
+        suggestion_path(tmp_path).write_text(text, encoding="utf-8")
+        warnings = []
+        assert read_suggestion(tmp_path, warn=warnings.append) == (False, ""), text
+        assert len(warnings) == 1, text
+        assert detail in warnings[0], text
+
+
+def test_read_suggestion_is_quiet_about_expected_states(tmp_path):
+    """The default file and a missing file are normal, not warnings."""
+
+    warnings = []
+    assert read_suggestion(tmp_path, warn=warnings.append) == (False, "")
+    reset_suggestion(tmp_path)
+    assert read_suggestion(tmp_path, warn=warnings.append) == (False, "")
+    suggestion_path(tmp_path).write_text(
+        '{"phased": false, "reason": "one feature only"}', encoding="utf-8"
+    )
+    assert read_suggestion(tmp_path, warn=warnings.append) == (False, "")
+    assert warnings == []

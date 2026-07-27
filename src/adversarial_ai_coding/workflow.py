@@ -576,16 +576,17 @@ def offer_phased_suggestion(ctx: WorkflowContext) -> None:
 
     if not suggestion_armed(ctx.settings):
         return
-    phased, reason = read_suggestion(ctx.wf)
+    phased, reason = read_suggestion(ctx.wf, warn=ctx.echo_err)
     if not phased:
         return
+    detail = f": {reason}" if reason else " (no reason given)"
     if not ctx.settings.human_gate:
         ctx.log(
-            f"reviewer suggests Phased ATDD: {reason}; HUMAN_GATE=0, not asking"
+            f"reviewer suggests Phased ATDD{detail}; HUMAN_GATE=0, not asking"
         )
         return
     ctx.echo("")
-    ctx.echo(f"### Reviewer suggests Phased ATDD: {reason}")
+    ctx.echo(f"### Reviewer suggests Phased ATDD{detail}")
     answer = ctx.ask("Enable Phased ATDD for this run? [y/N]:")
     if answer not in ("y", "Y"):
         ctx.log("Phased ATDD suggestion declined; keeping the single-shot flow")
