@@ -1,5 +1,6 @@
 """Offline PHASES=1 scenarios with fake agents (no AI cost)."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -211,15 +212,9 @@ def test_resume_after_controls_recorded_before_stage_end(
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
 
 
-def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatch):
-    """PHASES unset; the reviewer suggests phased; the human says y twice."""
+def suggestion_env(work: Path, **overrides) -> dict:
+    """An interactive run with PHASES unset, so the suggestion is armed."""
 
-    import json
-
-    from adversarial_ai_coding import workflow as wf_mod
-
-    work = driver_workdir(tmp_path)
-    work.mkdir()
     (work / "check_impl.py").write_text(
         "import pathlib, sys\n"
         "sys.exit(0 if pathlib.Path('src.txt').exists() else 1)\n",
@@ -230,13 +225,22 @@ def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatc
         HUMAN_GATE="1",
         PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}"',
     )
+    env.update(overrides)
     assert "PHASES" not in env
-    asked = []
-    answers = iter(["y", "y"])
+    return env
+
+
+def arm_suggestion(new_repo, env, monkeypatch, answers, asked=None) -> None:
+    """Simulate a terminal answering the spec gate and the phased offer."""
+
+    from adversarial_ai_coding import workflow as wf_mod
+
+    replies = iter(answers)
 
     def fake_input(prompt=""):
-        asked.append(prompt)
-        return next(answers)
+        if asked is not None:
+            asked.append(prompt)
+        return next(replies)
 
     monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", fake_input)
@@ -249,37 +253,38 @@ def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatc
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
+
+def snapshot_phases(state: Path) -> str:
+    return json.loads((state / "settings.json").read_text(encoding="utf-8"))[
+        "phases"
+    ]
+
+
+def test_spec_gate_suggestion_flips_run_to_phased(new_repo, tmp_path, monkeypatch):
+    """PHASES unset; the reviewer suggests phased; the human says y twice."""
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = suggestion_env(work)
+    asked = []
+    arm_suggestion(new_repo, env, monkeypatch, ["y", "y"], asked)
+
     assert cli.main(["demo task"], env, stdin_isatty=True) == 0
     assert len(asked) == 2
     assert "Enable Phased ATDD" in asked[1]
     state = state_dir_of(new_repo)
     st = RunState(state_dir=state, run_id=state.name)
     assert st.completed_stages() == EXPECTED_STAGES
-    snap = json.loads((state / "settings.json").read_text(encoding="utf-8"))
-    assert snap["phases"] == "1"
+    assert snapshot_phases(state) == "1"
 
 
 def test_spec_gate_suggestion_declined_stays_single_shot(
     new_repo, tmp_path, monkeypatch
 ):
-    import json
-
-    from adversarial_ai_coding import workflow as wf_mod
-
     work = driver_workdir(tmp_path)
     work.mkdir()
-    env = wf_env(work, HUMAN_GATE="1")
-    answers = iter(["y", "n"])
-    monkeypatch.setattr(wf_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    monkeypatch.chdir(new_repo)
-    monkeypatch.setenv("PYTHONPATH", "")
-    monkeypatch.setenv(
-        "FAKE_PHASED_SUGGESTION",
-        '{"phased": true, "reason": "two independent features"}',
-    )
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
+    env = suggestion_env(work)
+    arm_suggestion(new_repo, env, monkeypatch, ["y", "n"])
 
     assert cli.main(["demo task"], env, stdin_isatty=True) == 0
     state = state_dir_of(new_repo)
@@ -287,5 +292,66 @@ def test_spec_gate_suggestion_declined_stays_single_shot(
     stages = st.completed_stages()
     assert "write-acceptance-tests" in stages
     assert not any(stage.startswith("phase-") for stage in stages)
-    snap = json.loads((state / "settings.json").read_text(encoding="utf-8"))
-    assert snap["phases"] == "0"
+    assert snapshot_phases(state) == "0"
+
+
+def test_resume_after_the_spec_gate_flip_stays_phased(
+    new_repo, tmp_path, monkeypatch
+):
+    """The flip must survive a resume without asking the human again.
+
+    The snapshot is the only carrier: PHASES was never in the environment,
+    so a resume that read a stale snapshot would silently drop back to the
+    single-shot flow after the human had already chosen phased.
+    """
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = suggestion_env(work)
+    # Abort in the plan stage: the spec stage, and with it the flip, is done.
+    (work / "abort-on").write_text("write-plan\n", encoding="utf-8")
+    arm_suggestion(new_repo, env, monkeypatch, ["y", "y"])
+
+    assert cli.main(["demo task"], env, stdin_isatty=True) == 75
+    state = state_dir_of(new_repo)
+    st = RunState(state_dir=state, run_id=state.name)
+    assert "write-spec" in st.completed_stages()
+    assert "write-implementation-plan" not in st.completed_stages()
+    assert snapshot_phases(state) == "1"
+
+    (work / "abort-on").unlink()
+    # HUMAN_GATE=0 proves the resume never needs to ask again: an offer or a
+    # spec gate would abort on the exhausted answer iterator either way.
+    rc = run_cli(
+        new_repo,
+        dict(env, RESUME_RUN=state.name, HUMAN_GATE="0"),
+        args=[],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 0
+    st = RunState(state_dir=state, run_id=state.name)
+    assert st.completed_stages() == EXPECTED_STAGES
+    assert snapshot_phases(state) == "1"
+
+
+def test_resume_after_the_flip_rejects_conflicting_phases_zero(
+    new_repo, tmp_path, monkeypatch
+):
+    """The flipped value is immutable like any other snapshotted PHASES."""
+
+    work = driver_workdir(tmp_path)
+    work.mkdir()
+    env = suggestion_env(work)
+    (work / "abort-on").write_text("write-plan\n", encoding="utf-8")
+    arm_suggestion(new_repo, env, monkeypatch, ["y", "y"])
+
+    assert cli.main(["demo task"], env, stdin_isatty=True) == 75
+    state = state_dir_of(new_repo)
+    rc = run_cli(
+        new_repo,
+        dict(env, RESUME_RUN=state.name, PHASES="0", HUMAN_GATE="0"),
+        args=[],
+        monkeypatch=monkeypatch,
+    )
+    assert rc == 1
+    assert snapshot_phases(state) == "1"
