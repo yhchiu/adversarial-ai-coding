@@ -112,6 +112,11 @@ uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 
 若目標就是 workflow checkout 本身,可使用簡寫:`uv run adversarial-ai-coding task.md`。
 
+既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
+與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
+時會印出提示,新版本加入的規則才不會被漏掉。標記區塊之外你自己寫的內容不會被
+動到,也不會被視為過時。
+
 ## 強模型規劃、便宜模型實作
 
 寫 spec、規劃、撰寫驗收測試與對抗式審查最需要強模型;重複性高的 stage-5 任務迴圈則可換成較便宜的模型或不同 CLI,而後續完整關卡與審查仍交回原本的 owner/reviewer 配對。

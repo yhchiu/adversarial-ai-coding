@@ -82,6 +82,15 @@ def test_color_settings_are_documented_bilingually():
             assert detail in readme
 
 
+def test_agents_drift_note_is_documented_bilingually():
+    for name in ("README.md", "README.zh-TW.md"):
+        readme = _read(name)
+        assert "adversarial-ai-coding:begin" in readme
+        assert "adversarial-ai-coding:end" in readme
+    assert "out of date" in _read("README.md")
+    assert "過時" in _read("README.zh-TW.md")
+
+
 def test_phased_suggestion_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "phased-suggestion.json" in readme

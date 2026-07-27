@@ -168,6 +168,12 @@ Print the agent rules template for manual merging into an existing `AGENTS.md`:
 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 ```
 
+An existing `AGENTS.md` is never overwritten. Every run compares the block
+between the `adversarial-ai-coding:begin` and `adversarial-ai-coding:end`
+markers against the current template and prints a note when it is missing or
+out of date, so rules added by a newer version do not go unnoticed. Your own
+text around the block is left alone and is not treated as drift.
+
 ## Strong Model Plans, Cheap Model Implements
 
 Spec writing, planning, acceptance tests, and adversarial review benefit most

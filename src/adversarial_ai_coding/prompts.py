@@ -59,6 +59,26 @@ def prompt_file_instruction(artifact_path: str) -> str:
 
 
 AGENTS_MARKER = "<!-- adversarial-ai-coding:begin -->"
+AGENTS_END_MARKER = "<!-- adversarial-ai-coding:end -->"
+
+
+def managed_agents_section(text: str) -> str | None:
+    """Return the delimited adversarial-ai-coding block, or None.
+
+    Both markers must be present: a block that lost its end marker cannot
+    be told apart from the user's own prose, so it is not comparable.
+    Line endings are normalized, because a Windows checkout stores the
+    same rules with CRLF.
+    """
+
+    normalized = text.replace("\r\n", "\n")
+    start = normalized.find(AGENTS_MARKER)
+    if start < 0:
+        return None
+    end = normalized.find(AGENTS_END_MARKER, start)
+    if end < 0:
+        return None
+    return normalized[start : end + len(AGENTS_END_MARKER)]
 
 
 def default_agents_template(env: Mapping[str, str]) -> Path:
@@ -77,15 +97,39 @@ def write_agents_section(template: Path) -> str:
     return template.read_text(encoding="utf-8")
 
 
+def _report_agents_section(agents: Path, template: Path, echo_err) -> None:
+    """Report an AGENTS.md whose managed rules are missing or out of date.
+
+    The file is never rewritten: it belongs to the user and may hold their
+    own rules around the block. Reviewers still receive the rules that
+    matter for a stage through the stage prompt, so a stale block degrades
+    the reviewer's background knowledge rather than breaking the run.
+    """
+
+    current = managed_agents_section(agents.read_text(encoding="utf-8"))
+    if current is None:
+        echo_err(
+            "(note: AGENTS.md exists but does not include "
+            "adversarial-ai-coding rules; run \"print-agents\" and "
+            "merge them manually)"
+        )
+        return
+    expected = managed_agents_section(write_agents_section(template))
+    if expected is not None and current != expected:
+        echo_err(
+            "(note: the adversarial-ai-coding rules in AGENTS.md are out "
+            "of date; run \"print-agents\" and merge the changes manually)"
+        )
+
+
 def bootstrap_agents_md(cwd: Path, template: Path, echo, echo_err) -> None:
     agents = cwd / "AGENTS.md"
     if agents.is_file():
-        if AGENTS_MARKER not in agents.read_text(encoding="utf-8"):
-            echo_err(
-                "(note: AGENTS.md exists but does not include "
-                "adversarial-ai-coding rules; run \"print-agents\" and "
-                "merge them manually)"
-            )
+        try:
+            _report_agents_section(agents, template, echo_err)
+        except PromptTemplateError as exc:
+            echo_err(str(exc))
+            return
     else:
         try:
             agents.write_text(write_agents_section(template), encoding="utf-8")
