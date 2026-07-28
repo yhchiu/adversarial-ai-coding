@@ -111,41 +111,63 @@ cd /path/to/adversarial-ai-coding
 uv sync --frozen
 ```
 
-Then run it from the root of the target project. `--project` selects the
-workflow's environment without changing the target working directory:
+The repository includes `scripts/aac` for macOS/Linux and `scripts/aac.cmd` for
+Windows. Add the checkout's `scripts` directory to `PATH` for your current
+shell:
+
+macOS, Linux, or Git Bash:
+
+```bash
+export PATH="/path/to/adversarial-ai-coding/scripts:$PATH"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:Path = "C:\path\to\adversarial-ai-coding\scripts;$env:Path"
+```
+
+Windows Command Prompt:
+
+```bat
+set "PATH=C:\path\to\adversarial-ai-coding\scripts;%PATH%"
+```
+
+Put the equivalent setting in your shell profile or user `PATH` to keep it
+across terminal sessions. The `aac` launchers find the workflow checkout from
+their own location, run its environment with `--locked`, and leave the current
+working directory unchanged.
+
+Then run `aac` from the root of the target project:
 
 ```bash
 cd /path/to/your-project
-AAC_PROJECT=/path/to/adversarial-ai-coding
 ```
-
-When the target is this checkout itself, the shorter form is
-`uv run adversarial-ai-coding task.md`.
 
 Run a task with the default agents, where Claude is the worker and Codex is the
 reviewer:
 
 ```bash
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding "Add --json output to the CLI"
+aac "Add --json output to the CLI"
 ```
 
 You can also write the task in a file:
 
 ```bash
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+aac task.md
 ```
 
 Swap the worker and reviewer agents:
 
 ```bash
-AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+AGENT_A=codex AGENT_B=claude aac task.md
 ```
 
 Use the same built-in CLI in both slots with different slot-specific models:
 
 ```bash
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 Use custom agent or wrapper commands:
@@ -153,19 +175,19 @@ Use custom agent or wrapper commands:
 ```bash
 AGENT_A=gemini AGENT_A_ARGS='--model gemini-2.5-pro --yolo' \
 AGENT_B=my-review-wrapper AGENT_B_ARGS='--strict' \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 Enable dual spec mode:
 
 ```bash
-DUAL_SPEC=1 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+DUAL_SPEC=1 aac task.md
 ```
 
 Print the agent rules template for manual merging into an existing `AGENTS.md`:
 
 ```bash
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
+aac print-agents
 ```
 
 An existing `AGENTS.md` is never overwritten. Every run compares the block
@@ -184,7 +206,7 @@ Keep the owner's command and change only the implementation model:
 
 ```bash
 AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 Or plan with Claude and implement the checkbox tasks with Codex:
@@ -194,7 +216,7 @@ AGENT_A=claude MODEL_A=opus \
 AGENT_B=codex MODEL_B=gpt-5.5 \
 IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
 IMPL_ARGS='-c model_reasoning_effort="low"' \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 If all three `IMPL_*` variables are empty, the implementation slot resolves to
@@ -448,7 +470,7 @@ On Windows, if you want Go race tests in the gate, use:
 
 ```bash
 GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...' \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 ## Resuming an Interrupted Run
@@ -458,7 +480,7 @@ task, the effective settings, a stage completion ledger, and the remaining
 implementation tasks. When a run aborts, it prints a paste-ready command:
 
 ```bash
-RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
+RESUME_RUN=20260710-153012 aac
 ```
 
 The resumed run skips every completed stage (no AI cost is paid again),
@@ -472,7 +494,7 @@ Engines, models, and most settings may be overridden per attempt. The main
 use case is swapping an agent whose quota ran out:
 
 ```bash
-AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
+AGENT_B=agy RESUME_RUN=last aac
 ```
 
 The persisted `IMPL_AGENT`, `IMPL_MODEL`, and `IMPL_ARGS` values follow the

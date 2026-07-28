@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+AAC_PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+exec uv run \
+  --project "$AAC_PROJECT_ROOT" \
+  --locked \
+  adversarial-ai-coding "$@"

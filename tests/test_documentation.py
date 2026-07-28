@@ -16,6 +16,17 @@ def test_codex_reserved_aliases_are_documented_bilingually():
         assert "-mMODEL" in readme
 
 
+def test_cross_platform_launchers_are_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "adversarial-ai-coding/scripts" in readme
+        assert "scripts/aac" in readme
+        assert "scripts/aac.cmd" in readme
+        assert "aac task.md" in readme
+        assert "Windows PowerShell" in readme
+        assert "--locked" in readme
+        assert 'uv run --project "$AAC_PROJECT"' not in readme
+
+
 def test_protected_test_recovery_requires_commit_before_new_base():
     english = _read("README.md").lower()
     recovery = english[english.index("## protected acceptance tests") :]

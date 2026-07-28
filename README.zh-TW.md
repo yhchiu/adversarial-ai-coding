@@ -85,32 +85,57 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 # 先在 workflow checkout 安裝鎖定的環境
 cd /path/to/adversarial-ai-coding
 uv sync --frozen
+```
 
-# 再從目標專案根目錄執行
+Repository 提供 macOS/Linux 使用的 `scripts/aac` 與 Windows 使用的
+`scripts/aac.cmd`。將 checkout 的 `scripts` 目錄加入目前 shell 的 `PATH`。
+
+macOS、Linux 或 Git Bash:
+
+```bash
+export PATH="/path/to/adversarial-ai-coding/scripts:$PATH"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:Path = "C:\path\to\adversarial-ai-coding\scripts;$env:Path"
+```
+
+Windows 命令提示字元:
+
+```bat
+set "PATH=C:\path\to\adversarial-ai-coding\scripts;%PATH%"
+```
+
+若要讓設定在新的終端 session 仍然生效,請將相同設定加入 shell profile 或使用者
+`PATH`。`aac` launcher 會從自身位置找到 workflow checkout,以 `--locked`
+執行該環境,並保持目前工作目錄不變。
+
+之後從目標專案根目錄執行 `aac`:
+
+```bash
 cd /path/to/your-project
-AAC_PROJECT=/path/to/adversarial-ai-coding
 
 # 預設:A = Claude Code,B = Codex
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding "為 CLI 加上 --json 輸出選項"
+aac "為 CLI 加上 --json 輸出選項"
 
 # 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+aac task.md
 
 # 交換 agent
-AGENT_A=codex AGENT_B=claude uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+AGENT_A=codex AGENT_B=claude aac task.md
 
 # 同一個內建 CLI 放在兩個 slot,各自使用不同模型
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
-DUAL_SPEC=1 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+DUAL_SPEC=1 aac task.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
-uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
+aac print-agents
 ```
-
-若目標就是 workflow checkout 本身,可使用簡寫:`uv run adversarial-ai-coding task.md`。
 
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
 與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
@@ -125,7 +150,7 @@ uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding print-agents
 
 ```bash
 AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 或由 Claude 規劃、Codex 實作 checkbox 任務:
@@ -135,7 +160,7 @@ AGENT_A=claude MODEL_A=opus \
 AGENT_B=codex MODEL_B=gpt-5.5 \
 IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
 IMPL_ARGS='-c model_reasoning_effort="low"' \
-  uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding task.md
+  aac task.md
 ```
 
 三個 `IMPL_*` 都為空時,實作 slot 解析成選定的 owner,完全沿用既有行為。`IMPL_MODEL` 為空時,只有實作 command 與 owner command 相同,才繼承 owner slot 的 `MODEL_A` 或 `MODEL_B`;若換了 command 卻沒有設定 `IMPL_MODEL`,就使用該 CLI 自己的預設模型,絕不把一個 CLI 的模型名稱帶到另一個 CLI。
@@ -326,7 +351,7 @@ Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && 
 每次 run 會把進度記錄在 `.workflow/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
 
 ```bash
-RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
+RESUME_RUN=20260710-153012 aac
 ```
 
 續跑會跳過所有已完成的 stage(不重付 AI 費用),還原跨 stage 狀態(dual-spec 裁決、驗收測試基準、剩餘實作任務),從中斷點繼續。`RESUME_RUN=last` 自動選最新未完成的 run。續跑不必再帶 task 參數:以 run 的 task 快照為準,帶了且內容不同會直接拒絕。
@@ -334,7 +359,7 @@ RESUME_RUN=20260710-153012 uv run --project "$AAC_PROJECT" --locked adversarial-
 引擎、模型等多數設定每次 attempt 都可覆寫。最主要的用例是換掉配額耗盡的 agent:
 
 ```bash
-AGENT_B=agy RESUME_RUN=last uv run --project "$AAC_PROJECT" --locked adversarial-ai-coding
+AGENT_B=agy RESUME_RUN=last aac
 ```
 
 持久化的 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `.workflow/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-1 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
