@@ -237,6 +237,7 @@ def _validate_builtin_arg_tokens(
                     "--no-session-persistence",
                     "--from-pr",
                     "--output-format",
+                    "--verbose",
                     "--json-schema",
                 }
             )
@@ -340,20 +341,6 @@ def _resolve_argv0(name: str) -> str:
     return shutil.which(name) or name
 
 
-def _run_captured(argv: list[str]) -> tuple[int, str]:
-    # bash: out=$(cmd ...) -- stdout captured, stderr passes through.
-    proc = subprocess.run(
-        argv,
-        capture_output=False,
-        stdout=subprocess.PIPE,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return proc.returncode, proc.stdout.rstrip("\n")
-
-
 def agent_prefix(ref: AgentRef) -> str:
     """The marker that tells streamed agent lines apart from workflow ones.
 
@@ -391,6 +378,125 @@ def _run_streaming(argv: list[str], io: AgentIO, ref: AgentRef) -> tuple[int, st
             _echo_agent(io, ref, line)
     rc = proc.wait()
     return rc, "\n".join(lines)
+
+
+# The tool input field that best identifies what a call is touching,
+# most specific first. Everything else in the input is dropped so a Write
+# with a thousand-line body still costs one short line.
+_TOOL_ARG_KEYS = (
+    "file_path",
+    "notebook_path",
+    "command",
+    # Before "path": a search names what it looks for, not where it looks.
+    "pattern",
+    "url",
+    "query",
+    "path",
+    "prompt",
+    "description",
+)
+_TOOL_ARG_LIMIT = 100
+
+
+def _tool_summary(block: dict[str, object]) -> str:
+    """One line naming a tool call and the thing it acts on."""
+    name = block.get("name")
+    label = name if isinstance(name, str) and name else "tool"
+    payload = block.get("input")
+    detail = ""
+    if isinstance(payload, dict):
+        for key in _TOOL_ARG_KEYS:
+            value = payload.get(key)
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                detail = str(value).split("\n", 1)[0].strip()
+                if detail:
+                    break
+                detail = ""
+    if len(detail) > _TOOL_ARG_LIMIT:
+        detail = detail[:_TOOL_ARG_LIMIT] + "..."
+    return f" . {label} {detail}".rstrip()
+
+
+def render_claude_event(line: str) -> tuple[list[str], str]:
+    """Render one claude NDJSON line into (echo lines, envelope).
+
+    The envelope is non-empty only for the final result event, which is
+    what the adapters parse for the session id, the cost, and the result.
+    Keeping this pure is what makes the whole rendering layer testable
+    without a subprocess, while the caller stays free to echo per line.
+    """
+    text = line.rstrip("\r\n")
+    if not text.strip():
+        return [], ""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        # Merged stderr and CLI warnings are exactly what the user needs
+        # to see when something goes wrong, so pass them straight through.
+        return [text], ""
+    if not isinstance(payload, dict):
+        return [text], ""
+    event_type = payload.get("type")
+    if event_type == "result":
+        return [], text
+    if event_type != "assistant":
+        return [], ""
+    message = payload.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    if not isinstance(content, list):
+        return [], ""
+    echoed: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "text":
+            body = block.get("text")
+            if isinstance(body, str):
+                echoed += [part for part in body.split("\n") if part.strip()]
+        elif kind == "tool_use":
+            echoed.append(_tool_summary(block))
+    return echoed, ""
+
+
+def _run_claude_stream(
+    argv: list[str], io: AgentIO, ref: AgentRef
+) -> tuple[int, str]:
+    """Stream claude NDJSON, returning (rc, envelope).
+
+    The envelope is the same JSON object the old `--output-format json`
+    call produced, so every caller downstream is unchanged. When no
+    result event arrives -- a crash, a kill, a quota abort -- it falls
+    back to the whole raw stream, because ratelimit.py
+    reads only agent_out and an empty file would silently stop quota
+    retries in exactly the case that needs them.
+    """
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    raw: list[str] = []
+    envelope = ""
+    assert proc.stdout is not None
+    io.raw_out.parent.mkdir(parents=True, exist_ok=True)
+    with io.raw_out.open("w", encoding="utf-8") as raw_file:
+        for raw_line in proc.stdout:
+            raw_file.write(raw_line)
+            raw.append(raw_line.rstrip("\r\n"))
+            echo_lines, found = render_claude_event(raw_line)
+            for text in echo_lines:
+                _echo_agent(io, ref, text)
+            if found:
+                envelope = found
+    rc = proc.wait()
+    return rc, envelope or "\n".join(raw)
 
 
 def _run_codex_json(
@@ -508,7 +614,8 @@ def _worker_claude(
         "-p",
         prompt,
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--permission-mode",
         "acceptEdits",
         "--allowedTools",
@@ -517,7 +624,7 @@ def _worker_claude(
     argv += _claude_common_args(ref, settings)
     if session.worker_session:
         argv += ["--resume", session.worker_session]
-    rc, out = _run_captured(argv)
+    rc, out = _run_claude_stream(argv, io, ref)
     _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)
@@ -555,7 +662,8 @@ def _reviewer_claude(
     argv += _claude_common_args(ref, settings)
     argv += [
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--permission-mode",
         "acceptEdits",
         "--allowedTools",
@@ -563,7 +671,7 @@ def _reviewer_claude(
         "--json-schema",
         VERDICT_SCHEMA,
     ]
-    rc, out = _run_captured(argv)
+    rc, out = _run_claude_stream(argv, io, ref)
     _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)

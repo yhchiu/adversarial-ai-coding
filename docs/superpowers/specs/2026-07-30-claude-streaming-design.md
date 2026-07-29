@@ -102,8 +102,11 @@ thrashing; the tool summaries already provide the heartbeat.
 One line per tool call: the tool name plus its single most identifying
 argument, taken as the first present of
 
-`file_path`, `path`, `notebook_path`, `command`, `pattern`, `url`,
-`query`, `prompt`, `description`
+`file_path`, `notebook_path`, `command`, `pattern`, `url`, `query`,
+`path`, `prompt`, `description`
+
+`pattern` deliberately outranks `path`: a search is identified by what it
+looks for, not by where it looks.
 
 rendered as its first line and truncated to 100 characters with a
 trailing `...`. Anything else in the tool input is dropped, so a `Write`
