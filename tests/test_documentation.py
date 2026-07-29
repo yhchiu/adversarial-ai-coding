@@ -16,6 +16,19 @@ def test_codex_reserved_aliases_are_documented_bilingually():
         assert "-mMODEL" in readme
 
 
+def test_agent_streaming_is_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "claude -p --output-format stream-json" in readme
+        assert "`[A claude] `" in readme
+        assert "`AGENT`" in readme
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    assert "`--output-format`, `--verbose`, or `--json-schema`" in english
+    assert "archived artifacts and the run log never contain" in english
+    assert "`--output-format`、`--verbose` 或 `--json-schema`" in chinese
+    assert "封存產物與 run log 永遠不含前綴" in chinese
+
+
 def test_cross_platform_launchers_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "adversarial-ai-coding/scripts" in readme

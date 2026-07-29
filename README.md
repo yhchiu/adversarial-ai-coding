@@ -453,7 +453,7 @@ Add `--json` output to the CLI.
 | `NOTIFY_CMD` | empty | Notification command. The message is passed as the first argument. |
 | `COLOR` | `auto` | Colorize the workflow's own status messages. `auto` normally keeps redirected or non-terminal output plain; `NO_COLOR` disables color, `FORCE_COLOR` can force ANSI color in `auto` mode, including redirects, and `TERM=dumb` disables unforced color. `always` can emit ANSI color to redirected output; `never` disables color; the archived run log never contains color codes, even when color is forced. |
 | `COLOR_THEME` | `dark` | Status message color theme: `dark` or `light`. |
-| `COLOR_<CATEGORY>` | theme default | Per-category color override for `STAGE`, `PROGRESS`, `ERROR`, `WARNING`, `CHECKPOINT`, `SUCCESS`. Accepts a color name (`red`, `bright-cyan`, `bold-bright-red`) or raw SGR parameters (`1;91`), e.g. `COLOR_ERROR=bold-bright-red`. |
+| `COLOR_<CATEGORY>` | theme default | Per-category color override for `STAGE`, `PROGRESS`, `ERROR`, `WARNING`, `CHECKPOINT`, `SUCCESS`, `AGENT`. Accepts a color name (`red`, `bright-cyan`, `bold-bright-red`) or raw SGR parameters (`1;91`), e.g. `COLOR_ERROR=bold-bright-red`. |
 | `RETRY_ON_LIMIT` | `1` | Wait and retry on rate-limit or quota errors. |
 | `RETRY_MAX` | `6` | Maximum rate-limit retries per agent call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
@@ -591,10 +591,11 @@ agent command/runtime used for the call.
 
 | | Claude | Codex | Agy |
 |---|---|---|---|
-| Non-interactive call | `claude -p` | `codex exec --json` | `agy --print` |
+| Non-interactive call | `claude -p --output-format stream-json` | `codex exec --json` | `agy --print` |
 | Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` |
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` |
+| Live output | Messages and a one-line summary per tool call | Messages only | Raw merged output |
 
 Claude, Codex, and Agy may each be used in A, B, and I. Worker calls resume only
 by their captured ID, while every reviewer call starts fresh. There is one
@@ -612,14 +613,24 @@ these handoffs do not depend on retained chat context.
 
 The workflow never falls back to Codex `--last` or Agy `--continue`: if a fresh
 call does not yield an ID, it warns and starts fresh again next time; if an
-established session later omits the ID, the known ID is retained. Codex JSONL
-and Agy logs are archived as per-attempt `.cli.raw` artifacts for diagnosis.
+established session later omits the ID, the known ID is retained. Claude and
+Codex JSONL and Agy logs are archived as per-attempt `.cli.raw` artifacts for
+diagnosis.
+
+All three agents stream their output while they work, so a long step is never a
+silent wait. Every streamed line is prefixed with its slot and command, as in
+`[A claude] `, and printed in the `AGENT` color category. The prefix is what
+keeps an agent's own `### heading` from being read as a workflow checkpoint, and
+it is added at print time only: archived artifacts and the run log never contain
+it. Claude also reports each tool call as one line naming the tool and the file,
+command, or pattern it acts on; the rest of the tool input is dropped, so a
+large write still costs one short line.
 
 Built-in session, output, sandbox, and log flags belong to the workflow.
 `CLAUDE_ARGS` (and `IMPL_ARGS` when I resolves to Claude) must not contain
 `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`,
 `--no-session-persistence`, or `--from-pr`, and must not override the structured
-output contract through `--output-format` or `--json-schema`.
+output contract through `--output-format`, `--verbose`, or `--json-schema`.
 `CODEX_ARGS` and Codex-targeted `IMPL_ARGS` must not contain `--json`, `resume`,
 `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`,
 `--ephemeral`, or a `sandbox_mode` override through `-c` / `--config`.

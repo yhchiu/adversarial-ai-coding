@@ -331,7 +331,7 @@ spec human gate 會顯示理由並詢問
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
 | `COLOR` | `auto` | 為 workflow 自身的狀態訊息上色。`auto` 通常讓重導向或非終端機輸出保持無色碼;`NO_COLOR` 停用上色,`FORCE_COLOR` 可在 `auto` 模式強制 ANSI 色碼,包括重導向輸出,而 `TERM=dumb` 會停用未強制的上色。`always` 可讓重導向輸出包含 ANSI 色碼,`never` 停用。封存的 run log 即使強制上色也永遠不含色碼。 |
 | `COLOR_THEME` | `dark` | 狀態訊息主題:`dark` 或 `light`。 |
-| `COLOR_<CATEGORY>` | 主題預設 | 逐類別覆寫顏色,類別為 `STAGE`、`PROGRESS`、`ERROR`、`WARNING`、`CHECKPOINT`、`SUCCESS`。接受顏色名(`red`、`bright-cyan`、`bold-bright-red`)或原始 SGR 參數(`1;91`),例如 `COLOR_ERROR=bold-bright-red`。 |
+| `COLOR_<CATEGORY>` | 主題預設 | 逐類別覆寫顏色,類別為 `STAGE`、`PROGRESS`、`ERROR`、`WARNING`、`CHECKPOINT`、`SUCCESS`、`AGENT`。接受顏色名(`red`、`bright-cyan`、`bold-bright-red`)或原始 SGR 參數(`1;91`),例如 `COLOR_ERROR=bold-bright-red`。 |
 | `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三個內建 agent 通用。能解析等待時間就精準等(claude 的 `resets HH:MMam` +2 分緩衝;codex 的 `try again in 90s`、`try again at Jul 14th, 2026 7:23 PM` 或只有時刻的 `try again at 12:50 AM` +30 秒緩衝),否則指數退避;`0` = 直接失敗 |
 | `RETRY_MAX` | `6` | 每次 agent 呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
@@ -430,16 +430,18 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 | | claude | codex | agy |
 |---|---|---|---|
-| 非互動執行 | `claude -p` | `codex exec` | `agy --print` |
+| 非互動執行 | `claude -p --output-format stream-json` | `codex exec` | `agy --print` |
 | session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) |
 | id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` |
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) |
 | 費用回報 | 有(metrics.csv) | 無 | 無 |
+| 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 只有訊息 | 原始合併輸出 |
 
 - Claude、Codex、Agy 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
 - 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
-- workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Codex 原始 JSONL 與 Agy log 會存成每 attempt 的 `.cli.raw` artifact。
-- 內建 agent 的 session、輸出、sandbox 與 log 旗標由 workflow 管理。`CLAUDE_ARGS`(以及 I 解析成 Claude 時的 `IMPL_ARGS`)不得包含 `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`,也不得用 `--output-format` 或 `--json-schema` 覆寫結構化輸出契約。`CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 與 Agy 的 `IMPL_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。
+- workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude 與 Codex 的原始 JSONL、Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
+- 三家 agent 執行時都會即時串流輸出,長步驟不會變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。
+- 內建 agent 的 session、輸出、sandbox 與 log 旗標由 workflow 管理。`CLAUDE_ARGS`(以及 I 解析成 Claude 時的 `IMPL_ARGS`)不得包含 `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`,也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約。`CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 與 Agy 的 `IMPL_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。
 - 內建 args 也不得用 `--model`、`-m` 或 Codex 的 `-c model=` / `--config model=` 指定模型;必須使用 `MODEL_A`、`MODEL_B` 或 `IMPL_MODEL`,確保實際呼叫與 archive metadata 一致。`-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析。Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 - 所有內建與自訂 agent 的額外參數在各平台都採 POSIX shell quoting;含空白的值必須引用。Windows 反斜線路徑必須引用或改用 `/`,未引用的反斜線會套用 POSIX escape 語意。
 - Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
