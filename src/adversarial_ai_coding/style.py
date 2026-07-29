@@ -6,7 +6,13 @@ stay plain text. Configuration is environment-only and never persisted
 to the resume snapshot -- like NOTIFY_CMD, colors are per-attempt
 presentation settings.
 
-Spec: docs/superpowers/specs/2026-07-20-terminal-colors-design.md
+Streamed agent output is the one thing here that is not a workflow
+message. It arrives already carrying the prefix agents.py gives it, and
+the `agent` category exists so it stays visually separate instead of
+having its markdown mistaken for workflow frame messages.
+
+Specs: docs/superpowers/specs/2026-07-20-terminal-colors-design.md,
+docs/superpowers/specs/2026-07-30-claude-streaming-design.md
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ THEMES: dict[str, dict[str, str]] = {
         "progress": "36",
         "warning": "93",
         "success": "32",
+        "agent": "90",
     },
     "light": {
         "error": "1;31",
@@ -34,6 +41,7 @@ THEMES: dict[str, dict[str, str]] = {
         "progress": "34",
         "warning": "33",
         "success": "32",
+        "agent": "90",
     },
 }
 
@@ -54,12 +62,21 @@ _RAW_SGR = re.compile(r"^[0-9]+(;[0-9]+)*$")
 # non-prefix classification rules.
 _SUCCESS_SUFFIXES = ("check passed", "Review approved", "approved by human")
 
+# The "[<slot> <adapter>] " prefix agents.py puts on streamed agent lines.
+# Slots are only ever A, B, or I, so workflow messages that open with a
+# bracket -- review.py's "[{stage}] Review approved" -- cannot match.
+_AGENT_PREFIX = re.compile(r"\[[ABI] [^\]]+\](?: |$)")
+
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 
 
 def classify(line: str) -> str | None:
     """Map one output line to a style category by message conventions."""
     text = line.strip()
+    # First: an agent's own markdown must never be read as a workflow
+    # message. Its "### Summary" is not a human checkpoint.
+    if _AGENT_PREFIX.match(text):
+        return "agent"
     if text.startswith("!! "):
         return "error"
     if text.startswith(

@@ -67,6 +67,16 @@ def make(env=None, *, out_tty=True, err_tty=True, vt_ok=True):
         ("Phase red check passed", "success"),
         ("[spec] Review approved", "success"),
         ("Spec approved by human", "success"),
+        # Streamed agent lines: the prefix wins over every other rule, so an
+        # agent's own markdown is never read as a workflow message.
+        ("[A claude] ### Summary of changes", "agent"),
+        ("[A claude] >>> not a workflow progress line", "agent"),
+        ("[A claude] !! not a workflow error", "agent"),
+        ("[B codex]  . Read src/adversarial_ai_coding/agents.py", "agent"),
+        ("[I custom-wrapper] plain agent text", "agent"),
+        ("[A claude]", "agent"),
+        # Only A, B, and I are real slots; anything else is not agent output.
+        ("[X claude] not a slot", None),
         ("Task:demo", None),
         ("Quality gate:go test ./...", None),
         ("", None),
@@ -168,6 +178,21 @@ def test_override_wrong_prefix_order_raises():
 
 def test_empty_override_means_theme_default():
     assert make({"COLOR_ERROR": ""}).colors["error"] == THEMES["dark"]["error"]
+
+
+def test_agent_category_exists_in_both_themes():
+    assert THEMES["dark"]["agent"] == "90"
+    assert THEMES["light"]["agent"] == "90"
+
+
+def test_override_agent_color():
+    assert make({"COLOR_AGENT": "bright-black"}).colors["agent"] == "90"
+    assert make({"COLOR_AGENT": "blue"}).colors["agent"] == "34"
+
+
+def test_agent_line_is_painted_with_the_agent_color():
+    painted = make({"COLOR": "always"}).paint("[A claude] ### Summary")
+    assert painted == "\x1b[90m[A claude] ### Summary\x1b[0m"
 
 
 # --- Windows VT ---

@@ -40,7 +40,9 @@ def test_codex_json_preserves_raw_and_renders_readable_quota_text(tmp_path):
     io, echoed = make_io(tmp_path)
 
     rc, rendered, thread_id = agents._run_codex_json(
-        [sys.executable, str(emitter), str(FIXTURE)], io
+        [sys.executable, str(emitter), str(FIXTURE)],
+        io,
+        agents.AgentRef("A", "codex"),
     )
 
     assert rc == 0
@@ -55,6 +57,9 @@ def test_codex_json_preserves_raw_and_renders_readable_quota_text(tmp_path):
     assert parse_reset_wait(io.agent_out, now=0) == 50
     assert any("Remember token BLUEBIRD." in line for line in echoed)
     assert not any("future.event" in line for line in echoed)
+    # The prefix marks the terminal line only; the rendered file stays clean.
+    assert all(line.startswith("[A codex] ") for line in echoed)
+    assert "[A codex]" not in io.agent_out.read_text(encoding="utf-8")
 
 
 def test_codex_worker_uses_exact_thread_id_and_slot_model(monkeypatch, tmp_path):
@@ -66,7 +71,7 @@ def test_codex_worker_uses_exact_thread_id_and_slot_model(monkeypatch, tmp_path)
         ]
     )
 
-    def fake_run(argv, io):
+    def fake_run(argv, io, ref):
         calls.append(argv)
         return next(results)
 
@@ -106,7 +111,7 @@ def test_worker_session_is_discarded_when_agent_ref_changes(monkeypatch, tmp_pat
         ]
     )
 
-    def fake_run(argv, io):
+    def fake_run(argv, io, ref):
         calls.append(argv)
         return 0, "ok", next(thread_ids)
 
@@ -262,7 +267,7 @@ def test_fake_codex_impl_model_args_and_handoffs_use_real_argv(
 
 def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        agents, "_run_codex_json", lambda argv, io: (0, "ok", "")
+        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "")
     )
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = settings({"AGENT_A": "codex", "AGENT_B": "claude"})
@@ -277,7 +282,7 @@ def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_pa
 
 def test_codex_worker_without_id_stays_fresh_and_warns(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        agents, "_run_codex_json", lambda argv, io: (0, "ok", "")
+        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "")
     )
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = settings({"AGENT_A": "codex", "AGENT_B": "claude"})
@@ -293,7 +298,7 @@ def test_codex_worker_without_id_stays_fresh_and_warns(monkeypatch, tmp_path):
 def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
     calls = []
 
-    def fake_run(argv, io):
+    def fake_run(argv, io, ref):
         calls.append(argv)
         if len(calls) == 1:
             io.agent_out.write_text("rate limit; try again in 0s\n", encoding="utf-8")
@@ -469,7 +474,7 @@ def test_parse_agy_conversation_id_requires_marker_at_line_start(tmp_path):
 def test_agy_worker_uses_unique_logs_and_exact_conversation(monkeypatch, tmp_path):
     calls = []
 
-    def fake_stream(argv, io):
+    def fake_stream(argv, io, ref):
         calls.append(argv)
         log_path = Path(argv[argv.index("--log-file") + 1])
         if len(calls) == 1:
@@ -505,7 +510,7 @@ def test_agy_worker_uses_unique_logs_and_exact_conversation(monkeypatch, tmp_pat
 def test_agy_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
     calls = []
 
-    def fake_stream(argv, io):
+    def fake_stream(argv, io, ref):
         calls.append(argv)
         log_path = Path(argv[argv.index("--log-file") + 1])
         if len(calls) == 1:

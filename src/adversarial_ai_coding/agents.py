@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable
 
 from .config import Settings, SettingsError
@@ -354,7 +354,23 @@ def _run_captured(argv: list[str]) -> tuple[int, str]:
     return proc.returncode, proc.stdout.rstrip("\n")
 
 
-def _run_streaming(argv: list[str], io: AgentIO) -> tuple[int, str]:
+def agent_prefix(ref: AgentRef) -> str:
+    """The marker that tells streamed agent lines apart from workflow ones.
+
+    A custom agent may be configured as a full path, so use the file name
+    to keep the prefix short.
+    """
+    return f"[{ref.slot} {PurePath(ref.name).name or ref.name}] "
+
+
+def _echo_agent(io: AgentIO, ref: AgentRef, text: str) -> None:
+    """Echo agent output prefixed per line; files never get the prefix."""
+    prefix = agent_prefix(ref)
+    for line in text.split("\n"):
+        io.echo(prefix + line)
+
+
+def _run_streaming(argv: list[str], io: AgentIO, ref: AgentRef) -> tuple[int, str]:
     # bash: cmd ... 2>&1 | tee "$ENGINE_OUT" -- merged output streamed and saved.
     proc = subprocess.Popen(
         argv,
@@ -372,12 +388,14 @@ def _run_streaming(argv: list[str], io: AgentIO) -> tuple[int, str]:
             line = line.rstrip("\n")
             lines.append(line)
             out_file.write(line + "\n")
-            io.echo(line)
+            _echo_agent(io, ref, line)
     rc = proc.wait()
     return rc, "\n".join(lines)
 
 
-def _run_codex_json(argv: list[str], io: AgentIO) -> tuple[int, str, str]:
+def _run_codex_json(
+    argv: list[str], io: AgentIO, ref: AgentRef
+) -> tuple[int, str, str]:
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
@@ -441,7 +459,7 @@ def _run_codex_json(argv: list[str], io: AgentIO) -> tuple[int, str, str]:
                 rendered.append(text)
                 rendered_file.write(text.rstrip("\n") + "\n")
                 if should_echo:
-                    io.echo(text)
+                    _echo_agent(io, ref, text)
     rc = proc.wait()
     return rc, "\n".join(rendered), thread_id
 
@@ -619,7 +637,7 @@ def _worker_codex(
             session.worker_session,
             prompt,
         ]
-    rc, out, thread_id = _run_codex_json(argv, io)
+    rc, out, thread_id = _run_codex_json(argv, io, ref)
     if thread_id:
         session.worker_session = thread_id
     elif not session.worker_session:
@@ -647,7 +665,7 @@ def _reviewer_codex(
         *_codex_model_args(ref, settings),
         prompt,
     ]
-    rc, out, _ = _run_codex_json(argv, io)
+    rc, out, _ = _run_codex_json(argv, io, ref)
     session.last_cost = ""
     return AgentResult(rc, out)
 
@@ -716,7 +734,7 @@ def _worker_agy(
     argv += ["--log-file", str(log_path)]
     if session.worker_session:
         argv += ["--conversation", session.worker_session]
-    rc, out = _run_streaming(argv, io)
+    rc, out = _run_streaming(argv, io, ref)
     conversation_id = _parse_agy_conversation_id(log_path)
     if conversation_id:
         session.worker_session = conversation_id
@@ -745,7 +763,7 @@ def _reviewer_agy(
         "--dangerously-skip-permissions",
     ]
     argv += _agy_model_args(ref, settings)
-    rc, out = _run_streaming(argv, io)
+    rc, out = _run_streaming(argv, io, ref)
     return AgentResult(rc, out)
 
 
@@ -757,7 +775,7 @@ def _run_generic(
         *agent_args(ref, settings),
         prompt,
     ]
-    rc, out = _run_streaming(argv, io)
+    rc, out = _run_streaming(argv, io, ref)
     return AgentResult(rc, out)
 
 

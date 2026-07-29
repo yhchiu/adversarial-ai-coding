@@ -883,7 +883,7 @@ def test_generic_runner_places_shared_agent_args_before_prompt(monkeypatch, tmp_
     monkeypatch.setattr(
         agents,
         "_run_streaming",
-        lambda argv, io: (seen.update(argv=argv), (0, "ok"))[1],
+        lambda argv, io, ref: (seen.update(argv=argv), (0, "ok"))[1],
     )
     io, _ = make_io(tmp_path)
 
@@ -941,7 +941,7 @@ def test_codex_implementation_worker_orders_fresh_and_resume_argv(
     calls = []
     thread_ids = iter(["codex-thread-1", "codex-thread-1"])
 
-    def fake_run(argv, io):
+    def fake_run(argv, io, ref):
         calls.append(argv)
         return 0, "ok", next(thread_ids)
 
@@ -999,7 +999,7 @@ def test_agy_implementation_worker_orders_fresh_and_resume_argv(
     calls = []
     conversation_id = "66666666-6666-4666-8666-666666666666"
 
-    def fake_run(argv, io):
+    def fake_run(argv, io, ref):
         calls.append(argv)
         log_path = Path(argv[argv.index("--log-file") + 1])
         log_path.write_text(
@@ -1048,7 +1048,7 @@ def test_custom_implementation_worker_uses_impl_args_exactly_once(
     monkeypatch.setattr(
         agents,
         "_run_streaming",
-        lambda argv, io: (calls.append(argv), (0, "ok"))[1],
+        lambda argv, io, ref: (calls.append(argv), (0, "ok"))[1],
     )
     settings = make(
         {
@@ -1108,7 +1108,9 @@ def test_generic_worker_passes_args_and_prompt_as_final_arg(tmp_path):
     assert "arg2=two words" in captured
     assert "arg3=hello prompt" in captured
     assert io.agent_out.read_text(encoding="utf-8").strip() == "custom agent ran"
-    assert sink and sink[-1].strip() == "custom agent ran"
+    # A custom agent configured as a full path is prefixed by its file name.
+    prefix = f"[A {Path(sys.executable).name}] "
+    assert sink and sink[-1].strip() == prefix + "custom agent ran"
 
 
 def test_generic_worker_resolves_argv0_with_shutil_which(monkeypatch, tmp_path):
@@ -1117,7 +1119,7 @@ def test_generic_worker_resolves_argv0_with_shutil_which(monkeypatch, tmp_path):
     monkeypatch.setattr(
         agents,
         "_run_streaming",
-        lambda argv, io: (calls.append(argv), (0, "ok"))[1],
+        lambda argv, io, ref: (calls.append(argv), (0, "ok"))[1],
     )
     settings = Settings.from_env(
         {"AGENT_A": "fake", "AGENT_B": "codex"}, run_id="r"
@@ -1128,7 +1130,7 @@ def test_generic_worker_resolves_argv0_with_shutil_which(monkeypatch, tmp_path):
 
 
 def test_non_codex_worker_removes_stale_cli_raw(monkeypatch, tmp_path):
-    monkeypatch.setattr(agents, "_run_streaming", lambda argv, io: (0, "ok"))
+    monkeypatch.setattr(agents, "_run_streaming", lambda argv, io, ref: (0, "ok"))
     s = Settings.from_env(
         {"AGENT_A": "custom-agent", "AGENT_B": "codex"}, run_id="r"
     )
@@ -1138,6 +1140,32 @@ def test_non_codex_worker_removes_stale_cli_raw(monkeypatch, tmp_path):
     run_worker("custom-agent", "prompt", s, AgentSession(), io)
 
     assert not io.raw_out.exists()
+
+
+def test_streaming_prefixes_the_echo_but_not_the_file(tmp_path):
+    emitter = tmp_path / "emit.py"
+    emitter.write_text(
+        "print('### Summary')\nprint('second line')\n", encoding="utf-8"
+    )
+    io, echoed = make_io(tmp_path)
+
+    rc, out = agents._run_streaming(
+        [sys.executable, str(emitter)], io, AgentRef("B", "agy")
+    )
+
+    assert rc == 0
+    assert echoed == ["[B agy] ### Summary", "[B agy] second line"]
+    assert out == "### Summary\nsecond line"
+    assert io.agent_out.read_text(encoding="utf-8") == "### Summary\nsecond line\n"
+
+
+def test_agent_prefix_uses_slot_and_adapter_name():
+    assert agents.agent_prefix(AgentRef("A", "claude")) == "[A claude] "
+    assert agents.agent_prefix(AgentRef("I", "custom-impl")) == "[I custom-impl] "
+    assert (
+        agents.agent_prefix(AgentRef("B", "C:/tools/my wrapper.cmd"))
+        == "[B my wrapper.cmd] "
+    )
 
 
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
@@ -1321,7 +1349,7 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
     calls = []
     ids = iter(["thread-1", "thread-1"])
 
-    def fake_stream(argv, io):
+    def fake_stream(argv, io, ref):
         calls.append(argv)
         return (0, "codex output", next(ids))
 
@@ -1358,7 +1386,7 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
 def test_agy_worker_conversation_flag(monkeypatch, tmp_path):
     calls = []
 
-    def fake_stream(argv, io):
+    def fake_stream(argv, io, ref):
         calls.append(argv)
         log_path = Path(argv[argv.index("--log-file") + 1])
         log_path.write_text(
@@ -1575,7 +1603,7 @@ def test_claude_reviewer_argv_has_schema(monkeypatch, tmp_path):
 def test_agy_reviewer_uses_30m_timeout_and_no_continue(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setattr(agents, "_run_streaming",
-                        lambda argv, io: (seen.update(argv=argv), (0, "x"))[1])
+                        lambda argv, io, ref: (seen.update(argv=argv), (0, "x"))[1])
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({"AGENT_A": "agy", "AGENT_B": "codex"}, run_id="r")
     io, _ = make_io(tmp_path)
