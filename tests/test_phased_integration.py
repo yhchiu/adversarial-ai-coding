@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from test_resume_integration import (
+from workflow_harness import (
     calls,
     driver_workdir,
     implementation_tasks,

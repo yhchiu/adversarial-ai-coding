@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from test_resume_integration import (
+from workflow_harness import (
     calls,
     driver_workdir,
     run_cli,

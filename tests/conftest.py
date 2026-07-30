@@ -46,6 +46,67 @@ def new_repo(tmp_path, _repo_template):
     return tmp_path
 
 
+@pytest.fixture(scope="session")
+def _basic_run_template(tmp_path_factory, _repo_template):
+    """One finished plain workflow run, built once and handed out as copies.
+
+    Several tests start by driving the same completed run and only then
+    do something interesting to it: damage the ledger, drop the protected
+    controls, inspect what git tracks. That opening run costs about 13
+    seconds and roughly 100 child processes, and it is identical every
+    time, so it is worth paying for once.
+
+    The fake-agent wrappers deliberately stay at this shared path rather
+    than being recreated next to each copy. A resume checks the current
+    AGENT_A and AGENT_B against the run's settings snapshot and refuses a
+    mismatch, so the paths recorded in the template's snapshot have to
+    stay valid for every copy made from it.
+    """
+    from workflow_harness import run_cli, wf_env
+
+    base = tmp_path_factory.mktemp("basic-run")
+    repo = base / "repo"
+    shutil.copytree(_repo_template, repo)
+    work = base / "driver"
+    work.mkdir()
+
+    env = wf_env(work)
+    before = sorted(path.name for path in repo.iterdir())
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        rc = run_cli(repo, env, monkeypatch=monkeypatch)
+    assert rc == 0, "the shared basic run must complete"
+    return {"repo": repo, "work": work, "env": env, "before": before}
+
+
+@pytest.fixture
+def basic_run(tmp_path, _basic_run_template):
+    """A private copy of the completed plain run.
+
+    Returns the workspace, the driver directory holding calls.log, the env
+    that produced it, and the top-level entries the repo had before it ran.
+    Mutate any of it freely: the template is never touched.
+    """
+    from workflow_harness import driver_workdir
+
+    repo = tmp_path
+    shutil.copytree(_basic_run_template["repo"], repo, dirs_exist_ok=True)
+    work = driver_workdir(tmp_path)
+    shutil.copytree(_basic_run_template["work"], work)
+    # Only the mutable paths move; AGENT_A and AGENT_B keep pointing at the
+    # template's wrappers so the run's settings snapshot still matches.
+    env = dict(
+        _basic_run_template["env"],
+        FAKE_CALLS_LOG=str(work / "calls.log"),
+        FAKE_ABORT_ON=str(work / "abort-on"),
+    )
+    return {
+        "repo": repo,
+        "work": work,
+        "env": env,
+        "before": _basic_run_template["before"],
+    }
+
+
 @pytest.fixture
 def make_ctx(new_repo):
     """WorkflowContext over a throwaway repo with silenced console sinks."""

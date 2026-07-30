@@ -18,7 +18,6 @@ import subprocess
 from pathlib import Path
 
 from adversarial_ai_coding.config import ARTIFACT_ROOT, DOCS_ROOT, WORK_DIR
-from test_resume_integration import driver_workdir, run_cli, wf_env
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -54,10 +53,10 @@ def test_layout_constants_match_the_adr():
     assert DOCS_ROOT.startswith(f"{ARTIFACT_ROOT}/")
 
 
-def test_work_dir_is_ignored_and_docs_are_committed(new_repo, tmp_path, monkeypatch):
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    assert run_cli(new_repo, wf_env(work), monkeypatch=monkeypatch) == 0
+def test_work_dir_is_ignored_and_docs_are_committed(basic_run):
+    # Both tests below only read the result of a plain run, so they share
+    # one: see the basic_run fixture in conftest.py.
+    new_repo = basic_run["repo"]
 
     # The ignore file is self-contained: one "*", no negation to forget.
     assert (new_repo / WORK_DIR / ".gitignore").read_text(
@@ -82,13 +81,9 @@ def test_work_dir_is_ignored_and_docs_are_committed(new_repo, tmp_path, monkeypa
     assert git(new_repo, "status", "--porcelain").stdout == ""
 
 
-def test_one_top_level_entry_is_added_to_the_repository(
-    new_repo, tmp_path, monkeypatch
-):
-    before = {path.name for path in new_repo.iterdir()}
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    assert run_cli(new_repo, wf_env(work), monkeypatch=monkeypatch) == 0
+def test_one_top_level_entry_is_added_to_the_repository(basic_run):
+    new_repo = basic_run["repo"]
+    before = set(basic_run["before"])
     added = {path.name for path in new_repo.iterdir()} - before
     # The run also creates AGENTS.md, CLAUDE.md, and whatever the fake
     # agents write as product code; ARTIFACT_ROOT must be the only

@@ -1,89 +1,15 @@
 """Port of tests/resume.test.sh scenarios 1-4 and 6 (offline)."""
 
-import os
-import sys
-from pathlib import Path
-
 from adversarial_ai_coding import cli
-
-FAKE = str(Path(__file__).parent / "fake_agent.py")
-
-
-def _make_wrapper(work: Path, role: str) -> str:
-    if os.name == "nt":
-        path = work / f"fake-{role}.cmd"
-        path.write_text(
-            f'@"{sys.executable}" "{FAKE}" --role fake-{role} %*\r\n',
-            encoding="utf-8",
-        )
-    else:
-        path = work / f"fake-{role}"
-        path.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" --role fake-{role} "$@"\n',
-            encoding="utf-8",
-        )
-        path.chmod(0o755)
-    return str(path)
-
-
-def wf_env(work: Path, **overrides) -> dict:
-    env = {
-        "HUMAN_GATE": "0",
-        "DUAL_SPEC": "0",
-        "AUTO_BRANCH": "1",
-        "USE_WORKTREE": "0",
-        "OPEN_PR": "0",
-        "GATE_CMD": "exit 0",
-        "BUILD_GATE_CMD": "exit 0",
-        "RETRY_ON_LIMIT": "1",
-        "NOTIFY_CMD": "",
-        "FAKE_CALLS_LOG": str(work / "calls.log"),
-        "FAKE_ABORT_ON": str(work / "abort-on"),
-        "AGENT_A": _make_wrapper(work, "worker"),
-        "AGENT_B": _make_wrapper(work, "reviewer"),
-    }
-    env.update(overrides)
-    return env
-
-
-def run_cli(repo, env, args=None, monkeypatch=None):
-    monkeypatch.chdir(repo)
-    monkeypatch.setenv("PYTHONPATH", "")
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    argv = ["demo task"] if args is None else args
-    return cli.main(argv, env, stdin_isatty=False)
-
-
-def state_dir_of(repo: Path) -> Path:
-    return next((repo / "aac/.run" / "state").iterdir())
-
-
-def calls(work: Path, pattern: str) -> int:
-    log = work / "calls.log"
-    if not log.is_file():
-        return 0
-    return sum(
-        1
-        for line in log.read_text(encoding="utf-8").splitlines()
-        if line == pattern
-    )
-
-
-def implementation_tasks(work: Path, role: str) -> list[str]:
-    log = work / "implementation-tasks.log"
-    if not log.is_file():
-        return []
-    prefix = f"{role} "
-    return [
-        line.removeprefix(prefix)
-        for line in log.read_text(encoding="utf-8").splitlines()
-        if line.startswith(prefix)
-    ]
-
-
-def driver_workdir(tmp_path: Path) -> Path:
-    return tmp_path.parent / f"{tmp_path.name}-driver"
+from workflow_harness import (
+    calls,
+    driver_workdir,
+    implementation_tasks,
+    make_wrapper as _make_wrapper,
+    run_cli,
+    state_dir_of,
+    wf_env,
+)
 
 
 def test_scenario1_quota_abort_then_resume(new_repo, tmp_path, monkeypatch):
@@ -176,14 +102,9 @@ def test_plan_gate_asks_and_commits_the_human_edit(new_repo, tmp_path, monkeypat
     assert status_porcelain(new_repo) == ""
 
 
-def test_scenario2_lost_ledger_line_reruns_stage(
-    new_repo, tmp_path, monkeypatch
-):
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work)
-    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
-    state = state_dir_of(new_repo)
+def test_scenario2_lost_ledger_line_reruns_stage(basic_run, monkeypatch):
+    repo, work, env = basic_run["repo"], basic_run["work"], basic_run["env"]
+    state = state_dir_of(repo)
     from adversarial_ai_coding.runstate import RunState
 
     st = RunState(state_dir=state, run_id=state.name)
@@ -193,7 +114,7 @@ def test_scenario2_lost_ledger_line_reruns_stage(
     before = calls(work, "fake-worker final-review")
     assert (
         run_cli(
-            new_repo,
+            repo,
             dict(env, RESUME_RUN=state.name),
             args=[],
             monkeypatch=monkeypatch,
@@ -203,12 +124,9 @@ def test_scenario2_lost_ledger_line_reruns_stage(
     assert calls(work, "fake-worker final-review") == before + 1
 
 
-def test_scenario3_acceptance_window_keeps_base(new_repo, tmp_path, monkeypatch):
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work)
-    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
-    state = state_dir_of(new_repo)
+def test_scenario3_acceptance_window_keeps_base(basic_run, monkeypatch):
+    repo, env = basic_run["repo"], basic_run["env"]
+    state = state_dir_of(repo)
     from adversarial_ai_coding.runstate import RunState
 
     st = RunState(state_dir=state, run_id=state.name)
@@ -217,18 +135,18 @@ def test_scenario3_acceptance_window_keeps_base(new_repo, tmp_path, monkeypatch)
     st._write_ledger(
         [stage for stage in st.completed_stages() if stage != "write-acceptance-tests"]
     )
-    (new_repo / "aac/.run" / "protected-tests.txt").unlink()
-    (new_repo / "aac/.run" / "protected-base.sha").unlink()
+    (repo / "aac/.run" / "protected-tests.txt").unlink()
+    (repo / "aac/.run" / "protected-base.sha").unlink()
     assert (
         run_cli(
-            new_repo,
+            repo,
             dict(env, RESUME_RUN=state.name),
             args=[],
             monkeypatch=monkeypatch,
         )
         == 0
     )
-    rebuilt = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
+    rebuilt = (repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert "acc/acceptance.txt" in rebuilt
@@ -237,14 +155,9 @@ def test_scenario3_acceptance_window_keeps_base(new_repo, tmp_path, monkeypatch)
     ).read_text(encoding="utf-8") == base_before
 
 
-def test_scenario4_empty_queue_no_fallback(
-    new_repo, tmp_path, monkeypatch, capsys
-):
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work)
-    assert run_cli(new_repo, env, monkeypatch=monkeypatch) == 0
-    state = state_dir_of(new_repo)
+def test_scenario4_empty_queue_no_fallback(basic_run, monkeypatch, capsys):
+    repo, work, env = basic_run["repo"], basic_run["work"], basic_run["env"]
+    state = state_dir_of(repo)
     from adversarial_ai_coding.runstate import RunState
 
     st = RunState(state_dir=state, run_id=state.name)
@@ -253,7 +166,7 @@ def test_scenario4_empty_queue_no_fallback(
     before = calls(work, "fake-worker implement")
     assert (
         run_cli(
-            new_repo,
+            repo,
             dict(env, RESUME_RUN=state.name),
             args=[],
             monkeypatch=monkeypatch,
