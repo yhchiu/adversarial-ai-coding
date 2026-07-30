@@ -463,7 +463,6 @@ Add `--json` output to the CLI.
 | `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
-| `RUNS_DIR` | `.workflow/runs` | Directory for archived workflow run artifacts. |
 | `TOOLS` | git/go build/test/vet allowlist | Claude Code `--allowedTools` value. |
 
 On Windows, if you want Go race tests in the gate, use:

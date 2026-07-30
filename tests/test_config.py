@@ -37,7 +37,6 @@ def test_defaults_match_bash():
     assert s.retry_max_reset_wait == 21600
     assert s.tools == "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
     assert s.spec_dir == "specs/20260710-120000"
-    assert s.runs_dir == ".workflow/runs"
 
 
 def test_plan_gate_is_opt_in_and_independent_of_human_gate():

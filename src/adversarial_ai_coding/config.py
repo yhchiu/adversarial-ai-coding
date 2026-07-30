@@ -84,7 +84,6 @@ class Settings:
     retry_max_reset_wait: int
     tools: str
     spec_dir: str
-    runs_dir: str
 
     @classmethod
     def from_env(
@@ -144,5 +143,4 @@ class Settings:
             ),
             tools=persisted("TOOLS", DEFAULT_TOOLS),
             spec_dir=persisted("SPEC_DIR", f"specs/{run_id}"),
-            runs_dir=env.get("RUNS_DIR") or ".workflow/runs",
         )
