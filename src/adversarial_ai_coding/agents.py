@@ -649,6 +649,29 @@ class CodexEvent:
     quota: bool = False
 
 
+# A completed command carries its whole captured output. agent_out is the
+# readable artifact, and raw_out already holds the event verbatim, so the
+# bulk is summarised here rather than duplicated.
+_CODEX_BULK_FIELDS = ("aggregated_output",)
+
+
+def _elide_bulk(payload: dict[str, object]) -> dict[str, object]:
+    """Replace an item's bulky fields with a note about their size."""
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return payload
+    elided = {}
+    for name in _CODEX_BULK_FIELDS:
+        value = item.get(name)
+        if isinstance(value, str) and value:
+            elided[name] = (
+                f"({len(value)} characters elided; see the .cli.raw artifact)"
+            )
+    if not elided:
+        return payload
+    return {**payload, "item": {**item, **elided}}
+
+
 def render_codex_event(line: str, cwd: Path | None = None) -> CodexEvent:
     """Render one codex NDJSON line.
 
@@ -684,10 +707,7 @@ def render_codex_event(line: str, cwd: Path | None = None) -> CodexEvent:
             body = item.get("text")
             rendered = _jq_raw(body) if body is not None else ""
             return CodexEvent(text=rendered, echo=bool(rendered))
-        # A completed tool call carries its whole aggregated_output, which
-        # is why quota detection must never see it: this repo's own test
-        # names alone would match the rate-limit wording.
-        return CodexEvent(text=json.dumps(payload, ensure_ascii=False))
+        return CodexEvent(text=json.dumps(_elide_bulk(payload), ensure_ascii=False))
     if event_type == "error":
         value = payload.get("message")
         rendered = (

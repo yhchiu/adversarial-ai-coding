@@ -1478,6 +1478,49 @@ def test_render_codex_event_keeps_the_existing_event_handling(line, expected):
     assert agents.render_codex_event(line) == expected
 
 
+def test_render_codex_event_elides_captured_command_output(tmp_path):
+    output = "x" * 2483
+    line = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "i",
+                "type": "command_execution",
+                "command": "pytest -q",
+                "aggregated_output": output,
+                "exit_code": 1,
+                "status": "completed",
+            },
+        }
+    )
+
+    recorded = json.loads(agents.render_codex_event(line).text)
+
+    # What the call was and how it ended survives; the captured output does not.
+    item = recorded["item"]
+    assert item["command"] == "pytest -q"
+    assert (item["exit_code"], item["status"]) == (1, "completed")
+    assert item["aggregated_output"] == (
+        "(2483 characters elided; see the .cli.raw artifact)"
+    )
+    assert output not in agents.render_codex_event(line).text
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "command_execution", "aggregated_output": "", "exit_code": 0},
+        {"type": "file_change", "changes": [{"path": "a.py", "kind": "add"}]},
+        {"type": "command_execution", "aggregated_output": None},
+    ],
+    ids=["empty-output", "no-such-field", "null-output"],
+)
+def test_render_codex_event_leaves_payloads_without_bulk_untouched(item):
+    line = json.dumps({"type": "item.completed", "item": item})
+
+    assert json.loads(agents.render_codex_event(line).text) == json.loads(line)
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -1525,11 +1568,14 @@ def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
     assert " . run git add -A" in agent_out
     assert "in_progress" not in agent_out
     assert "[B codex]" not in agent_out
-    # item.completed still records its raw payload for diagnosis.
-    assert "aggregated_output" in rendered
-    assert io.raw_out.read_text(encoding="utf-8") == CODEX_TOOL_FIXTURE.read_text(
-        encoding="utf-8"
-    )
+    # item.completed still records its payload, minus the captured output.
+    assert '"exit_code": 0' in rendered
+    assert "nothing to commit, working tree clean" not in rendered
+    assert "characters elided" in rendered
+    # raw_out keeps the event verbatim, elision included nowhere.
+    raw = io.raw_out.read_text(encoding="utf-8")
+    assert raw == CODEX_TOOL_FIXTURE.read_text(encoding="utf-8")
+    assert "nothing to commit, working tree clean" in raw
 
 
 # The reason the quota channel was narrowed. This repo's own test file name
@@ -1570,7 +1616,13 @@ def test_command_output_that_matches_the_regex_is_not_a_quota_signal(tmp_path):
     assert not is_rate_limited(quota_text)
     # Proof the sample really does trip the regex, so the test cannot pass
     # just because the wording drifted.
-    assert is_rate_limited(io.agent_out.read_text(encoding="utf-8"))
+    assert is_rate_limited(PYTEST_OUTPUT_LOOKS_LIKE_A_RATE_LIMIT)
+    # And the output itself is still recoverable from the raw artifact.
+    recorded = json.loads(io.raw_out.read_text(encoding="utf-8"))
+    assert (
+        recorded["item"]["aggregated_output"]
+        == PYTEST_OUTPUT_LOOKS_LIKE_A_RATE_LIMIT
+    )
 
 
 def test_real_quota_error_still_reaches_the_quota_channel(tmp_path):

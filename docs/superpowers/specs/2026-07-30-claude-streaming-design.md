@@ -220,9 +220,9 @@ These summary lines replace what `item.started` used to dump into
 other event keeps its existing handling: `item.completed`, `error`,
 `turn.failed`, and unknown event types still render exactly as before,
 so quota wording continues to reach `ratelimit.py` through `agent_out`
-and unknown events stay diagnosable. The `aggregated_output` of a
-completed command is still recorded as raw JSON; trimming that belongs
-to a separate data-quality change.
+and unknown events stay diagnosable. (Both statements were true when
+written; quota detection moved off `agent_out` later the same day, and
+`aggregated_output` is now elided -- see the two sections below.)
 
 Committed as one commit: implementation, tests, and documentation
 together, because the README live-output row and this file's follow-up
@@ -301,9 +301,30 @@ regex, so the test cannot pass merely because the wording drifted.
 
 Two commits: the narrowed channel, then claude's structured signals.
 
-### Still out of scope
+## Eliding captured command output
 
-Codex's `item.completed` continues to record its full
-`aggregated_output` as raw JSON in `agent_out`. Now that detection no
-longer reads that file, the remaining cost is artifact size and run-log
-readability, which is a separate data-quality change.
+The last piece, once detection no longer read `agent_out`. Codex's
+`item.completed` recorded the event verbatim, so every command's entire
+captured output was written twice: once as the raw line in `raw_out` and
+again re-serialised into `agent_out`. On the two probe streams those
+dumps were 73% and 80% of `agent_out`, and the share grows with whatever
+the command printed.
+
+`agent_out` is the readable artifact and `raw_out` already holds the
+event verbatim, so the bulk is now summarised rather than duplicated. The
+value of each field named in `_CODEX_BULK_FIELDS` -- today just
+`aggregated_output` -- is replaced with `(N characters elided; see the
+.cli.raw artifact)`. Naming the size keeps the useful signal (a command
+printed this much) and the pointer says where the text still lives.
+
+Everything else about the event survives: `command`, `exit_code`, and
+`status` are exactly what a reader of `agent_out` wants. A real sample
+went from 2652 to 220 characters. Payloads with nothing bulky -- an empty
+or absent field, a `file_change` item -- are passed through untouched, so
+the elision never appears where there was nothing to elide.
+
+The re-serialisation is worth knowing about when comparing the two
+artifacts: `agent_out` is `json.dumps(..., ensure_ascii=False)`, so it
+has spaces after separators and decodes `\uXXXX` escapes to literal
+characters, while `raw_out` keeps codex's compact original. Same data,
+different bytes.
