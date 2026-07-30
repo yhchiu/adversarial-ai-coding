@@ -1,68 +1,43 @@
 """cli.py styler wiring: colored terminal, plain run log and redirects.
 
 Spec: docs/superpowers/specs/2026-07-20-terminal-colors-design.md
+
+The wiring is two lines in cli.main: the WorkflowContext gets styler.out
+and styler.err as its sinks, and ctx.log splits into that sink plus a
+plain file. Reaching those lines used to mean driving a whole fake
+workflow, which cost 36 seconds for two assertions. A stub workflow that
+emits the same lines through the real begin_stage proves the same thing,
+and what the styler does with a line is already covered by test_style.py.
 """
 
-import os
-import sys
 from pathlib import Path
 
 from adversarial_ai_coding import cli
+from adversarial_ai_coding import workflow as wf_mod
 from adversarial_ai_coding.style import Styler
 
-FAKE = str(Path(__file__).parent / "fake_agent.py")
+BASE_ENV = {
+    "AGENT_A": "sh",
+    "AGENT_B": "pwd",
+    "AUTO_BRANCH": "0",
+    "HUMAN_GATE": "0",
+}
 
 
-def _make_wrapper(work: Path, role: str) -> str:
-    if os.name == "nt":
-        path = work / f"fake-{role}.cmd"
-        path.write_text(
-            f'@"{sys.executable}" "{FAKE}" --role fake-{role} %*\r\n',
-            encoding="utf-8",
-        )
-    else:
-        path = work / f"fake-{role}"
-        path.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" --role fake-{role} "$@"\n',
-            encoding="utf-8",
-        )
-        path.chmod(0o755)
-    return str(path)
+def drive(new_repo, monkeypatch, **overrides) -> int:
+    """cli.main over a stub workflow that emits one line of each kind."""
 
+    def stub_workflow(ctx, task):
+        # begin_stage emits the stage banner through ctx.log, the one line
+        # that has to reach the terminal painted and the run log plain.
+        wf_mod.begin_stage(ctx, "write-spec")
+        # What work() emits before every agent call.
+        ctx.echo(">>> Worker(A) is running...")
 
-def wf_env(work: Path, **overrides) -> dict:
-    env = {
-        "HUMAN_GATE": "0",
-        "DUAL_SPEC": "0",
-        "AUTO_BRANCH": "1",
-        "USE_WORKTREE": "0",
-        "OPEN_PR": "0",
-        "GATE_CMD": "exit 0",
-        "BUILD_GATE_CMD": "exit 0",
-        "RETRY_ON_LIMIT": "0",
-        "NOTIFY_CMD": "",
-        "FAKE_CALLS_LOG": str(work / "calls.log"),
-        "FAKE_ABORT_ON": str(work / "abort-on"),
-        "AGENT_A": _make_wrapper(work, "worker"),
-        "AGENT_B": _make_wrapper(work, "reviewer"),
-    }
-    env.update(overrides)
-    return env
-
-
-def driver_workdir(tmp_path: Path) -> Path:
-    return tmp_path.parent / f"{tmp_path.name}-driver"
-
-
-def run_cli(repo, env, monkeypatch, args=None):
-    # The fake-agent wrappers run as subprocesses and read FAKE_* from the
-    # real process environment, so every var goes through setenv too.
-    monkeypatch.chdir(repo)
-    monkeypatch.setenv("PYTHONPATH", "")
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    argv = ["demo task"] if args is None else args
-    return cli.main(argv, env, stdin_isatty=False)
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    monkeypatch.setattr(cli, "run_workflow", stub_workflow)
+    return cli.main(["demo task"], {**BASE_ENV, **overrides}, stdin_isatty=False)
 
 
 def run_log_text(repo: Path) -> str:
@@ -71,25 +46,15 @@ def run_log_text(repo: Path) -> str:
     return "\n".join(log.read_text(encoding="utf-8") for log in logs)
 
 
-def test_invalid_color_value_fails_fast(new_repo, tmp_path, monkeypatch, capsys):
-    # Runs inside the throwaway repo with fake agents so the pre-wiring
-    # red run is safe: it completes a fake workflow instead of failing
-    # fast, and the rc assertion is what fails.
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work, COLOR="sometimes")
-    rc = run_cli(new_repo, env, monkeypatch)
-    assert rc == 1
+def test_invalid_color_value_fails_fast(new_repo, monkeypatch, capsys):
+    assert drive(new_repo, monkeypatch, COLOR="sometimes") == 1
     assert "COLOR must be auto, always, or never" in capsys.readouterr().err
 
 
-def test_full_run_color_always_paints_terminal_but_not_run_log(
-    new_repo, tmp_path, monkeypatch, capsys
+def test_color_always_paints_terminal_but_not_run_log(
+    new_repo, monkeypatch, capsys
 ):
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work, COLOR="always")
-    assert run_cli(new_repo, env, monkeypatch) == 0
+    assert drive(new_repo, monkeypatch, COLOR="always") == 0
     out = capsys.readouterr().out
     # Stage banner and progress lines carry dark-theme SGR codes.
     assert "\x1b[1;96m================" in out
@@ -98,14 +63,9 @@ def test_full_run_color_always_paints_terminal_but_not_run_log(
     assert "\x1b[" not in run_log_text(new_repo)
 
 
-def test_full_run_auto_mode_emits_no_codes_when_not_a_tty(
-    new_repo, tmp_path, monkeypatch, capsys
-):
+def test_auto_mode_emits_no_codes_when_not_a_tty(new_repo, monkeypatch, capsys):
     # pytest capture streams are not ttys, so auto behaves like a redirect.
-    work = driver_workdir(tmp_path)
-    work.mkdir()
-    env = wf_env(work)
-    assert run_cli(new_repo, env, monkeypatch) == 0
+    assert drive(new_repo, monkeypatch) == 0
     captured = capsys.readouterr()
     assert "\x1b[" not in captured.out
     assert "\x1b[" not in captured.err
