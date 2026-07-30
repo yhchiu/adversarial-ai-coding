@@ -17,11 +17,11 @@ def porcelain(repo):
 
 
 def test_archive_git_state_no_side_effects_and_untracked_content(new_repo):
-    workflow = new_repo / ".workflow"
-    workflow.mkdir()
+    workflow = new_repo / "aac/.run"
+    workflow.mkdir(parents=True)
     (workflow / ".gitignore").write_text("*\n", encoding="utf-8")
     subprocess.run(
-        ["git", "-C", str(new_repo), "add", "-f", ".workflow/.gitignore"],
+        ["git", "-C", str(new_repo), "add", "-f", "aac/.run/.gitignore"],
         capture_output=True,
         text=True,
         check=True,
@@ -36,7 +36,7 @@ def test_archive_git_state_no_side_effects_and_untracked_content(new_repo):
     (new_repo / "new.txt").write_text("new content\n", encoding="utf-8")
     settings = Settings.from_env({}, run_id="test")
     archive = establish_run_archive(
-        new_repo / ".workflow" / "runs", "test", settings
+        new_repo / "aac/.run" / "runs", "test", settings
     )
     before = porcelain(new_repo)
     archive.archive_git_state(

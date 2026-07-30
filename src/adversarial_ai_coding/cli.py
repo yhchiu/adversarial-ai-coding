@@ -16,7 +16,7 @@ from typing import Callable, Mapping
 
 from .agents import AgentSession, validate_agents
 from .archive import establish_run_archive
-from .config import Settings, SettingsError, WorkflowAbort
+from .config import WORK_DIR, Settings, SettingsError, WorkflowAbort
 from .dual_spec import dual_spec_preflight
 from .gates import detect_build_gate, detect_gate
 from .gitops import (
@@ -131,7 +131,7 @@ def main(
             task = Path(task_arg).read_text(encoding="utf-8")
 
         snapshot: dict[str, str] = {}
-        wf = Path(".workflow")
+        wf = Path(WORK_DIR)
         if resume_run:
             state = RunState.resume(wf / "state", resume_run)
             run_id = state.run_id
@@ -208,7 +208,14 @@ def main(
                     "remove later with git worktree remove)"
                 )
         workspace = Path.cwd()
-        wf = workspace / ".workflow"
+        wf = workspace / WORK_DIR
+
+        # Claim the ignored subtree before anything is written into it: the
+        # "*" here is what keeps every machine-only artifact out of git, and
+        # relying on another call to create the parent first would make that
+        # guarantee depend on statement order.
+        wf.mkdir(parents=True, exist_ok=True)
+        (wf / ".gitignore").write_text("*\n", encoding="utf-8")
 
         archive = establish_run_archive(wf / "runs", run_id, settings)
         if resume_run:
@@ -216,7 +223,6 @@ def main(
         else:
             state = RunState.create(wf / "state", run_id, task)
             init_live_state(wf, resume=False)
-        (wf / ".gitignore").write_text("*\n", encoding="utf-8")
         archive.write_run_metadata(spec_dir=settings.spec_dir, wf=str(wf))
         archive.write_log_metadata()
         archive.archive_task(task_arg, task_source_kind, task_source_path, task)

@@ -87,7 +87,7 @@ def metrics_summary(path: Path) -> str:
 
 @dataclass
 class RunArchive:
-    """One run's archive under .workflow/runs/<run-id>[-N]/ (sh:593-606)."""
+    """One run's archive under aac/.run/runs/<run-id>[-N]/ (sh:593-606)."""
 
     run_dir: Path
     run_id: str

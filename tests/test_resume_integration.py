@@ -56,7 +56,7 @@ def run_cli(repo, env, args=None, monkeypatch=None):
 
 
 def state_dir_of(repo: Path) -> Path:
-    return next((repo / ".workflow" / "state").iterdir())
+    return next((repo / "aac/.run" / "state").iterdir())
 
 
 def calls(work: Path, pattern: str) -> int:
@@ -109,7 +109,7 @@ def test_scenario1_quota_abort_then_resume(new_repo, tmp_path, monkeypatch):
     assert rc == 0
     assert calls(work, "fake-worker write-spec") == spec_calls_before
     assert (state / "completed").is_file()
-    plan = next((new_repo / "specs").glob("*/plan.md"))
+    plan = next((new_repo / "aac" / "docs").glob("*/plan.md"))
     text = plan.read_text(encoding="utf-8")
     assert "- [ ] " not in text and "- [x]" in text
 
@@ -146,7 +146,7 @@ def test_plan_gate_asks_and_commits_the_human_edit(new_repo, tmp_path, monkeypat
 
     def fake_input(prompt=""):
         asked.append(prompt)
-        plan = next((new_repo / "specs").glob("*/plan.md"))
+        plan = next((new_repo / "aac" / "docs").glob("*/plan.md"))
         plan.write_text(
             plan.read_text(encoding="utf-8") + "- [ ] task the human added\n",
             encoding="utf-8",
@@ -163,7 +163,7 @@ def test_plan_gate_asks_and_commits_the_human_edit(new_repo, tmp_path, monkeypat
     assert cli.main(["demo task"], env, stdin_isatty=True) == 0
     assert len(asked) == 1
 
-    plan = next((new_repo / "specs").glob("*/plan.md"))
+    plan = next((new_repo / "aac" / "docs").glob("*/plan.md"))
     rel = plan.relative_to(new_repo).as_posix()
     added_in = git_out(
         ["log", "--diff-filter=A", "--format=%H", "--", rel], new_repo
@@ -217,8 +217,8 @@ def test_scenario3_acceptance_window_keeps_base(new_repo, tmp_path, monkeypatch)
     st._write_ledger(
         [stage for stage in st.completed_stages() if stage != "write-acceptance-tests"]
     )
-    (new_repo / ".workflow" / "protected-tests.txt").unlink()
-    (new_repo / ".workflow" / "protected-base.sha").unlink()
+    (new_repo / "aac/.run" / "protected-tests.txt").unlink()
+    (new_repo / "aac/.run" / "protected-base.sha").unlink()
     assert (
         run_cli(
             new_repo,
@@ -228,7 +228,7 @@ def test_scenario3_acceptance_window_keeps_base(new_repo, tmp_path, monkeypatch)
         )
         == 0
     )
-    rebuilt = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+    rebuilt = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert "acc/acceptance.txt" in rebuilt
@@ -299,7 +299,7 @@ def test_mid_queue_resume_switches_impl_wrapper_without_rerunning_completed_task
     assert (state / "tasks-remaining").read_text(encoding="utf-8") == (
         "add feature two\n"
     )
-    plan = next((new_repo / "specs").glob("*/plan.md"))
+    plan = next((new_repo / "aac" / "docs").glob("*/plan.md"))
     assert "- [x] add feature one" in plan.read_text(encoding="utf-8")
     assert "- [ ] add feature two" in plan.read_text(encoding="utf-8")
     first_impl_calls = calls(work, "fake-impl implement")

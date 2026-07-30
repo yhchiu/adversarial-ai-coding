@@ -1,7 +1,7 @@
 """Phased ATDD suggestion at the spec human gate.
 
 The spec reviewer judges phased fitness as a side output of its normal
-review; the judgment travels in .workflow/phased-suggestion.json and
+review; the judgment travels in aac/.run/phased-suggestion.json and
 never touches verdict.json. Everything here fails open to "no
 suggestion": this mechanism must never block or fail a run.
 """

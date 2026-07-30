@@ -36,7 +36,7 @@ def test_defaults_match_bash():
     assert s.retry_max_wait == 3600
     assert s.retry_max_reset_wait == 21600
     assert s.tools == "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
-    assert s.spec_dir == "specs/20260710-120000"
+    assert s.spec_dir == "aac/docs/20260710-120000"
 
 
 def test_plan_gate_is_opt_in_and_independent_of_human_gate():
@@ -142,7 +142,7 @@ def test_notify_cmd_and_retry_never_come_from_snapshot():
 
 
 def test_spec_dir_uses_run_id_by_default():
-    assert make(run_id="abc-123").spec_dir == "specs/abc-123"
+    assert make(run_id="abc-123").spec_dir == "aac/docs/abc-123"
     assert make({"SPEC_DIR": "myspecs"}).spec_dir == "myspecs"
 
 

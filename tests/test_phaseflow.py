@@ -136,7 +136,7 @@ def test_run_phased_stages_drives_phases_in_order(make_ctx, new_repo, monkeypatc
     ctx = make_ctx(
         {"PHASES": "1", "IMPL_MODEL": "impl-model", "RETRY_ON_LIMIT": "0"}
     )
-    ctx.state = RunState.create(new_repo / ".workflow" / "state", "run", "t\n")
+    ctx.state = RunState.create(new_repo / "aac/.run" / "state", "run", "t\n")
     ctx.gate_cmd = "full-gate"
     ctx.build_gate_cmd = "build-gate"
     ctx.phase_gate_cmd = "phase-gate"
@@ -236,7 +236,7 @@ def test_phase_review_adds_reviewer_loop_over_impl(make_ctx, new_repo, monkeypat
             "RETRY_ON_LIMIT": "0",
         }
     )
-    ctx.state = RunState.create(new_repo / ".workflow" / "state", "run", "t\n")
+    ctx.state = RunState.create(new_repo / "aac/.run" / "state", "run", "t\n")
     ctx.phase_gate_cmd = "phase-gate"
     ctx.spec_dir.mkdir(parents=True, exist_ok=True)
     plan = ctx.spec_dir / "plan.md"

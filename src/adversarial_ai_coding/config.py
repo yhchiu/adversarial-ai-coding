@@ -18,6 +18,16 @@ from typing import Mapping
 
 DEFAULT_TOOLS = "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
 
+# The one top-level directory this workflow claims in the target repository
+# (docs/adr/0001-single-aac-root-for-run-artifacts.md). ARTIFACT_ROOT is
+# visible because DOCS_ROOT holds the spec and plan a human reads at the
+# human gates. WORK_DIR is hidden inside it and carries its own .gitignore
+# containing "*", so the ignored subtree needs no negation pattern and a
+# new committed artifact can never be dropped from git by accident.
+ARTIFACT_ROOT = "aac"
+DOCS_ROOT = f"{ARTIFACT_ROOT}/docs"
+WORK_DIR = f"{ARTIFACT_ROOT}/.run"
+
 
 class SettingsError(Exception):
     """A configuration problem the user must fix before the run starts."""
@@ -142,5 +152,5 @@ class Settings:
                 "RETRY_MAX_RESET_WAIT", env.get("RETRY_MAX_RESET_WAIT") or "21600"
             ),
             tools=persisted("TOOLS", DEFAULT_TOOLS),
-            spec_dir=persisted("SPEC_DIR", f"specs/{run_id}"),
+            spec_dir=persisted("SPEC_DIR", f"{DOCS_ROOT}/{run_id}"),
         )

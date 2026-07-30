@@ -20,7 +20,7 @@ from adversarial_ai_coding.workflow import (
 
 
 def with_state(ctx, new_repo):
-    ctx.state = RunState.create(new_repo / ".workflow" / "state", "run", "t\n")
+    ctx.state = RunState.create(new_repo / "aac/.run" / "state", "run", "t\n")
     return ctx
 
 

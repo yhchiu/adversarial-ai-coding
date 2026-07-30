@@ -1,4 +1,4 @@
-"""Resumable run state under .workflow/state/<run-id>/.
+"""Resumable run state under aac/.run/state/<run-id>/.
 
 Port of adversarial-ai-coding.sh:66-330 (state block) plus the cross-stage
 restore helpers. Format change approved by the spec: the settings snapshot

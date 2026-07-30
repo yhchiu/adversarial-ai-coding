@@ -41,8 +41,8 @@ def make_ctx(new_repo):
 
     def _make(env=None):
         settings = Settings.from_env(env or {"RETRY_ON_LIMIT": "0"}, run_id="test")
-        wf = new_repo / ".workflow"
-        wf.mkdir(exist_ok=True)
+        wf = new_repo / "aac/.run"
+        wf.mkdir(parents=True, exist_ok=True)
         archive = establish_run_archive(wf / "runs", "test", settings)
         return WorkflowContext(
             settings=settings,
@@ -52,7 +52,7 @@ def make_ctx(new_repo):
             workspace=new_repo,
             wf=wf,
             prompts_dir=default_prompts_dir({}),
-            spec_dir=new_repo / "specs",
+            spec_dir=new_repo / "aac" / "docs",
             cur_stage="stage",
             echo=lambda _line: None,
             echo_err=lambda _line: None,

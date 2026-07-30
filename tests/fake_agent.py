@@ -94,16 +94,16 @@ def main() -> int:
         return target.group(0) if target else ""
 
     if kind in ("review", "review-dual-final"):
-        Path(".workflow").mkdir(exist_ok=True)
-        Path(".workflow/review.md").write_text(
+        Path("aac/.run").mkdir(exist_ok=True)
+        Path("aac/.run/review.md").write_text(
             f"approved by {name}\n", encoding="utf-8"
         )
-        Path(".workflow/verdict.json").write_text(
+        Path("aac/.run/verdict.json").write_text(
             '{"approved":true,"blockers":[],"suggestions":[]}\n',
             encoding="utf-8",
         )
         if "phased-suggestion.json" in prompt:
-            Path(".workflow/phased-suggestion.json").write_text(
+            Path("aac/.run/phased-suggestion.json").write_text(
                 os.environ.get(
                     "FAKE_PHASED_SUGGESTION",
                     '{"phased": true, "reason": "two independent features"}',
@@ -112,18 +112,18 @@ def main() -> int:
                 encoding="utf-8",
             )
     elif kind == "write-spec":
-        target = grep_target(r"specs[\\/][^ \r\n]+[\\/]spec\.md")
+        target = grep_target(r"aac[\\/]docs[\\/][^ \r\n]+[\\/]spec\.md")
         Path(target).parent.mkdir(parents=True, exist_ok=True)
         Path(target).write_text(
             "# Spec\n\nDemo feature.\n\n## Assumptions and Open Questions\n\n- none\n",
             encoding="utf-8",
         )
     elif kind == "write-candidate":
-        target = grep_target(r"specs[\\/][^ \r\n]+[\\/]spec-[ab]\.md")
+        target = grep_target(r"aac[\\/]docs[\\/][^ \r\n]+[\\/]spec-[ab]\.md")
         Path(target).parent.mkdir(parents=True, exist_ok=True)
         Path(target).write_text(f"# Candidate spec {target}\n", encoding="utf-8")
     elif kind == "write-plan":
-        target = grep_target(r"specs[\\/][^ \r\n]+[\\/]plan\.md")
+        target = grep_target(r"aac[\\/]docs[\\/][^ \r\n]+[\\/]plan\.md")
         Path(target).parent.mkdir(parents=True, exist_ok=True)
         if '"## Phase N: <title>"' in prompt:
             Path(target).write_text(
@@ -158,7 +158,7 @@ def main() -> int:
             source.write("implemented\n")
     elif kind == "compare":
         target = grep_target(
-            r"specs[\\/][^ \r\n]+[\\/]spec-comparison-[ab]\.md"
+            r"aac[\\/]docs[\\/][^ \r\n]+[\\/]spec-comparison-[ab]\.md"
         )
         Path(target).parent.mkdir(parents=True, exist_ok=True)
         Path(target).write_text("comparison table\n", encoding="utf-8")

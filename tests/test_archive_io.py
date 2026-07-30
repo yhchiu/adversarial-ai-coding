@@ -328,7 +328,7 @@ def test_slot_i_archive_evidence_uses_resolved_model_args_and_slot(tmp_path):
 
 def test_run_and_log_metadata(tmp_path):
     a = make_archive(tmp_path, {"AGENT_A": "claude", "AGENT_B": "codex"})
-    a.write_run_metadata(spec_dir="specs/test", wf=".workflow", now=FIXED)
+    a.write_run_metadata(spec_dir="aac/docs/test", wf="aac/.run", now=FIXED)
     payload = json.loads(
         (a.run_dir / "001-run-metadata.json").read_text(encoding="utf-8")
     )
@@ -352,7 +352,7 @@ def test_run_and_log_metadata_preserve_requested_impl_settings(tmp_path):
             "IMPL_ARGS": '--profile "two words"',
         },
     )
-    a.write_run_metadata(spec_dir="specs/test", wf=".workflow", now=FIXED)
+    a.write_run_metadata(spec_dir="aac/docs/test", wf="aac/.run", now=FIXED)
     a.write_log_metadata(now=FIXED)
 
     run_metadata = json.loads(
@@ -388,7 +388,7 @@ def test_same_agent_slots_keep_slot_specific_models_in_all_metadata(tmp_path):
     )
     a.log_section("AI call", "worker", ref_b, "code", 1, echo=lambda _: None)
     a.metric("worker", ref_b, 1, 2, "", stage="code")
-    a.write_run_metadata(spec_dir="specs/test", wf=".workflow")
+    a.write_run_metadata(spec_dir="aac/docs/test", wf="aac/.run")
 
     meta = json.loads(
         artifact.with_name(artifact.name + ".meta.json").read_text(encoding="utf-8")

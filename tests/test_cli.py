@@ -221,7 +221,7 @@ def test_resume_hint_printed_once_and_lock_released(
     assert rc == 130
     err = capsys.readouterr().err
     assert err.count("RESUME_RUN=") == 1
-    state_root = new_repo / ".workflow" / "state"
+    state_root = new_repo / "aac/.run" / "state"
     run_dir = next(state_root.iterdir())
     assert not (run_dir / "lock").exists()
     assert not (run_dir / "completed").exists()
@@ -288,7 +288,7 @@ def test_resume_task_conflict_fails(new_repo, monkeypatch, capsys):
     from adversarial_ai_coding.runstate import RunState, write_snapshot
 
     state = RunState.create(
-        new_repo / ".workflow" / "state", "r1", "snapshot task\n"
+        new_repo / "aac/.run" / "state", "r1", "snapshot task\n"
     )
     write_snapshot(
         state.state_dir, {"agent_a": "sh", "agent_b": "pwd", "branch": "main"}

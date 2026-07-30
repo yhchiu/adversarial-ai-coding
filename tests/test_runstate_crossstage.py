@@ -107,8 +107,8 @@ def test_mark_plan_task_done_exact_line_once(tmp_path):
 
 
 def test_init_live_state_resume_keeps_durables_clears_transients(tmp_path):
-    wf = tmp_path / ".workflow"
-    wf.mkdir()
+    wf = tmp_path / "aac/.run"
+    wf.mkdir(parents=True)
     names = [
         "suggestions.md",
         "protected-tests.txt",
@@ -139,8 +139,8 @@ def test_init_live_state_resume_keeps_durables_clears_transients(tmp_path):
 
 
 def test_init_live_state_fresh_clears_everything(tmp_path):
-    wf = tmp_path / ".workflow"
-    wf.mkdir()
+    wf = tmp_path / "aac/.run"
+    wf.mkdir(parents=True)
     for name in ["suggestions.md", "review.md"]:
         (wf / name).write_text("x\n", encoding="utf-8")
     init_live_state(wf, resume=False)

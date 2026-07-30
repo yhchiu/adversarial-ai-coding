@@ -136,8 +136,8 @@ def test_full_workflow_e2e():
     assert branch.startswith("auto/")
     assert (repo / "AGENTS.md").is_file() and (repo / "CLAUDE.md").is_file()
 
-    spec_dirs = sorted((repo / "specs").glob("*/"))
-    assert spec_dirs, "specs/<run>/ missing"
+    spec_dirs = sorted((repo / "aac" / "docs").glob("*/"))
+    assert spec_dirs, "aac/docs/<run>/ missing"
     spec = spec_dirs[0] / "spec.md"
     plan = spec_dirs[0] / "plan.md"
     assert "assumptions and open questions" in spec.read_text(
@@ -151,8 +151,8 @@ def test_full_workflow_e2e():
     )
     assert "func IsPalindrome" in strutil
 
-    protected = repo / ".workflow" / "protected-tests.txt"
-    base_sha = repo / ".workflow" / "protected-base.sha"
+    protected = repo / "aac/.run" / "protected-tests.txt"
+    base_sha = repo / "aac/.run" / "protected-base.sha"
     assert protected.is_file() and protected.stat().st_size > 0
     assert base_sha.is_file()
     from adversarial_ai_coding.gitops import protected_violations
@@ -170,7 +170,7 @@ def test_full_workflow_e2e():
     )
 
     run_dir = Path(
-        (repo / ".workflow" / "latest-run.txt").read_text(encoding="utf-8").strip()
+        (repo / "aac/.run" / "latest-run.txt").read_text(encoding="utf-8").strip()
     )
     assert run_dir.is_dir()
     for pattern in (
@@ -246,7 +246,7 @@ def test_full_workflow_phased_e2e():
     assert "[phase-01-implement]" in log
     assert "Phase red check passed" in log
 
-    state_dirs = list((repo / ".workflow" / "state").iterdir())
+    state_dirs = list((repo / "aac/.run" / "state").iterdir())
     assert len(state_dirs) == 1
     ledger = json.loads(
         (state_dirs[0] / "ledger.json").read_text(encoding="utf-8")
@@ -255,9 +255,9 @@ def test_full_workflow_phased_e2e():
     assert "phase-01-write-tests" in stages and "phase-01-implement" in stages
     assert "write-acceptance-tests" not in stages
 
-    protected = repo / ".workflow" / "protected-tests.txt"
+    protected = repo / "aac/.run" / "protected-tests.txt"
     assert protected.is_file() and protected.stat().st_size > 0
-    plan = next((repo / "specs").glob("*/plan.md")).read_text(encoding="utf-8")
+    plan = next((repo / "aac" / "docs").glob("*/plan.md")).read_text(encoding="utf-8")
     assert "## Phase 1:" in plan
     assert "- [ ] " not in plan and "- [x]" in plan
     verify_gates(repo)
@@ -334,11 +334,11 @@ def test_full_workflow_import_e2e():
     assert "Imported plan from" in log
     assert spec.read_text(encoding="utf-8") == IMPORT_SPEC_TEXT
 
-    spec_copy = next((repo / "specs").glob("*/spec.md")).read_text(
+    spec_copy = next((repo / "aac" / "docs").glob("*/spec.md")).read_text(
         encoding="utf-8"
     )
     assert "assumptions and open questions" in spec_copy.lower()
-    plan_text = next((repo / "specs").glob("*/plan.md")).read_text(
+    plan_text = next((repo / "aac" / "docs").glob("*/plan.md")).read_text(
         encoding="utf-8"
     )
     assert "- [x]" in plan_text and "- [ ] " not in plan_text
@@ -350,7 +350,7 @@ def test_full_workflow_import_e2e():
     assert "func IsPalindrome" in strutil
 
     run_dir = Path(
-        (repo / ".workflow" / "latest-run.txt")
+        (repo / "aac/.run" / "latest-run.txt")
         .read_text(encoding="utf-8")
         .strip()
     )

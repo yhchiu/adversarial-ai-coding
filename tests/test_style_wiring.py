@@ -66,7 +66,7 @@ def run_cli(repo, env, monkeypatch, args=None):
 
 
 def run_log_text(repo: Path) -> str:
-    logs = list((repo / ".workflow" / "runs").rglob("*-run.log"))
+    logs = list((repo / "aac/.run" / "runs").rglob("*-run.log"))
     assert logs, "expected an archived run log"
     return "\n".join(log.read_text(encoding="utf-8") for log in logs)
 

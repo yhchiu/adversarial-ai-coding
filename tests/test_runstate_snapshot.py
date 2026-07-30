@@ -29,7 +29,7 @@ def test_write_parse_roundtrip_keeps_spaces_and_quotes(tmp_path):
     # helpers.test.sh: "resume conf:write/parse roundtrip keeps spaces and quotes"
     s = make_settings(
         {
-            "SPEC_DIR": "specs/x y",
+            "SPEC_DIR": "aac/docs/x y",
             "CODEX_ARGS": '-c model="x,y" --flag "quoted value"',
         }
     )
@@ -45,7 +45,7 @@ def test_write_parse_roundtrip_keeps_spaces_and_quotes(tmp_path):
     )
     write_snapshot(tmp_path / "st", values)
     snap = load_snapshot(tmp_path / "st")
-    assert snap["SPEC_DIR"] == "specs/x y"
+    assert snap["SPEC_DIR"] == "aac/docs/x y"
     assert snap["CODEX_ARGS"] == '-c model="x,y" --flag "quoted value"'
     assert snap["GATE_CMD"] == "go test ./..."
     assert snap["TASK_SOURCE_PATH"] == "/tmp/task dir/task.md"
@@ -77,7 +77,7 @@ def test_unknown_key_is_rejected(tmp_path):
 
 
 def test_missing_schema_rejected(tmp_path):
-    write_raw(tmp_path / "st", json.dumps({"spec_dir": "specs/x"}))
+    write_raw(tmp_path / "st", json.dumps({"spec_dir": "aac/docs/x"}))
     with pytest.raises(RunStateError, match="schema"):
         load_snapshot(tmp_path / "st")
 
@@ -169,7 +169,7 @@ def test_plan_gate_survives_resume_without_the_env_var(tmp_path):
 
 def test_check_immutable_conflict():
     # helpers.test.sh: "resume load:immutable field conflict is rejected"
-    snap = {"DUAL_SPEC": "0", "SPEC_DIR": "specs/r"}
+    snap = {"DUAL_SPEC": "0", "SPEC_DIR": "aac/docs/r"}
     with pytest.raises(RunStateError, match="DUAL_SPEC=1 conflicts"):
         check_immutable({"DUAL_SPEC": "1"}, snap)
     check_immutable({"DUAL_SPEC": "0"}, snap)

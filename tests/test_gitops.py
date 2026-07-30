@@ -28,7 +28,7 @@ def git(repo, *args):
 
 
 def claimed(repo):
-    return RunState.create(repo / ".workflow" / "state", "r", "task\n")
+    return RunState.create(repo / "aac/.run" / "state", "r", "task\n")
 
 
 def test_workflow_abort_carries_rc():

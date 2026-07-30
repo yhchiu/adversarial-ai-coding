@@ -61,7 +61,7 @@ def test_phased_run_completes_and_appends_protection(
     state = state_dir_of(new_repo)
     st = RunState(state_dir=state, run_id=state.name)
     assert st.completed_stages() == EXPECTED_STAGES
-    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+    protected = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
@@ -70,7 +70,7 @@ def test_phased_run_completes_and_appends_protection(
         "add feature two",
         "add regression fixture",
     ]
-    plan = next((new_repo / "specs").glob("*/plan.md")).read_text(
+    plan = next((new_repo / "aac" / "docs").glob("*/plan.md")).read_text(
         encoding="utf-8"
     )
     assert "- [ ] " not in plan and plan.count("- [x]") == 3
@@ -104,7 +104,7 @@ def test_phased_resume_skips_completed_phases(new_repo, tmp_path, monkeypatch):
     # phase 1 tests were not rewritten: 1 before the abort, the aborted
     # attempt, and 1 on resume for phase 2
     assert calls(work, "fake-reviewer write-phase-tests") == 3
-    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+    protected = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
@@ -161,7 +161,7 @@ def test_phase_gate_repair_is_committed_not_leaked(new_repo, tmp_path, monkeypat
     )
     rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
     assert rc == 0
-    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+    protected = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"
@@ -206,7 +206,7 @@ def test_resume_after_controls_recorded_before_stage_end(
     # (the fake writes identical content, so tampering would not fire here;
     # a real writer varies content and exhausts the recovery loop).
     assert calls(work, "fake-reviewer write-phase-tests") == 2
-    protected = (new_repo / ".workflow" / "protected-tests.txt").read_text(
+    protected = (new_repo / "aac/.run" / "protected-tests.txt").read_text(
         encoding="utf-8"
     )
     assert protected == "acc/feature-works.txt\nacc/old-behavior-unchanged.txt\n"

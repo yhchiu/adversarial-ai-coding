@@ -31,9 +31,11 @@ def test_render_prompt_replaces_placeholders(tmp_path):
     out = render_prompt(
         tmp_path,
         "sample",
-        {"NAME": "worker", "PATH": "specs/run/spec.md", "MESSAGE": "line one\nline two"},
+        {"NAME": "worker", "PATH": "aac/docs/run/spec.md", "MESSAGE": "line one\nline two"},
     )
-    assert out == "Hello worker.\nPath: specs/run/spec.md\nMessage:\nline one\nline two\n"
+    assert out == (
+        "Hello worker.\nPath: aac/docs/run/spec.md\nMessage:\nline one\nline two\n"
+    )
 
 
 def test_missing_template_fails_and_names_the_file(tmp_path):
@@ -44,9 +46,9 @@ def test_missing_template_fails_and_names_the_file(tmp_path):
 
 def test_prompt_file_instruction_points_at_the_file():
     # helpers.test.sh: "prompt_file_instruction:points engine at prompt file"
-    out = prompt_file_instruction(".workflow/runs/test/001-worker-prompt.md")
+    out = prompt_file_instruction("aac/.run/runs/test/001-worker-prompt.md")
     assert "Read the full workflow prompt" in out
-    assert ".workflow/runs/test/001-worker-prompt.md" in out
+    assert "aac/.run/runs/test/001-worker-prompt.md" in out
 
 
 def test_real_repo_templates_render():
@@ -115,7 +117,7 @@ def test_review_overwrite_rule_keeps_unreplied_findings():
     # reviewer discard findings the worker has not answered yet.
     phrase = "keep items the worker has not replied to yet"
     prompt = render_prompt(
-        default_prompts_dir({}), "review", {"SCOPE": "scope", "WF": ".workflow"}
+        default_prompts_dir({}), "review", {"SCOPE": "scope", "WF": "aac/.run"}
     )
     agents = default_agents_template({}).read_text(encoding="utf-8")
     assert phrase in " ".join(prompt.split())

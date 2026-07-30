@@ -48,13 +48,13 @@ def test_verdict_with_blockers_is_never_approved(tmp_path):
 
 def test_compose_review_prompt_verdict_instruction(tmp_path):
     claude = compose_review_prompt(
-        AgentRef("A", "claude"), "scope", PROMPTS, tmp_path / ".workflow"
+        AgentRef("A", "claude"), "scope", PROMPTS, tmp_path / "aac/.run"
     )
     codex = compose_review_prompt(
-        AgentRef("B", "codex"), "scope", PROMPTS, tmp_path / ".workflow"
+        AgentRef("B", "codex"), "scope", PROMPTS, tmp_path / "aac/.run"
     )
     custom = compose_review_prompt(
-        AgentRef("B", "custom-agent"), "scope", PROMPTS, tmp_path / ".workflow"
+        AgentRef("B", "custom-agent"), "scope", PROMPTS, tmp_path / "aac/.run"
     )
     assert "Finally write the verdict" not in claude
     assert "Finally write the verdict" in codex
@@ -66,7 +66,7 @@ def test_shared_review_prompt_does_not_direct_verdict_file_write(tmp_path):
     # claude's verdict comes from --json-schema structured output, which the
     # harness writes to verdict.json itself. The shared prompt must only
     # direct review.md writes; verdict-file-instruction covers other agents.
-    wf = tmp_path / ".workflow"
+    wf = tmp_path / "aac/.run"
     claude = compose_review_prompt(AgentRef("A", "claude"), "scope", PROMPTS, wf)
     assert f"Write {wf}/review.md with your built-in file editing tool" in claude
     assert "verdict.json with your built-in file editing tool" not in claude

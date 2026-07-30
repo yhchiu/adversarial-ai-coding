@@ -101,7 +101,7 @@ def test_pr_body_unchanged_without_import(make_ctx):
 
 def test_run_workflow_single_spec_stage_order(make_ctx, new_repo, monkeypatch):
     ctx = make_ctx()
-    ctx.state = RunState.create(new_repo / ".workflow" / "state", "run", "t\n")
+    ctx.state = RunState.create(new_repo / "aac/.run" / "state", "run", "t\n")
     ctx.run_id = "run"
     order = []
 

@@ -44,11 +44,11 @@ def test_import_spec_skips_write_and_keeps_review(new_repo, tmp_path, monkeypatc
     assert calls(work, "fake-worker write-spec") == 0
     assert calls(work, "fake-worker write-plan") == 1
     assert calls(work, "fake-reviewer review") == 4
-    spec = next((new_repo / "specs").glob("*/spec.md"))
+    spec = next((new_repo / "aac" / "docs").glob("*/spec.md"))
     assert spec.read_text(encoding="utf-8") == SPEC_TEXT
     assert (work / "external-spec.md").read_text(encoding="utf-8") == SPEC_TEXT
     run_dir = Path(
-        (new_repo / ".workflow" / "latest-run.txt")
+        (new_repo / "aac/.run" / "latest-run.txt")
         .read_text(encoding="utf-8")
         .strip()
     )
@@ -77,7 +77,7 @@ def test_relative_import_paths_survive_worktree_setup(
 
     workspace = Path.cwd()
     assert workspace != new_repo
-    spec = next((workspace / "specs").glob("*/spec.md"))
+    spec = next((workspace / "aac" / "docs").glob("*/spec.md"))
     assert spec.read_text(encoding="utf-8") == SPEC_TEXT
     state = state_dir_of(workspace)
     snapshot = json.loads((state / "settings.json").read_text(encoding="utf-8"))
@@ -93,11 +93,11 @@ def test_import_spec_and_plan_review_off(new_repo, tmp_path, monkeypatch):
     assert calls(work, "fake-worker write-spec") == 0
     assert calls(work, "fake-worker write-plan") == 0
     assert calls(work, "fake-reviewer review") == 2
-    plan = next((new_repo / "specs").glob("*/plan.md"))
+    plan = next((new_repo / "aac" / "docs").glob("*/plan.md"))
     text = plan.read_text(encoding="utf-8")
     assert "- [x]" in text and "- [ ] " not in text
     run_dir = Path(
-        (new_repo / ".workflow" / "latest-run.txt")
+        (new_repo / "aac/.run" / "latest-run.txt")
         .read_text(encoding="utf-8")
         .strip()
     )
