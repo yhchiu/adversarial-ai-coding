@@ -147,6 +147,77 @@ def test_exponential_backoff_when_unparseable(tmp_path):
     assert slept == [1, 2, 4]  # RETRY_BASE_WAIT=1 doubling per retry
 
 
+class EpochStub:
+    """An agent that reports an exact reset time instead of wording."""
+
+    def __init__(self, reset_epoch: int, quota_text: str):
+        self.reset_epoch = reset_epoch
+        self.quota_text = quota_text
+        self.calls = 0
+
+    def __call__(self) -> AgentResult:
+        self.calls += 1
+        return AgentResult(
+            1,
+            "limited",
+            quota_text=self.quota_text,
+            quota_reset_epoch=self.reset_epoch,
+        )
+
+
+def run_stub(stub, retry_max="1", notes=None):
+    notes = [] if notes is None else notes
+    slept = []
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=notes.append,
+        notify=notes.append,
+        sleep=slept.append,
+    )
+    settings = Settings.from_env(
+        {"RETRY_BASE_WAIT": "1", "RETRY_MAX": retry_max}, run_id="r"
+    )
+    result = agent_call(stub, settings=settings, events=events, now=lambda: NOW)
+    return result, slept
+
+
+def test_reported_epoch_sets_the_wait_instead_of_parsed_wording():
+    # The wording says 90 seconds; the reported epoch says an hour. The
+    # exact value the agent gave us wins.
+    stub = EpochStub(NOW + 3600, RATE_LIMITED + " try again in 90s")
+
+    _, slept = run_stub(stub)
+
+    assert slept == [3600 + 120]
+
+
+def test_wording_is_used_when_no_epoch_is_reported():
+    stub = EpochStub(None, RATE_LIMITED + " try again in 90s")
+
+    _, slept = run_stub(stub)
+
+    assert slept == [90 + 30]
+
+
+def test_implausible_epoch_falls_back_to_wording():
+    # An elapsed or absurd reset time must not skip the retry entirely.
+    stub = EpochStub(NOW - 3600, RATE_LIMITED + " try again in 90s")
+
+    _, slept = run_stub(stub)
+
+    assert slept == [90 + 30]
+
+
+def test_reported_epoch_beyond_the_ceiling_aborts_without_sleeping():
+    stub = EpochStub(NOW + 10 * 86400, RATE_LIMITED)
+
+    result, slept = run_stub(stub)
+
+    assert result.rc == QUOTA_ABORT_RC
+    assert slept == []
+    assert stub.calls == 1
+
+
 def test_every_attempt_is_archived_with_rc(tmp_path):
     # helpers.test.sh: "engine_call:saves raw output for every retry attempt"
     _, _, _, archived = run(tmp_path, RATE_LIMITED)

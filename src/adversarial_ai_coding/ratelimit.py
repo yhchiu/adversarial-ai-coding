@@ -7,6 +7,7 @@ retry loop.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -53,6 +54,20 @@ _CLOCK_AT = re.compile(
 )
 
 
+def _api_error_status(text: str) -> int | None:
+    """The HTTP status a JSON envelope reports, if it reports one."""
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    status = payload.get("api_error_status")
+    if isinstance(status, bool) or not isinstance(status, (int, float)):
+        return None
+    return int(status)
+
+
 def is_rate_limited(text: str) -> bool:
     """Whether an agent's quota channel reports a rate limit.
 
@@ -60,8 +75,18 @@ def is_rate_limited(text: str) -> bool:
     an agent's own error wording is a quota signal, but the output of a
     command it ran is not. Scanning everything used to make this repo's
     own `test_ratelimit_parsing.py` filename read as a rate limit.
+
+    Claude reports the status as a field, so when the channel is a JSON
+    envelope carrying `api_error_status` that number decides on its own
+    and no wording is consulted. Codex and agy have no such field, and an
+    envelope that leaves it null falls back to the wording.
     """
-    return bool(text) and _RATE_LIMIT.search(text) is not None
+    if not text:
+        return False
+    status = _api_error_status(text)
+    if status is not None:
+        return status == 429
+    return _RATE_LIMIT.search(text) is not None
 
 
 def _hour24(hour12: int, ampm: str) -> int:
@@ -86,6 +111,19 @@ def _next_clock_epoch(now: int, hour12: int, minute: int, ampm: str) -> int | No
         # differ by 1h across a DST edge. Wall-clock rollover is the intended meaning.
         target += timedelta(days=1)
     return int(target.timestamp())
+
+
+def wait_until_epoch(reset_epoch: int, now: int) -> int | None:
+    """Seconds to wait for a reported reset time, or None if implausible.
+
+    Claude reports `resetsAt` as an epoch, which spares the parser the
+    wall-clock formats and their day and DST rollover rules. The buffer
+    matches the one the clock format has always used.
+    """
+    wait = reset_epoch - now + 120
+    if wait < 0 or wait > RESET_SANITY_MAX:
+        return None
+    return wait
 
 
 def parse_reset_wait(text: str, now: int | None = None) -> int | None:
@@ -213,7 +251,12 @@ def agent_call(
             )
             return AgentResult(QUOTA_ABORT_RC, result.text)
         current_epoch = now() if now else int(datetime.now().timestamp())
-        wait = parse_reset_wait(result.quota_text, current_epoch)
+        wait = None
+        if result.quota_reset_epoch is not None:
+            # An exact reported reset time beats parsing wording for one.
+            wait = wait_until_epoch(result.quota_reset_epoch, current_epoch)
+        if wait is None:
+            wait = parse_reset_wait(result.quota_text, current_epoch)
         if wait is not None and wait > settings.retry_max_reset_wait:
             # The message told us exactly when the quota returns and it is far
             # away. Backing off would burn hours of sleep and still fail (sh:1149-1155).

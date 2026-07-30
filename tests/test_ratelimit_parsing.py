@@ -4,6 +4,7 @@ The bash suite derives clock strings from the real current time; here we
 fix `now` instead, which makes the same cases deterministic.
 """
 
+import json
 from datetime import datetime
 
 import pytest
@@ -12,6 +13,7 @@ from adversarial_ai_coding.ratelimit import (
     human_duration,
     is_rate_limited,
     parse_reset_wait,
+    wait_until_epoch,
 )
 
 CLAUDE_429 = (
@@ -35,6 +37,8 @@ CODEX_QUOTA_CLOCK = (
     "visit https://chatgpt.com/codex/settings/usage to purchase more credits or "
     "try again at 12:50 AM.\n"
 )
+
+NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())  # local 09:00
 
 
 @pytest.mark.parametrize(
@@ -70,7 +74,60 @@ def test_empty_quota_channel_is_not_rate_limited():
     assert not is_rate_limited("")
 
 
-NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())  # local 09:00
+# --- claude reports the status as a field, so wording is not consulted ---
+
+def _envelope(**fields):
+    return json.dumps({"type": "result", "subtype": "success", **fields})
+
+
+def test_envelope_status_429_is_rate_limited_without_any_wording():
+    assert is_rate_limited(_envelope(api_error_status=429, result="all done"))
+
+
+def test_envelope_with_another_status_is_not_rate_limited():
+    # The field decides on its own: quota wording in the agent's own reply
+    # must not make an ordinary 500 look like an exhausted quota.
+    text = _envelope(
+        api_error_status=500,
+        result="I read the rate limit parser in ratelimit.py",
+    )
+
+    assert not is_rate_limited(text)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"api_error_status": None},
+        {"api_error_status": True},
+        {"api_error_status": "429"},
+        {},
+    ],
+    ids=["null", "bool", "string", "absent"],
+)
+def test_envelope_without_a_usable_status_falls_back_to_wording(fields):
+    assert is_rate_limited(_envelope(result="You've hit your session limit", **fields))
+    assert not is_rate_limited(_envelope(result="ordinary failure", **fields))
+
+
+def test_non_envelope_text_still_uses_wording():
+    # Codex and agy have no such field; their channel is plain text.
+    assert is_rate_limited("You've hit your usage limit.")
+    assert not is_rate_limited("strutil_test.go:47:14: undefined: IsPalindrome")
+
+
+# --- a reported reset epoch replaces parsing a wall-clock string ---
+
+def test_reported_epoch_becomes_a_wait_with_the_clock_buffer():
+    assert wait_until_epoch(NOW + 3600, NOW) == 3600 + 120
+
+
+def test_reported_epoch_already_elapsed_is_rejected():
+    assert wait_until_epoch(NOW - 3600, NOW) is None
+
+
+def test_reported_epoch_beyond_the_sanity_guard_is_rejected():
+    assert wait_until_epoch(NOW + 40 * 86400, NOW) is None
 
 
 def test_clock_two_hours_ahead_waits_2h_plus_buffer():

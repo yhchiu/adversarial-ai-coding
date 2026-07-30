@@ -335,13 +335,16 @@ class AgentResult:
 
     `quota_text` is the narrow channel quota detection reads: only the text
     an adapter can vouch for as coming from the agent itself, never from a
-    command the agent ran. It is excluded from equality because it is
-    diagnostic plumbing, not part of what the call produced.
+    command the agent ran. `quota_reset_epoch` is an exact reset time when
+    the agent reported one, sparing the parser a wall-clock string. Both
+    are excluded from equality because they are diagnostic plumbing, not
+    part of what the call produced.
     """
 
     rc: int
     text: str
     quota_text: str = field(default="", compare=False)
+    quota_reset_epoch: int | None = field(default=None, compare=False)
 
 
 def _resolve_argv0(name: str) -> str:
@@ -426,36 +429,57 @@ def _tool_summary(block: dict[str, object]) -> str:
     return f" . {label} {detail}".rstrip()
 
 
-def render_claude_event(line: str) -> tuple[list[str], str]:
-    """Render one claude NDJSON line into (echo lines, envelope).
+@dataclass
+class ClaudeEvent:
+    """What one claude NDJSON line contributes.
 
-    The envelope is non-empty only for the final result event, which is
-    what the adapters parse for the session id, the cost, and the result.
-    Keeping this pure is what makes the whole rendering layer testable
-    without a subprocess, while the caller stays free to echo per line.
+    `envelope` is set only by the final result event. `reset_epoch` comes
+    from a rate_limit_event and is only ever a wait time -- that event
+    fires on ordinary successful calls too, so it never means the call
+    was limited.
+    """
+
+    echo: list[str] = field(default_factory=list)
+    envelope: str = ""
+    reset_epoch: int | None = None
+
+
+def render_claude_event(line: str) -> ClaudeEvent:
+    """Render one claude NDJSON line.
+
+    The envelope is what the adapters parse for the session id, the cost,
+    and the result. Keeping this pure is what makes the whole rendering
+    layer testable without a subprocess, while the caller stays free to
+    echo per line.
     """
     text = line.rstrip("\r\n")
     if not text.strip():
-        return [], ""
+        return ClaudeEvent()
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
         # Merged stderr and CLI warnings are exactly what the user needs
         # to see when something goes wrong, so pass them straight through.
-        return [text], ""
+        return ClaudeEvent(echo=[text])
     if not isinstance(payload, dict):
-        return [text], ""
+        return ClaudeEvent(echo=[text])
     event_type = payload.get("type")
     if event_type == "result":
-        return [], text
+        return ClaudeEvent(envelope=text)
+    if event_type == "rate_limit_event":
+        info = payload.get("rate_limit_info")
+        resets_at = info.get("resetsAt") if isinstance(info, dict) else None
+        if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool):
+            return ClaudeEvent(reset_epoch=int(resets_at))
+        return ClaudeEvent()
     if event_type != "assistant":
-        return [], ""
+        return ClaudeEvent()
     message = payload.get("message")
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
         content = [{"type": "text", "text": content}]
     if not isinstance(content, list):
-        return [], ""
+        return ClaudeEvent()
     echoed: list[str] = []
     for block in content:
         if not isinstance(block, dict):
@@ -467,20 +491,23 @@ def render_claude_event(line: str) -> tuple[list[str], str]:
                 echoed += [part for part in body.split("\n") if part.strip()]
         elif kind == "tool_use":
             echoed.append(_tool_summary(block))
-    return echoed, ""
+    return ClaudeEvent(echo=echoed)
 
 
 def _run_claude_stream(
     argv: list[str], io: AgentIO, ref: AgentRef
-) -> tuple[int, str]:
-    """Stream claude NDJSON, returning (rc, envelope).
+) -> tuple[int, str, int | None]:
+    """Stream claude NDJSON, returning (rc, envelope, reset epoch).
 
     The envelope is the same JSON object the old `--output-format json`
     call produced, so every caller downstream is unchanged. When no
     result event arrives -- a crash, a kill, a quota abort -- it falls
-    back to the whole raw stream, because ratelimit.py
-    reads only agent_out and an empty file would silently stop quota
-    retries in exactly the case that needs them.
+    back to the whole raw stream, so the quota channel still has the
+    agent's own wording to work with.
+
+    The reset epoch is whatever the last rate_limit_event reported. It is
+    a wait time only; the decision that a call was limited comes from the
+    envelope's api_error_status.
     """
     proc = subprocess.Popen(
         argv,
@@ -493,19 +520,22 @@ def _run_claude_stream(
     )
     raw: list[str] = []
     envelope = ""
+    reset_epoch: int | None = None
     assert proc.stdout is not None
     io.raw_out.parent.mkdir(parents=True, exist_ok=True)
     with io.raw_out.open("w", encoding="utf-8") as raw_file:
         for raw_line in proc.stdout:
             raw_file.write(raw_line)
             raw.append(raw_line.rstrip("\r\n"))
-            echo_lines, found = render_claude_event(raw_line)
-            for text in echo_lines:
+            event = render_claude_event(raw_line)
+            for text in event.echo:
                 _echo_agent(io, ref, text)
-            if found:
-                envelope = found
+            if event.envelope:
+                envelope = event.envelope
+            if event.reset_epoch is not None:
+                reset_epoch = event.reset_epoch
     rc = proc.wait()
-    return rc, envelope or "\n".join(raw)
+    return rc, envelope or "\n".join(raw), reset_epoch
 
 
 # Codex names its tool calls after the item type; these read better.
@@ -772,7 +802,7 @@ def _worker_claude(
     argv += _claude_common_args(ref, settings)
     if session.worker_session:
         argv += ["--resume", session.worker_session]
-    rc, out = _run_claude_stream(argv, io, ref)
+    rc, out, reset_epoch = _run_claude_stream(argv, io, ref)
     _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)
@@ -780,24 +810,24 @@ def _worker_claude(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return AgentResult(rc, out, quota_text=out)
+        return AgentResult(rc, out, quota_text=out, quota_reset_epoch=reset_epoch)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         # Lenient divergence: bash's jq failure degraded to empty fields.
-        return AgentResult(0, out, quota_text=out)
+        return AgentResult(0, out, quota_text=out, quota_reset_epoch=reset_epoch)
     if payload is None:
         session.worker_session = "null"
         session.last_cost = ""
-        return AgentResult(0, "", quota_text=out)
+        return AgentResult(0, "", quota_text=out, quota_reset_epoch=reset_epoch)
     if not isinstance(payload, dict):
         session.worker_session = ""
         session.last_cost = ""
-        return AgentResult(5, "", quota_text=out)
+        return AgentResult(5, "", quota_text=out, quota_reset_epoch=reset_epoch)
     session.worker_session = _jq_raw(payload.get("session_id"))
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
     return AgentResult(
-        0, _jq_coalesce_empty(payload, "result"), quota_text=out
+        0, _jq_coalesce_empty(payload, "result"), quota_text=out, quota_reset_epoch=reset_epoch
     )
 
 
@@ -821,7 +851,7 @@ def _reviewer_claude(
         "--json-schema",
         VERDICT_SCHEMA,
     ]
-    rc, out = _run_claude_stream(argv, io, ref)
+    rc, out, reset_epoch = _run_claude_stream(argv, io, ref)
     _write_agent_out(io, out)
     if rc != 0:
         print(out, file=sys.stderr)
@@ -829,21 +859,21 @@ def _reviewer_claude(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return AgentResult(rc, out, quota_text=out)
+        return AgentResult(rc, out, quota_text=out, quota_reset_epoch=reset_epoch)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(5, "", quota_text=out)
+        return AgentResult(5, "", quota_text=out, quota_reset_epoch=reset_epoch)
     if payload is None:
         io.verdict_path.write_text(json.dumps(VERDICT_FALLBACK), encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(0, "", quota_text=out)
+        return AgentResult(0, "", quota_text=out, quota_reset_epoch=reset_epoch)
     if not isinstance(payload, dict):
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(5, "", quota_text=out)
+        return AgentResult(5, "", quota_text=out, quota_reset_epoch=reset_epoch)
     structured_output = payload.get("structured_output")
     verdict = (
         VERDICT_FALLBACK
@@ -853,7 +883,7 @@ def _reviewer_claude(
     io.verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
     return AgentResult(
-        0, _jq_coalesce_empty(payload, "result"), quota_text=out
+        0, _jq_coalesce_empty(payload, "result"), quota_text=out, quota_reset_epoch=reset_epoch
     )
 
 

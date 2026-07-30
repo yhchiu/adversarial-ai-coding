@@ -902,7 +902,7 @@ def test_claude_implementation_worker_orders_fresh_and_resume_argv(
 
     def fake_run(argv, io, ref):
         calls.append(argv)
-        return 0, json.dumps({"session_id": next(session_ids), "result": "ok"})
+        return 0, json.dumps({"session_id": next(session_ids), "result": "ok"}), None
 
     monkeypatch.setattr(agents, "_run_claude_stream", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
@@ -1206,19 +1206,44 @@ CLAUDE_ASSISTANT = {
     ],
 )
 def test_render_claude_event_echo_lines(event, expected):
-    echoed, envelope = agents.render_claude_event(json.dumps(event))
+    rendered = agents.render_claude_event(json.dumps(event))
 
-    assert echoed == expected
-    assert envelope == ""
+    assert rendered.echo == expected
+    assert rendered.envelope == ""
+    assert rendered.reset_epoch is None
 
 
 def test_render_claude_event_returns_the_result_envelope():
     line = json.dumps({"type": "result", "session_id": "s1", "result": "done"})
 
-    echoed, envelope = agents.render_claude_event(line)
+    rendered = agents.render_claude_event(line)
 
-    assert echoed == []
-    assert json.loads(envelope) == json.loads(line)
+    assert rendered.echo == []
+    assert json.loads(rendered.envelope) == json.loads(line)
+
+
+@pytest.mark.parametrize(
+    ("info", "expected"),
+    [
+        ({"status": "allowed", "resetsAt": 1785355800}, 1785355800),
+        ({"resetsAt": 1785355800.0}, 1785355800),
+        ({"status": "allowed"}, None),
+        ({"resetsAt": None}, None),
+        ({"resetsAt": True}, None),
+        ({"resetsAt": "soon"}, None),
+        ("not an object", None),
+    ],
+)
+def test_render_claude_event_reads_the_reported_reset_time(info, expected):
+    # The event fires on ordinary successful calls too, so it only ever
+    # supplies a wait; it never says the call was limited.
+    line = json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
+
+    rendered = agents.render_claude_event(line)
+
+    assert rendered.reset_epoch == expected
+    assert rendered.echo == []
+    assert rendered.envelope == ""
 
 
 @pytest.mark.parametrize(
@@ -1231,7 +1256,7 @@ def test_render_claude_event_returns_the_result_envelope():
     ],
 )
 def test_render_claude_event_passes_through_non_object_lines(line, expected):
-    assert agents.render_claude_event(line) == (expected, "")
+    assert agents.render_claude_event(line) == agents.ClaudeEvent(echo=expected)
 
 
 @pytest.mark.parametrize(
@@ -1259,9 +1284,7 @@ def test_render_claude_event_tool_summary_picks_one_identifying_argument(
         },
     }
 
-    echoed, _ = agents.render_claude_event(json.dumps(event))
-
-    assert echoed == [expected]
+    assert agents.render_claude_event(json.dumps(event)).echo == [expected]
 
 
 def _claude_emitter(tmp_path, lines):
@@ -1276,15 +1299,19 @@ def _claude_emitter(tmp_path, lines):
 
 def test_claude_stream_writes_raw_and_returns_the_result_envelope(tmp_path):
     result = json.dumps({"type": "result", "session_id": "s1", "result": "done"})
-    lines = [json.dumps(CLAUDE_ASSISTANT), result]
+    limit = json.dumps(
+        {"type": "rate_limit_event", "rate_limit_info": {"resetsAt": 1785355800}}
+    )
+    lines = [json.dumps(CLAUDE_ASSISTANT), limit, result]
     io, echoed = make_io(tmp_path)
 
-    rc, envelope = agents._run_claude_stream(
+    rc, envelope, reset_epoch = agents._run_claude_stream(
         _claude_emitter(tmp_path, lines), io, AgentRef("A", "claude")
     )
 
     assert rc == 0
     assert json.loads(envelope) == json.loads(result)
+    assert reset_epoch == 1785355800
     assert io.raw_out.read_text(encoding="utf-8") == "".join(f"{x}\n" for x in lines)
     assert echoed == [
         "[A claude] Reading the runner first.",
@@ -1299,12 +1326,13 @@ def test_claude_stream_without_result_event_falls_back_to_the_raw_stream(tmp_pat
     lines = ['{"type":"system","subtype":"init"}', "You've hit your usage limit."]
     io, _ = make_io(tmp_path)
 
-    rc, envelope = agents._run_claude_stream(
+    rc, envelope, reset_epoch = agents._run_claude_stream(
         _claude_emitter(tmp_path, lines), io, AgentRef("A", "claude")
     )
 
     assert rc == 0
     assert envelope == "\n".join(lines)
+    assert reset_epoch is None
 
 
 def test_claude_worker_quota_stream_reaches_the_quota_channel(monkeypatch, tmp_path):
@@ -1317,7 +1345,7 @@ def test_claude_worker_quota_stream_reaches_the_quota_channel(monkeypatch, tmp_p
         "You've hit your usage limit. Please try again in 20s."
     )
     monkeypatch.setattr(
-        agents, "_run_claude_stream", lambda argv, io, ref: (2, fallback)
+        agents, "_run_claude_stream", lambda argv, io, ref: (2, fallback, None)
     )
     io, _ = make_io(tmp_path)
 
@@ -1327,6 +1355,25 @@ def test_claude_worker_quota_stream_reaches_the_quota_channel(monkeypatch, tmp_p
 
     assert result.rc == 2
     assert is_rate_limited(result.quota_text)
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer"])
+def test_claude_adapters_pass_the_reported_reset_time_through(
+    monkeypatch, tmp_path, role
+):
+    envelope = json.dumps({"api_error_status": 429, "result": ""})
+    monkeypatch.setattr(
+        agents,
+        "_run_claude_stream",
+        lambda argv, io, ref: (1, envelope, 1785355800),
+    )
+    io, _ = make_io(tmp_path)
+    call = run_worker if role == "worker" else run_reviewer
+
+    result = call("claude", "p", Settings.from_env({}, run_id="r"), AgentSession(), io)
+
+    assert result.quota_reset_epoch == 1785355800
+    assert result.quota_text == envelope
 
 
 CODEX_TOOL_FIXTURE = Path(__file__).parent / "fixtures" / "codex_exec_tool_activity.jsonl"
@@ -1551,7 +1598,7 @@ def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
     payload = json.dumps(
         {"session_id": "sess-1", "total_cost_usd": 0.42, "result": "did the work"}
     )
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload, None))
     s = Settings.from_env({"TOOLS": "Bash(git *)"}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession()
@@ -1568,7 +1615,7 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
 
     def fake_run(argv, io, ref):
         seen["argv"] = argv
-        return (0, json.dumps({"session_id": "s2", "result": "ok"}))
+        return (0, json.dumps({"session_id": "s2", "result": "ok"}), None)
 
     monkeypatch.setattr(agents, "_run_claude_stream", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
@@ -1599,7 +1646,7 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
 
 
 def test_claude_worker_failure_writes_agent_out_and_keeps_rc(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (2, "quota text"))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (2, "quota text", None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     result = run_worker("claude", "p", s, AgentSession(), io)
@@ -1613,7 +1660,7 @@ def test_claude_worker_failure_writes_agent_out_and_keeps_rc(monkeypatch, tmp_pa
 def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path):
     # Deliberate lenient divergence: bash's jq failures inside agent_call's
     # condition context degraded to empty values rather than aborting.
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "not json at all"))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "not json at all", None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(worker_session="keep-me", owner=AgentRef("A", "claude"))
@@ -1624,7 +1671,7 @@ def test_claude_worker_invalid_json_success_keeps_session(monkeypatch, tmp_path)
 
 
 def test_claude_worker_top_level_null_matches_bash(monkeypatch, tmp_path):
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "null"))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "null", None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(
@@ -1647,7 +1694,7 @@ def test_claude_worker_non_object_json_matches_bash_jq_failure(
     monkeypatch, tmp_path, payload
 ):
     raw = json.dumps(payload)
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, raw))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, raw, None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(
@@ -1682,7 +1729,7 @@ def test_claude_worker_session_id_uses_jq_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload))
+        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload), None)
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
@@ -1715,7 +1762,7 @@ def test_claude_worker_result_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload))
+        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload), None)
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
@@ -1806,7 +1853,7 @@ def test_claude_reviewer_writes_verdict_from_structured_output(monkeypatch, tmp_
         "total_cost_usd": 0.1,
         "result": "review text",
     })
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload, None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     result = run_reviewer("claude", "p", s, AgentSession(), io)
@@ -1816,7 +1863,7 @@ def test_claude_reviewer_writes_verdict_from_structured_output(monkeypatch, tmp_
 
 
 def test_claude_reviewer_invalid_json_matches_bash_jq_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "not json at all"))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "not json at all", None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(last_cost="old-cost")
@@ -1829,7 +1876,7 @@ def test_claude_reviewer_invalid_json_matches_bash_jq_failure(monkeypatch, tmp_p
 
 
 def test_claude_reviewer_top_level_null_matches_bash(monkeypatch, tmp_path):
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "null"))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, "null", None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(last_cost="old-cost")
@@ -1851,7 +1898,7 @@ def test_claude_reviewer_non_object_json_matches_bash_jq_failure(
     monkeypatch, tmp_path, payload
 ):
     raw = json.dumps(payload)
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, raw))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, raw, None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     session = AgentSession(last_cost="old-cost")
@@ -1870,7 +1917,7 @@ def test_claude_reviewer_preserves_jq_coalesce_non_null_non_false_values(
     monkeypatch, tmp_path, structured_output
 ):
     payload = json.dumps({"structured_output": structured_output, "result": "review"})
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload, None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     result = run_reviewer("claude", "p", s, AgentSession(), io)
@@ -1880,7 +1927,7 @@ def test_claude_reviewer_preserves_jq_coalesce_non_null_non_false_values(
 
 def test_claude_reviewer_missing_structured_output_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(agents, "_run_claude_stream",
-                        lambda argv, io, ref: (0, json.dumps({"result": "no verdict"})))
+                        lambda argv, io, ref: (0, json.dumps({"result": "no verdict"}), None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     run_reviewer("claude", "p", s, AgentSession(), io)
@@ -1894,7 +1941,7 @@ def test_claude_reviewer_null_or_false_structured_output_uses_fallback(
     monkeypatch, tmp_path, structured_output
 ):
     payload = json.dumps({"structured_output": structured_output, "result": "review"})
-    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload))
+    monkeypatch.setattr(agents, "_run_claude_stream", lambda argv, io, ref: (0, payload, None))
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
     result = run_reviewer("claude", "p", s, AgentSession(), io)
@@ -1927,7 +1974,7 @@ def test_claude_cost_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, role, payload, expected
 ):
     monkeypatch.setattr(
-        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload))
+        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload), None)
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
@@ -1958,7 +2005,7 @@ def test_claude_reviewer_result_uses_jq_coalesce_and_raw_coercion(
     monkeypatch, tmp_path, payload, expected
 ):
     monkeypatch.setattr(
-        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload))
+        agents, "_run_claude_stream", lambda argv, io, ref: (0, json.dumps(payload), None)
     )
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
@@ -1971,7 +2018,7 @@ def test_claude_reviewer_result_uses_jq_coalesce_and_raw_coercion(
 def test_claude_reviewer_argv_has_schema(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setattr(agents, "_run_claude_stream",
-                        lambda argv, io, ref: (seen.update(argv=argv), (0, "{}"))[1])
+                        lambda argv, io, ref: (seen.update(argv=argv), (0, "{}", None))[1])
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = Settings.from_env({}, run_id="r")
     io, _ = make_io(tmp_path)
