@@ -11,7 +11,7 @@ import csv
 import json
 import os
 import shutil as _shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Sequence
@@ -94,6 +94,10 @@ class RunArchive:
     settings: Settings
     log_path: Path
     metrics_path: Path
+    # cwd -> (is a work tree, path to its index). See _work_tree.
+    _work_trees: dict[str, tuple[bool, Path | None]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     def art_path(self, name: str) -> Path:
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -321,6 +325,37 @@ class RunArchive:
             ],
         )
 
+    def _work_tree(self, cwd: Path | None) -> tuple[bool, Path | None]:
+        """Is cwd a work tree, and where is its index? Asked once per tree.
+
+        archive_git_state runs after every single agent call, and both
+        answers are fixed for the life of a run, so asking git each time
+        was one wasted process per call.
+        """
+        import subprocess
+
+        key = str(cwd) if cwd is not None else ""
+        if key in self._work_trees:
+            return self._work_trees[key]
+        proc = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree", "--git-path", "index"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        answer: tuple[bool, Path | None] = (False, None)
+        if proc.returncode == 0:
+            lines = proc.stdout.splitlines()
+            index = Path(lines[1]) if len(lines) > 1 and lines[1] else None
+            # --git-path answers relative to the working directory.
+            if index is not None and not index.is_absolute() and cwd is not None:
+                index = Path(cwd) / index
+            answer = (True, index)
+        self._work_trees[key] = answer
+        return answer
+
     def archive_git_state(
         self,
         role: str = "worker",
@@ -331,8 +366,11 @@ class RunArchive:
         cwd: Path | None = None,
     ) -> None:
         import subprocess
+        import tempfile
 
-        def git(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+        def git(
+            *args: str, env: dict[str, str] | None = None
+        ) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 ["git", *args],
                 cwd=cwd,
@@ -340,32 +378,62 @@ class RunArchive:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                check=check,
+                env=env,
             )
 
-        if git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        def diff_text(index_path: Path | None, untracked: bool) -> str:
+            """Tracked changes plus untracked file content, in one git call.
+
+            Untracked files only reach a diff once something records them,
+            and the obvious way to record them -- git add -N -- would leave
+            intent-to-add entries behind in the repository the worker is
+            about to commit (docs/plans/20260708_workflow_run_archive_v3.md,
+            review #8-5). Point GIT_INDEX_FILE at a throwaway copy of the
+            index instead: git writes the intent-to-add entries there, the
+            repository's own index is never opened for writing, and there is
+            no window in which a crash could leave the run dirty.
+
+            The old code walked untracked files with ls-files and spawned one
+            git diff --no-index per file, which was the largest single source
+            of child processes in a run.
+            """
+            if not untracked or index_path is None or not index_path.is_file():
+                # Nothing untracked to fold in, or no index to copy (an
+                # unborn repository): one plain diff says everything.
+                header = "# git diff --binary HEAD --\n"
+                return header + git("diff", "--binary", "HEAD", "--").stdout
+
+            handle, scratch_name = tempfile.mkstemp(prefix="aac-index-")
+            os.close(handle)
+            scratch = Path(scratch_name)
+            try:
+                _shutil.copyfile(index_path, scratch)
+                env = {**os.environ, "GIT_INDEX_FILE": str(scratch)}
+                git("add", "-N", "-A", env=env)
+                header = (
+                    "# git diff --binary HEAD -- (untracked files included via\n"
+                    "# a scratch index; the repository's own index is untouched)\n"
+                )
+                return header + git("diff", "--binary", "HEAD", "--", env=env).stdout
+            finally:
+                scratch.unlink(missing_ok=True)
+
+        inside, index_path = self._work_tree(cwd)
+        if not inside:
             return
 
+        status = git("status", "--porcelain").stdout
         status_art = self.art_path(f"{slug}-git-status.txt")
-        status_art.write_text(
-            git("status", "--porcelain").stdout, encoding="utf-8"
-        )
+        status_art.write_text(status, encoding="utf-8")
         self.write_meta(status_art, role, agent, stage, round)
 
+        # The status we already have says whether the scratch-index dance
+        # below can buy anything: "??" is porcelain's untracked marker.
+        untracked = any(
+            line.startswith("??") for line in status.splitlines()
+        )
         diff_art = self.art_path(f"{slug}-git-diff.patch")
-        chunks = [
-            "# git diff --binary HEAD --\n",
-            git("diff", "--binary", "HEAD", "--").stdout,
-            "\n",
-            "# untracked files\n",
-        ]
-        listing = git("ls-files", "--others", "--exclude-standard", "-z").stdout
-        for name in filter(None, listing.split("\0")):
-            chunks += [
-                f"\n## {name}\n",
-                git("diff", "--no-index", "--binary", "--", os.devnull, name).stdout,
-            ]
-        diff_art.write_text("".join(chunks), encoding="utf-8")
+        diff_art.write_text(diff_text(index_path, untracked), encoding="utf-8")
         self.write_meta(diff_art, role, agent, stage, round)
 
 
