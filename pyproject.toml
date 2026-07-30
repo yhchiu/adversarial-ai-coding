@@ -13,11 +13,16 @@ build-backend = "uv_build"
 adversarial-ai-coding = "adversarial_ai_coding.cli:main_entry"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not e2e'"
+# Nearly every second of this suite is process spawning (git and the fake
+# agent wrappers), so it scales almost linearly across workers.
+addopts = "-m 'not e2e' -n auto"
 markers = [
     "e2e: real-agent end-to-end; consumes quota; run manually with -m e2e",
 ]
