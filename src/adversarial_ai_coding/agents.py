@@ -499,6 +499,156 @@ def _run_claude_stream(
     return rc, envelope or "\n".join(raw)
 
 
+# Codex names its tool calls after the item type; these read better.
+# Unknown types keep their own name so a codex upgrade stays visible.
+_CODEX_ITEM_LABELS = {"command_execution": "run", "file_change": "edit"}
+
+# Codex reports a shell call as the full interpreter invocation, so on
+# Windows the first ~66 characters are the powershell.exe path and the
+# real command falls outside the truncation limit. Only strip the wrapper
+# when the leading program really is a shell: matching "-c" on anything
+# would maul commands like `git -c user.name=x commit`.
+_SHELLS = frozenset(
+    {
+        "powershell.exe",
+        "powershell",
+        "pwsh.exe",
+        "pwsh",
+        "cmd.exe",
+        "cmd",
+        "bash.exe",
+        "bash",
+        "sh.exe",
+        "sh",
+        "zsh.exe",
+        "zsh",
+    }
+)
+_SHELL_WRAPPER = re.compile(
+    r"^(?P<exe>\"[^\"]+\"|'[^']+'|\S+)\s+(?:-Command|-c|/c|/C)\s+(?P<rest>.+)$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_shell_wrapper(command: str) -> str:
+    """Return the inner command of a `<shell> -Command <cmd>` invocation.
+
+    The rest of the string is sliced out verbatim rather than tokenized
+    and rejoined, which would lose the agent's own quoting.
+    """
+    match = _SHELL_WRAPPER.match(command)
+    if match is None:
+        return command
+    exe = match.group("exe").strip("\"'")
+    if PurePath(exe).name.lower() not in _SHELLS:
+        return command
+    inner = match.group("rest")
+    for quote in ("'", '"'):
+        if len(inner) > 1 and inner.startswith(quote) and inner.endswith(quote):
+            inner = inner[1:-1]
+            break
+    return inner or command
+
+
+def _relative_path(raw: str, cwd: Path | None) -> str:
+    if cwd is None:
+        return raw
+    try:
+        return str(Path(raw).relative_to(cwd))
+    except ValueError:
+        return raw
+
+
+def _codex_file_change_detail(item: dict[str, object], cwd: Path | None) -> str:
+    changes = item.get("changes")
+    if not isinstance(changes, list) or not changes:
+        return ""
+    first = changes[0]
+    if not isinstance(first, dict):
+        return ""
+    raw_path = first.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return ""
+    detail = _relative_path(raw_path, cwd)
+    kind = first.get("kind")
+    if isinstance(kind, str) and kind:
+        detail = f"{detail} ({kind})"
+    if len(changes) > 1:
+        detail = f"{detail} +{len(changes) - 1} more"
+    return detail
+
+
+def _codex_item_summary(item: dict[str, object], cwd: Path | None) -> str:
+    """One line naming a codex tool call and the thing it acts on."""
+    kind = item.get("type")
+    label = kind if isinstance(kind, str) and kind else "item"
+    detail = ""
+    if kind == "command_execution":
+        command = item.get("command")
+        if isinstance(command, str) and command:
+            detail = _strip_shell_wrapper(command).split("\n", 1)[0].strip()
+    elif kind == "file_change":
+        detail = _codex_file_change_detail(item, cwd)
+    if len(detail) > _TOOL_ARG_LIMIT:
+        detail = detail[:_TOOL_ARG_LIMIT] + "..."
+    return f" . {_CODEX_ITEM_LABELS.get(label, label)} {detail}".rstrip()
+
+
+def render_codex_event(
+    line: str, cwd: Path | None = None
+) -> tuple[str, bool, str]:
+    """Render one codex NDJSON line into (text, should echo, thread id).
+
+    The text is what lands in agent_out; only some of it is worth putting
+    on the terminal. Unknown event types still render as raw JSON so a
+    codex upgrade stays diagnosable, and quota wording in an error event
+    keeps reaching ratelimit.py through agent_out.
+    """
+    text = line.rstrip("\r\n")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return text, True, ""
+    if not isinstance(payload, dict):
+        return _jq_raw(payload), False, ""
+    event_type = payload.get("type")
+    if event_type == "thread.started":
+        parsed_id = payload.get("thread_id")
+        return "", False, parsed_id if isinstance(parsed_id, str) else ""
+    if event_type == "item.started":
+        # The live heartbeat: this fires when the tool call starts, not
+        # when it finishes, so a ten-minute command is visible up front.
+        item = payload.get("item")
+        if isinstance(item, dict):
+            return _codex_item_summary(item, cwd), True, ""
+        return json.dumps(payload, ensure_ascii=False), False, ""
+    if event_type == "item.completed":
+        item = payload.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            body = item.get("text")
+            rendered = _jq_raw(body) if body is not None else ""
+            return rendered, bool(rendered), ""
+        return json.dumps(payload, ensure_ascii=False), False, ""
+    if event_type == "error":
+        value = payload.get("message")
+        rendered = (
+            _jq_raw(value)
+            if value is not None
+            else json.dumps(payload, ensure_ascii=False)
+        )
+        return rendered, True, ""
+    if event_type == "turn.failed":
+        error = payload.get("error")
+        if isinstance(error, dict) and error.get("message") is not None:
+            rendered = _jq_raw(error["message"])
+        elif error is not None:
+            rendered = _jq_raw(error)
+        else:
+            rendered = json.dumps(payload, ensure_ascii=False)
+        return rendered, True, ""
+    return json.dumps(payload, ensure_ascii=False), False, ""
+
+
 def _run_codex_json(
     argv: list[str], io: AgentIO, ref: AgentRef
 ) -> tuple[int, str, str]:
@@ -513,6 +663,7 @@ def _run_codex_json(
     )
     rendered: list[str] = []
     thread_id = ""
+    cwd = Path.cwd()
     assert proc.stdout is not None
     io.raw_out.parent.mkdir(parents=True, exist_ok=True)
     io.agent_out.parent.mkdir(parents=True, exist_ok=True)
@@ -522,45 +673,9 @@ def _run_codex_json(
     ):
         for raw_line in proc.stdout:
             raw_file.write(raw_line)
-            line = raw_line.rstrip("\r\n")
-            text = ""
-            should_echo = False
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                text = line
-                should_echo = True
-            else:
-                if not isinstance(payload, dict):
-                    text = _jq_raw(payload)
-                else:
-                    event_type = payload.get("type")
-                    if event_type == "thread.started":
-                        parsed_id = payload.get("thread_id")
-                        if isinstance(parsed_id, str) and parsed_id:
-                            thread_id = parsed_id
-                    elif event_type == "item.completed":
-                        item = payload.get("item")
-                        if isinstance(item, dict) and item.get("type") == "agent_message":
-                            text = _jq_raw(item.get("text")) if item.get("text") is not None else ""
-                            should_echo = bool(text)
-                        else:
-                            text = json.dumps(payload, ensure_ascii=False)
-                    elif event_type == "error":
-                        value = payload.get("message")
-                        text = _jq_raw(value) if value is not None else json.dumps(payload, ensure_ascii=False)
-                        should_echo = True
-                    elif event_type == "turn.failed":
-                        error = payload.get("error")
-                        if isinstance(error, dict) and error.get("message") is not None:
-                            text = _jq_raw(error["message"])
-                        elif error is not None:
-                            text = _jq_raw(error)
-                        else:
-                            text = json.dumps(payload, ensure_ascii=False)
-                        should_echo = True
-                    elif event_type != "thread.started":
-                        text = json.dumps(payload, ensure_ascii=False)
+            text, should_echo, parsed_id = render_codex_event(raw_line, cwd)
+            if parsed_id:
+                thread_id = parsed_id
             if text:
                 rendered.append(text)
                 rendered_file.write(text.rstrip("\n") + "\n")

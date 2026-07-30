@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"22222222-2222-4222-8222-222222222222"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Creating the file now."}}
+{"type":"item.started","item":{"id":"item_1","type":"file_change","changes":[{"path":"src/demo.py","kind":"add"},{"path":"src/other.py","kind":"update"}]}}
+{"type":"item.completed","item":{"id":"item_1","type":"file_change","changes":[{"path":"src/demo.py","kind":"add"}]}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'git add -A'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'git add -A'","aggregated_output":"nothing to commit, working tree clean","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_3","type":"web_search","query":"an item type this version does not know"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"DONE"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}

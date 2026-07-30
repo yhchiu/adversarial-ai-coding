@@ -595,7 +595,7 @@ agent command/runtime used for the call.
 | Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` |
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` |
-| Live output | Messages and a one-line summary per tool call | Messages only | Raw merged output |
+| Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output |
 
 Claude, Codex, and Agy may each be used in A, B, and I. Worker calls resume only
 by their captured ID, while every reviewer call starts fresh. There is one
@@ -622,9 +622,11 @@ silent wait. Every streamed line is prefixed with its slot and command, as in
 `[A claude] `, and printed in the `AGENT` color category. The prefix is what
 keeps an agent's own `### heading` from being read as a workflow checkpoint, and
 it is added at print time only: archived artifacts and the run log never contain
-it. Claude also reports each tool call as one line naming the tool and the file,
-command, or pattern it acts on; the rest of the tool input is dropped, so a
-large write still costs one short line.
+it. Claude and Codex also report each tool call as one line naming the tool and
+the file, command, or pattern it acts on; the rest of the tool input is dropped,
+so a large write still costs one short line. Codex reports a shell call as the
+full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is
+stripped and only the command you care about is shown.
 
 Built-in session, output, sandbox, and log flags belong to the workflow.
 `CLAUDE_ARGS` (and `IMPL_ARGS` when I resolves to Claude) must not contain

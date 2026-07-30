@@ -1322,6 +1322,152 @@ def test_claude_worker_quota_stream_reaches_agent_out_for_ratelimit(tmp_path):
     assert is_rate_limited(io.agent_out)
 
 
+CODEX_TOOL_FIXTURE = Path(__file__).parent / "fixtures" / "codex_exec_tool_activity.jsonl"
+
+POWERSHELL = (
+    '"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe"'
+)
+
+
+def _codex_started(item):
+    return json.dumps({"type": "item.started", "item": item})
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (f"{POWERSHELL} -Command 'git add -A'", " . run git add -A"),
+        ('/bin/bash -c "pytest -q"', " . run pytest -q"),
+        ("cmd.exe /c dir", " . run dir"),
+        # Not a shell: stripping here would maul the command.
+        ("git -c user.name=x commit -m hi", " . run git -c user.name=x commit -m hi"),
+        ("pytest -q", " . run pytest -q"),
+        (f"{POWERSHELL} -Command 'x{'y' * 200}'", " . run x" + "y" * 99 + "..."),
+    ],
+)
+def test_render_codex_event_command_summary_strips_the_shell_wrapper(
+    command, expected
+):
+    line = _codex_started({"id": "i", "type": "command_execution", "command": command})
+
+    text, should_echo, thread_id = agents.render_codex_event(line)
+
+    assert (text, should_echo, thread_id) == (expected, True, "")
+
+
+def test_render_codex_event_file_change_shows_kind_and_relative_path(tmp_path):
+    changed = tmp_path / "src" / "demo.py"
+    line = _codex_started(
+        {
+            "id": "i",
+            "type": "file_change",
+            "changes": [
+                {"path": str(changed), "kind": "add"},
+                {"path": str(tmp_path / "src" / "other.py"), "kind": "update"},
+            ],
+        }
+    )
+
+    text, should_echo, _ = agents.render_codex_event(line, tmp_path)
+
+    assert text == f" . edit {Path('src') / 'demo.py'} (add) +1 more"
+    assert should_echo is True
+
+
+def test_render_codex_event_keeps_paths_outside_the_workspace_absolute(tmp_path):
+    outside = tmp_path.parent / "elsewhere.py"
+    line = _codex_started(
+        {"id": "i", "type": "file_change", "changes": [{"path": str(outside)}]}
+    )
+
+    text, _, _ = agents.render_codex_event(line, tmp_path)
+
+    assert text == f" . edit {outside}"
+
+
+def test_render_codex_event_names_unknown_item_types(tmp_path):
+    line = _codex_started({"id": "i", "type": "web_search", "query": "anything"})
+
+    assert agents.render_codex_event(line, tmp_path) == (" . web_search", True, "")
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            '{"type":"thread.started","thread_id":"t-1"}',
+            ("", False, "t-1"),
+        ),
+        (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}',
+            ("hi", True, ""),
+        ),
+        (
+            '{"type":"error","message":"boom"}',
+            ("boom", True, ""),
+        ),
+        (
+            '{"type":"turn.failed","error":{"message":"detail"}}',
+            ("detail", True, ""),
+        ),
+        ("not json at all", ("not json at all", True, "")),
+    ],
+)
+def test_render_codex_event_keeps_the_existing_event_handling(line, expected):
+    assert agents.render_codex_event(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"type":"turn.completed","usage":{"input_tokens":1}}',
+        '{"type":"item.completed","item":{"type":"command_execution","exit_code":0}}',
+        '{"type":"future.event","details":{"message":"kept for diagnosis"}}',
+    ],
+)
+def test_render_codex_event_records_other_events_without_echoing(line):
+    text, should_echo, _ = agents.render_codex_event(line)
+
+    assert json.loads(text) == json.loads(line)
+    assert should_echo is False
+
+
+def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
+    emitter = tmp_path / "emit_codex.py"
+    emitter.write_text(
+        "import pathlib, sys\n"
+        "sys.stdout.write(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))\n",
+        encoding="utf-8",
+    )
+    io, echoed = make_io(tmp_path)
+
+    rc, rendered, thread_id = agents._run_codex_json(
+        [sys.executable, str(emitter), str(CODEX_TOOL_FIXTURE)],
+        io,
+        AgentRef("B", "codex"),
+    )
+
+    assert rc == 0
+    assert thread_id == "22222222-2222-4222-8222-222222222222"
+    assert echoed == [
+        "[B codex] Creating the file now.",
+        "[B codex]  . edit src/demo.py (add) +1 more",
+        "[B codex]  . run git add -A",
+        "[B codex]  . web_search",
+        "[B codex] DONE",
+    ]
+    # The summary replaces what used to be a raw JSON dump of item.started.
+    agent_out = io.agent_out.read_text(encoding="utf-8")
+    assert " . run git add -A" in agent_out
+    assert "in_progress" not in agent_out
+    assert "[B codex]" not in agent_out
+    # item.completed still records its raw payload for diagnosis.
+    assert "aggregated_output" in rendered
+    assert io.raw_out.read_text(encoding="utf-8") == CODEX_TOOL_FIXTURE.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
     payload = json.dumps(
         {"session_id": "sess-1", "total_cost_usd": 0.42, "result": "did the work"}

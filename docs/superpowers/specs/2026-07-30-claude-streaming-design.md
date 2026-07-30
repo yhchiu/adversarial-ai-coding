@@ -26,8 +26,9 @@ Out of scope, recorded as follow-ups:
 - The stream carries a structured `rate_limit_event` (with a `resetsAt`
   epoch and a `rateLimitType`), which is more reliable than the text
   scraping in `ratelimit.py`. Not adopted here.
-- `_run_codex_json` still echoes only `agent_message` items, so codex
-  tool activity stays invisible. This change only adds its prefix.
+- ~~`_run_codex_json` still echoes only `agent_message` items, so codex
+  tool activity stays invisible. This change only adds its prefix.~~
+  Done the same day; see "Codex tool activity" at the end of this file.
 
 ## Verified CLI facts
 
@@ -173,3 +174,55 @@ slow, costs money, and cannot run in CI.
    renderer, the fallback, and the reserved `--verbose`.
 4. `docs: document claude streaming and record the parity divergence` —
    README.md, README.zh-TW.md, python-port-parity.md.
+
+## Codex tool activity
+
+Added the same day, once claude's streaming showed how much the tool
+lines carry. Codex had the same dark stretches: it echoed only
+`agent_message` items, and every other event was `json.dumps`-ed into
+`agent_out` without ever reaching the terminal.
+
+Codex marks tool calls with two events. `item.started` fires when the
+call begins and `item.completed` when it ends, so `item.started` is the
+live heartbeat and the only one echoed — a ten-minute command is visible
+up front rather than after the fact. Exit codes are not echoed, matching
+the decision not to print tool results for claude; the workflow's own
+gates are what decide pass or fail.
+
+Verified item types (codex-cli 0.146.0): `command_execution` (with
+`command`, `status`, and on completion `exit_code` and
+`aggregated_output`) and `file_change` (with `changes: [{path, kind}]`).
+
+Rendering, in `render_codex_event`, a pure per-line function mirroring
+`render_claude_event`:
+
+| Item | Line |
+| --- | --- |
+| `command_execution` | ` . run <command>` |
+| `file_change` | ` . edit <path> (<kind>)`, plus ` +N more` beyond the first change |
+| anything else | ` . <item.type>`, so a codex upgrade is visible without a code change |
+
+Codex reports a shell call as the whole interpreter invocation, so on
+Windows the first ~66 characters are the `powershell.exe` path and the
+real command falls outside the truncation limit. The wrapper is stripped
+by slicing the original string after the `-Command` / `-c` / `/c` flag,
+never by tokenizing and rejoining, which would lose the agent's own
+quoting. Stripping only applies when the leading program really is a
+shell, or `git -c user.name=x commit` would be mauled into
+`user.name=x commit`.
+
+File paths are shown relative to the working directory, and left
+absolute when they fall outside it.
+
+These summary lines replace what `item.started` used to dump into
+`agent_out`, which is a straight improvement to that artifact. Every
+other event keeps its existing handling: `item.completed`, `error`,
+`turn.failed`, and unknown event types still render exactly as before,
+so quota wording continues to reach `ratelimit.py` through `agent_out`
+and unknown events stay diagnosable. The `aggregated_output` of a
+completed command is still recorded as raw JSON; trimming that belongs
+to a separate data-quality change.
+
+Committed as one commit: implementation, tests, and documentation
+together, because the README live-output row and this file's follow-up
+note are wrong the moment the code lands.

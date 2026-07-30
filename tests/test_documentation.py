@@ -27,6 +27,11 @@ def test_agent_streaming_is_documented_bilingually():
     assert "archived artifacts and the run log never contain" in english
     assert "`--output-format`、`--verbose` 或 `--json-schema`" in chinese
     assert "封存產物與 run log 永遠不含前綴" in chinese
+    # Codex reports tool calls too, and its shell wrapper is stripped.
+    assert english.count("Messages and a one-line summary per tool call") == 2
+    assert chinese.count("訊息,加上每個工具呼叫一行摘要") == 2
+    assert "`powershell -Command` or `bash -c` wrapper" in english
+    assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
 
 
 def test_cross_platform_launchers_are_documented_bilingually():
