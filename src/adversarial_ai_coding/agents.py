@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Callable
 
 from .config import Settings, SettingsError
@@ -579,7 +579,11 @@ def _strip_shell_wrapper(command: str) -> str:
     if match is None:
         return command
     exe = match.group("exe").strip("\"'")
-    if PurePath(exe).name.lower() not in _SHELLS:
+    # The path is text the agent wrote, not a path on this host, so the
+    # basename must be read the same way everywhere. PureWindowsPath
+    # accepts both separators; PurePath would follow the host and leave a
+    # windows path unsplit -- and the wrapper unstripped -- on posix.
+    if PureWindowsPath(exe).name.lower() not in _SHELLS:
         return command
     inner = match.group("rest")
     for quote in ("'", '"'):
