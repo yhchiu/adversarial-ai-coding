@@ -45,8 +45,8 @@ from .runstate import (
 from .style import Styler
 from .workflow import WorkflowContext, plan_gate_preflight, run_workflow
 
-USAGE = """Usage:adversarial-ai-coding "task description"
-      adversarial-ai-coding task.md         # If the argument is a file, use its contents as the task
+USAGE = """Usage:adversarial-ai-coding "request description"
+      adversarial-ai-coding request.md      # If the argument is a file, use its contents as the request
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit"""
 
 
@@ -127,7 +127,7 @@ def main(
         if task_arg and Path(task_arg).is_file():
             task_source_kind = "file"
             task_source_path = str(Path(task_arg).resolve())
-            styler.out(f"Reading task description from file:{task_arg}")
+            styler.out(f"Reading request from file:{task_arg}")
             task = Path(task_arg).read_text(encoding="utf-8")
 
         snapshot: dict[str, str] = {}
@@ -140,9 +140,10 @@ def main(
             task_snapshot = state.task_text()
             if task and task != task_snapshot:
                 raise RunStateError(
-                    "!! The task argument resolves to different text than the "
-                    "resumed run's task snapshot.\n   Resume without a task "
-                    "argument (the snapshot is used), or start a fresh run."
+                    "!! The request argument resolves to different text than "
+                    "the resumed run's request snapshot.\n   Resume without a "
+                    "request argument (the snapshot is used), or start a fresh "
+                    "run."
                 )
             task = task_snapshot
             task_arg = snapshot.get("TASK_ARG", "")
@@ -180,7 +181,7 @@ def main(
             f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}  "
             f"PHASES={'1' if settings.phases else '0'}"
         )
-        print(f"Task:{task}")
+        print(f"Request:{task}")
         if settings.import_spec:
             styler.out(
                 f"Importing spec:{settings.import_spec}"

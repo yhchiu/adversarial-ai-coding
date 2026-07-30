@@ -144,30 +144,30 @@ Then run `aac` from the root of the target project:
 cd /path/to/your-project
 ```
 
-Run a task with the default agents, where Claude is the worker and Codex is the
-reviewer:
+Run a request with the default agents, where Claude is the worker and Codex is
+the reviewer:
 
 ```bash
 aac "Add --json output to the CLI"
 ```
 
-You can also write the task in a file:
+You can also write the request in a file:
 
 ```bash
-aac task.md
+aac request.md
 ```
 
 Swap the worker and reviewer agents:
 
 ```bash
-AGENT_A=codex AGENT_B=claude aac task.md
+AGENT_A=codex AGENT_B=claude aac request.md
 ```
 
 Use the same built-in CLI in both slots with different slot-specific models:
 
 ```bash
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
-  aac task.md
+  aac request.md
 ```
 
 Use custom agent or wrapper commands:
@@ -175,13 +175,13 @@ Use custom agent or wrapper commands:
 ```bash
 AGENT_A=gemini AGENT_A_ARGS='--model gemini-2.5-pro --yolo' \
 AGENT_B=my-review-wrapper AGENT_B_ARGS='--strict' \
-  aac task.md
+  aac request.md
 ```
 
 Enable dual spec mode:
 
 ```bash
-DUAL_SPEC=1 aac task.md
+DUAL_SPEC=1 aac request.md
 ```
 
 Print the agent rules template for manual merging into an existing `AGENTS.md`:
@@ -199,14 +199,15 @@ text around the block is left alone and is not treated as drift.
 ## Strong Model Plans, Cheap Model Implements
 
 Spec writing, planning, acceptance tests, and adversarial review benefit most
-from a strong model. The repetitive stage-5 task loop can use a cheaper model
-or a different CLI without weakening the complete gate and reviews that follow.
+from a strong model. The repetitive stage-5 checkbox-task loop can use a cheaper
+model or a different CLI without weakening the complete gate and reviews that
+follow.
 
 Keep the owner's command and change only the implementation model:
 
 ```bash
 AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
-  aac task.md
+  aac request.md
 ```
 
 Or plan with Claude and implement the checkbox tasks with Codex:
@@ -216,7 +217,7 @@ AGENT_A=claude MODEL_A=opus \
 AGENT_B=codex MODEL_B=gpt-5.5 \
 IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
 IMPL_ARGS='-c model_reasoning_effort="low"' \
-  aac task.md
+  aac request.md
 ```
 
 If all three `IMPL_*` variables are empty, the implementation slot resolves to
@@ -348,7 +349,7 @@ phase, the normal full gate, branch review, and final review run
 unchanged. `PHASES` cannot change across resume: the value is snapshotted at run
 start and conflicting resume environments are rejected. There is one
 sanctioned in-run switch. When `PHASES` is unset and no plan is
-imported, the spec reviewer also judges whether the task suits phased
+imported, the spec reviewer also judges whether the request suits phased
 mode — two or more vertical features that can each be accepted
 independently — and writes its judgment to
 `aac/.run/phased-suggestion.json`. If it recommends phased, the spec
@@ -401,10 +402,10 @@ exec my-agent --session aac-reviewer "$@"
 Wrappers are also the right place for CLIs that need stdin, prompt files,
 quoting-sensitive arguments, or other stateful setup.
 
-## Writing Good Tasks
+## Writing a Good Request
 
-The result depends heavily on how clear the task is. Prefer a task file with a
-goal, testable acceptance criteria, and explicit non-goals.
+The result depends heavily on how clear the request is. Prefer a request file
+with a goal, testable acceptance criteria, and explicit non-goals.
 
 ```markdown
 ## Goal
@@ -469,13 +470,13 @@ On Windows, if you want Go race tests in the gate, use:
 
 ```bash
 GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...' \
-  aac task.md
+  aac request.md
 ```
 
 ## Resuming an Interrupted Run
 
 Every run records its progress under `aac/.run/state/<run-id>/`: the resolved
-task, the effective settings, a stage completion ledger, and the remaining
+request, the effective settings, a stage completion ledger, and the remaining
 implementation tasks. When a run aborts, it prints a paste-ready command:
 
 ```bash
@@ -485,8 +486,8 @@ RESUME_RUN=20260710-153012 aac
 The resumed run skips every completed stage (no AI cost is paid again),
 restores cross-stage state (the dual-spec decision, the acceptance-test base,
 the write-code task queue), and continues from the interruption point.
-`RESUME_RUN=last` picks the newest unfinished run. Do not pass the task
-argument again: the run's task snapshot is used, and a conflicting argument
+`RESUME_RUN=last` picks the newest unfinished run. Do not pass the request
+argument again: the run's request snapshot is used, and a conflicting argument
 is refused.
 
 Engines, models, and most settings may be overridden per attempt. The main
@@ -587,7 +588,7 @@ your-project/
         |-- state/<RUN_ID>/              # resume state
         |   |-- settings.json            # settings snapshot (schema 1)
         |   |-- ledger.json              # append-only stage ledger
-        |   |-- task.txt                 # resolved task snapshot
+        |   |-- task.txt                 # resolved request snapshot
         |   |-- phases.json              # PHASES=1 phase graph
         |   |-- tasks-remaining          # write-code task queue
         |   |-- last-head                # cross-stage HEAD record

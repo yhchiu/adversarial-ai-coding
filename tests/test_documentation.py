@@ -103,7 +103,7 @@ def test_cross_platform_launchers_are_documented_bilingually():
         assert "adversarial-ai-coding/scripts" in readme
         assert "scripts/aac" in readme
         assert "scripts/aac.cmd" in readme
-        assert "aac task.md" in readme
+        assert "aac request.md" in readme
         assert "Windows PowerShell" in readme
         assert "--locked" in readme
         assert 'uv run --project "$AAC_PROJECT"' not in readme

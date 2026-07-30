@@ -120,18 +120,18 @@ cd /path/to/your-project
 # 預設:A = Claude Code,B = Codex
 aac "為 CLI 加上 --json 輸出選項"
 
-# 任務描述寫成檔案(建議,見下方「任務怎麼寫」)
-aac task.md
+# 需求寫成檔案(建議,見下方「需求怎麼寫」)
+aac request.md
 
 # 交換 agent
-AGENT_A=codex AGENT_B=claude aac task.md
+AGENT_A=codex AGENT_B=claude aac request.md
 
 # 同一個內建 CLI 放在兩個 slot,各自使用不同模型
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
-  aac task.md
+  aac request.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
-DUAL_SPEC=1 aac task.md
+DUAL_SPEC=1 aac request.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
 aac print-agents
@@ -144,13 +144,13 @@ aac print-agents
 
 ## 強模型規劃、便宜模型實作
 
-寫 spec、規劃、撰寫驗收測試與對抗式審查最需要強模型;重複性高的 stage-5 任務迴圈則可換成較便宜的模型或不同 CLI,而後續完整關卡與審查仍交回原本的 owner/reviewer 配對。
+寫 spec、規劃、撰寫驗收測試與對抗式審查最需要強模型;重複性高的 stage-5 checkbox 任務迴圈則可換成較便宜的模型或不同 CLI,而後續完整關卡與審查仍交回原本的 owner/reviewer 配對。
 
 保留 owner 的 command,只降低實作模型:
 
 ```bash
 AGENT_A=claude MODEL_A=opus IMPL_MODEL=sonnet \
-  aac task.md
+  aac request.md
 ```
 
 或由 Claude 規劃、Codex 實作 checkbox 任務:
@@ -160,7 +160,7 @@ AGENT_A=claude MODEL_A=opus \
 AGENT_B=codex MODEL_B=gpt-5.5 \
 IMPL_AGENT=codex IMPL_MODEL=gpt-5-codex \
 IMPL_ARGS='-c model_reasoning_effort="low"' \
-  aac task.md
+  aac request.md
 ```
 
 三個 `IMPL_*` 都為空時,實作 slot 解析成選定的 owner,完全沿用既有行為。`IMPL_MODEL` 為空時,只有實作 command 與 owner command 相同,才繼承 owner slot 的 `MODEL_A` 或 `MODEL_B`;若換了 command 卻沒有設定 `IMPL_MODEL`,就使用該 CLI 自己的預設模型,絕不把一個 CLI 的模型名稱帶到另一個 CLI。
@@ -283,9 +283,9 @@ spec human gate 會顯示理由並詢問
 的設定。使用 `HUMAN_GATE=0` 時只會記錄建議,絕不自動啟用。若環境中明確
 設定 `PHASES=0`,則完全停用這項建議。
 
-### 任務怎麼寫
+### 需求怎麼寫
 
-結果好壞幾乎取決於任務範圍是否明確、「完成」是否可驗證。建議用檔案 + 這個格式:
+結果好壞幾乎取決於需求範圍是否明確、「完成」是否可驗證。建議用檔案 + 這個格式:
 
 ```markdown
 ## 目標
@@ -347,13 +347,13 @@ Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && 
 
 ## 中斷後續跑
 
-每次 run 會把進度記錄在 `aac/.run/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
+每次 run 會把進度記錄在 `aac/.run/state/<run-id>/`:resolved request 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
 
 ```bash
 RESUME_RUN=20260710-153012 aac
 ```
 
-續跑會跳過所有已完成的 stage(不重付 AI 費用),還原跨 stage 狀態(dual-spec 裁決、驗收測試基準、剩餘實作任務),從中斷點繼續。`RESUME_RUN=last` 自動選最新未完成的 run。續跑不必再帶 task 參數:以 run 的 task 快照為準,帶了且內容不同會直接拒絕。
+續跑會跳過所有已完成的 stage(不重付 AI 費用),還原跨 stage 狀態(dual-spec 裁決、驗收測試基準、剩餘實作任務),從中斷點繼續。`RESUME_RUN=last` 自動選最新未完成的 run。續跑不必再帶 request 參數:以 run 的 request 快照為準,帶了且內容不同會直接拒絕。
 
 引擎、模型等多數設定每次 attempt 都可覆寫。最主要的用例是換掉配額耗盡的 agent:
 
@@ -436,7 +436,7 @@ your-project/
         ├── state/<RUN_ID>/          # 續跑狀態(RESUME_RUN 用)
         │   ├── settings.json        # 設定快照(schema 1)
         │   ├── ledger.json          # 只增不改的 stage 台帳
-        │   ├── task.txt             # 解析後的 task 快照
+        │   ├── task.txt             # 解析後的 request 快照
         │   ├── phases.json          # PHASES=1 的階段圖
         │   ├── tasks-remaining      # write-code 任務佇列
         │   ├── last-head            # 跨 stage 的 HEAD 記錄
@@ -512,7 +512,7 @@ uv run pytest -q   # 單元與整合測試,不呼叫任何 AI
 uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
 ```
 
-執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 任務書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 Python 套件與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。
+執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 需求書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 Python 套件與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。
 
 **定位:改動 workflow 核心邏輯後、發版前的手動回歸;絕不掛進 CI 或單元測試入口。**
 

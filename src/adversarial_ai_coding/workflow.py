@@ -723,7 +723,7 @@ def finish(
             "Each stage passed deterministic quality gates and cross-review. "
         )
     (ctx.wf / "pr-body.md").write_text(
-        f"## Task\n\n{task}\n\n## Artifacts\n\n"
+        f"## Request\n\n{task}\n\n## Artifacts\n\n"
         f"- Spec with assumptions and open questions:"
         f"`{ctx.spec_dir}/spec.md`{spec_note}\n"
         f"- Implementation plan:`{ctx.spec_dir}/plan.md`{plan_note}\n\n"

@@ -300,4 +300,4 @@ def test_resume_task_conflict_fails(new_repo, monkeypatch, capsys):
         stdin_isatty=False,
     )
     assert rc == 1
-    assert "task snapshot" in capsys.readouterr().err
+    assert "request snapshot" in capsys.readouterr().err

@@ -77,7 +77,7 @@ def make(env=None, *, out_tty=True, err_tty=True, vt_ok=True):
         ("[A claude]", "agent"),
         # Only A, B, and I are real slots; anything else is not agent output.
         ("[X claude] not a slot", None),
-        ("Task:demo", None),
+        ("Request:demo", None),
         ("Quality gate:go test ./...", None),
         ("", None),
         ("plain line", None),
