@@ -65,9 +65,9 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 - **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 workflow 自己跑,失敗輸出直接餵回給工作者修;AI 的「測試通過」回報只當參考。
 - **對抗式測試完整性**:驗收測試由 reviewer 依規格撰寫、owner 審查;進入受保護階段後,任何 worker 呼叫(包含實作 slot I 與後續 owner 修正)都禁止修改這些測試檔。Workflow 在**每次 worker 動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
 - **人工檢查點在最高槓桿處**:spec 通過 AI 互審後、開始花大錢實作前,暫停等人核准(可先直接編輯 spec 再繼續);流程終點是「等人 merge 的 PR」,不是靜默結束。
-- **分級裁決**:`verdict.json` 為 `{approved, blockers[], suggestions[]}`,只有 blocker 擋關;suggestions 累積到 `.workflow/suggestions.md`,收尾階段逐條評估,避免審查者拿小事擋關或不好意思擋而放水。
+- **分級裁決**:`verdict.json` 為 `{approved, blockers[], suggestions[]}`,只有 blocker 擋關;suggestions 累積到 `aac/.run/suggestions.md`,收尾階段逐條評估,避免審查者拿小事擋關或不好意思擋而放水。
 - **小批次**:一個 checkbox 任務一個 commit,審查與回退都容易。
-- **產物落地成檔案**:A/B 之間靠 `specs/` 檔案與 git diff 溝通,不靠 stdout 傳遞長內容——這是 SDD 的天然優勢。
+- **產物落地成檔案**:A/B 之間靠 `aac/docs/` 檔案與 git diff 溝通,不靠 stdout 傳遞長內容——這是 SDD 的天然優勢。
 - **同一個 worker ref 在迴圈內續 session、reviewer 每輪全新 context**:同一個 worker ref 修改時保留脈絡;切換 ref 會依下方規則丟棄 session。Reviewer 不被前一輪結論定錨——這也是不同廠牌模型互審的價值(盲點不同)。
 
 ## 前置需求
@@ -196,8 +196,8 @@ reviewer review spec.md(merge 時加驗採納項目沒漏、沒被扭曲)+ Human
 
 - `a`:直接複製 A 的候選成最終 `spec.md`
 - `b`:直接複製 B 的候選成最終 `spec.md`
-- `ma`:以 A 為 base,編輯 `.workflow/spec-merge-request.md`,要求 A 明確採納 B 的指定項目
-- `mb`:以 B 為 base,編輯 `.workflow/spec-merge-request.md`,要求 B 明確採納 A 的指定項目
+- `ma`:以 A 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 A 明確採納 B 的指定項目
+- `mb`:以 B 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 B 明確採納 A 的指定項目
 
 被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
@@ -276,7 +276,7 @@ phase 加上目前 phase 都是綠燈」,不需要 test tag 或逐 phase 選取�
 若 resume 時的環境設定與之衝突,workflow 會拒絕執行。不過有一個允許的
 run 內切換方式。未設定 `PHASES` 且未匯入 plan 時,spec reviewer 也會
 判斷工作是否適合分階段模式——至少有兩個可各自獨立驗收的垂直功能——
-並將判斷寫入 `.workflow/phased-suggestion.json`。若 reviewer 建議採用,
+並將判斷寫入 `aac/.run/phased-suggestion.json`。若 reviewer 建議採用,
 spec human gate 會顯示理由並詢問
 `Enable Phased ATDD for this run? [y/N]:`。回答 `y` 會啟用分階段模式,
 並以不可分割的方式重寫 run snapshot,因此後續每次 resume 仍會讀到一致
@@ -337,17 +337,17 @@ spec human gate 會顯示理由並詢問
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒) |
 | `RETRY_MAX_RESET_WAIT` | `21600` | 訊息中的重置時刻若比這個秒數還遠(如週配額要等好幾天),立即放棄而不空等 |
-| `RESUME_RUN` | (空) | 續跑中斷的 run:填 `.workflow/state/` 下的 run id,或 `last` 取最新未完成的 run。已完成 stage 直接跳過。詳見「中斷後續跑」 |
+| `RESUME_RUN` | (空) | 續跑中斷的 run:填 `aac/.run/state/` 下的 run id,或 `last` 取最新未完成的 run。已完成 stage 直接跳過。詳見「中斷後續跑」 |
 | `AGENTS_TEMPLATE` | workflow checkout 內的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | workflow checkout 內的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
-| `SPEC_DIR` | `specs/<時間戳>` | 規格與計畫的存放目錄 |
+| `SPEC_DIR` | `aac/docs/<時間戳>` | 規格與計畫的存放目錄 |
 | `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導 agent 改用內建檔案工具 |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
 
 ## 中斷後續跑
 
-每次 run 會把進度記錄在 `.workflow/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
+每次 run 會把進度記錄在 `aac/.run/state/<run-id>/`:resolved task 快照、生效設定、stage 完成台帳、write-code 剩餘任務佇列。run 中止時會印出可直接貼上的續跑指令:
 
 ```bash
 RESUME_RUN=20260710-153012 aac
@@ -361,7 +361,7 @@ RESUME_RUN=20260710-153012 aac
 AGENT_B=agy RESUME_RUN=last aac
 ```
 
-持久化的 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `.workflow/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-1 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
+持久化的 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `aac/.run/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-1 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
 
 `SPEC_DIR`、`DUAL_SPEC`、`AUTO_BRANCH`、`USE_WORKTREE` 跨續跑不可變:它們決定 stage 圖與產物位置,衝突的覆寫會被拒絕。`NOTIFY_CMD` 刻意不持久化,每次 attempt 重新提供。
 
@@ -375,11 +375,24 @@ AGENT_B=agy RESUME_RUN=last aac
 
 注意事項:
 
-- `USE_WORKTREE=1` 的 run,state 在 worktree 的 `.workflow/` 內;必須 cd 進該 worktree 執行續跑(印出的提示已含 `cd` 指令)。
-- attempt 異常死亡可能留下 stale lock;錯誤訊息會給出確認前次已死後手動清除 `.workflow/state/<run-id>/lock` 的指令。
+- `USE_WORKTREE=1` 的 run,state 在 worktree 的 `aac/.run/` 內;必須 cd 進該 worktree 執行續跑(印出的提示已含 `cd` 指令)。
+- attempt 異常死亡可能留下 stale lock;錯誤訊息會給出確認前次已死後手動清除 `aac/.run/state/<run-id>/lock` 的指令。
 - 已完成的 run 拒絕續跑;`RESUME_RUN=last` 會自動略過已完成的 run。
 
 ## 產物與目錄結構
+
+Workflow 寫出的一切都放在單一頂層目錄 `aac/` 底下,並且只分成兩半,這個分界
+線同時決定版控:
+
+- `aac/docs/<RUN_ID>/` **會進版控**。裡面是 spec 與 plan——human gate 時由人
+  閱讀,PR 上由 reviewer 閱讀。沒有任何規則忽略這個路徑。
+- `aac/.run/` **永遠不進版控**。Workflow 會在裡面寫一個內容只有 `*` 的
+  `.gitignore`,整棵子樹對 git 隱形,而且不必動你自己 repo 的 `.gitignore`。
+  它是隱藏目錄,因為只有 workflow 會讀它。
+
+Commit 是以 `git add -A` 的語意進行的,所以這個 ignore 檔是唯一阻止機器產物
+進入你的 branch 的東西。這樣設計的理由見
+[`docs/adr/0001-single-aac-root-for-run-artifacts.md`](docs/adr/0001-single-aac-root-for-run-artifacts.md)。
 
 ```
 adversarial-ai-coding/
@@ -393,35 +406,55 @@ adversarial-ai-coding/
 your-project/
 ├── AGENTS.md            # 互審規範(缺檔時由範本產生;既有檔案絕不覆蓋,只提示)
 ├── CLAUDE.md            # 缺檔時補一行指向 AGENTS.md
-├── specs/<RUN_ID>/
-│   ├── spec-a.md                    # DUAL_SPEC=1 時 A 的候選 spec
-│   ├── spec-b.md                    # DUAL_SPEC=1 時 B 的候選 spec
-│   ├── spec-a.review-by-b.md        # DUAL_SPEC=1 時 B 對 A 的 one-shot review
-│   ├── spec-b.review-by-a.md        # DUAL_SPEC=1 時 A 對 B 的 one-shot review
-│   ├── spec-comparison-a.md         # DUAL_SPEC=1 時 A 寫的比較表
-│   ├── spec-comparison-b.md         # DUAL_SPEC=1 時 B 寫的比較表
-│   ├── spec-comparison.md           # DUAL_SPEC=1 時給人看的裁決索引
-│   ├── spec-decision.md             # DUAL_SPEC=1 時記錄選定 owner/reviewer
-│   ├── spec.md          # 規格(含驗收條件、假設與未決問題)
-│   └── plan.md          # 實作計畫(checkbox 任務清單,完成會打勾)
-├── .workflow/           # 不進版控(workflow 自動放 .gitignore)
-│   ├── review.md        # B 的審查意見 + A 的逐條回覆
-│   ├── verdict.json     # 裁決:{approved, blockers[], suggestions[]}
-│   ├── suggestions.md   # 歷輪累積的不擋關建議(收尾階段逐條評估)
-│   ├── spec-merge-request.md        # DUAL_SPEC=1 merge 時的人類採納指示
-│   ├── protected-tests.txt / protected-base.sha   # 受保護測試檔清單與基準 commit
-│   ├── pr-body.md       # 收尾產生的 PR 內文
-│   ├── latest-run.txt   # 指向最近一次 run archive 目錄
-│   ├── state/<RUN_ID>/  # 續跑狀態:設定快照、stage 台帳、任務佇列(RESUME_RUN 用)
-│   └── runs/<RUN_ID>/   # 每次 run 的完整中間資料 archive
-│       ├── 001-run-metadata.json
-│       ├── 002-task-source.md / 003-task.txt
-│       ├── NNN-*-prompt.md / NNN-*-output.txt / NNN-*-attempt-*-rc*.raw
-│       ├── NNN-review-*.md / NNN-verdict-*.json
-│       ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
-│       ├── metrics.csv  # stage/角色/engine欄位/輪次/秒數/費用/model/args/time
-│       └── logs/001-run.log (+ 001-run.log.meta.json)
+└── aac/
+    ├── docs/<RUN_ID>/               # 會進版控
+    │   ├── spec.md                  # 規格(含驗收條件、假設與未決問題)
+    │   ├── plan.md                  # 實作計畫(checkbox 任務清單,完成會打勾)
+    │   ├── spec-a.md                # DUAL_SPEC=1 時 A 的候選 spec
+    │   ├── spec-b.md                # DUAL_SPEC=1 時 B 的候選 spec
+    │   ├── spec-a.review-by-b.md    # DUAL_SPEC=1 時 B 對 A 的 one-shot review
+    │   ├── spec-b.review-by-a.md    # DUAL_SPEC=1 時 A 對 B 的 one-shot review
+    │   ├── spec-a.verdict-by-b.json # DUAL_SPEC=1 時 B 對 A 的候選裁決
+    │   ├── spec-b.verdict-by-a.json # DUAL_SPEC=1 時 A 對 B 的候選裁決
+    │   ├── spec-comparison-a.md     # DUAL_SPEC=1 時 A 寫的比較表
+    │   ├── spec-comparison-b.md     # DUAL_SPEC=1 時 B 寫的比較表
+    │   ├── spec-comparison.md       # DUAL_SPEC=1 時給人看的裁決索引
+    │   └── spec-decision.md         # DUAL_SPEC=1 時記錄選定 owner/reviewer
+    └── .run/                        # 永遠不進版控
+        ├── .gitignore               # 內容為 "*",每次 run 都會寫入
+        ├── review.md                # B 的審查意見 + A 的逐條回覆
+        ├── verdict.json             # 裁決:{approved, blockers[], suggestions[]}
+        ├── suggestions.md           # 歷輪累積的不擋關建議(收尾階段逐條評估)
+        ├── pr-body.md               # 收尾產生的 PR 內文
+        ├── spec-merge-request.md    # DUAL_SPEC=1 merge 時的人類採納指示
+        ├── protected-tests.txt      # 受保護測試檔清單
+        ├── protected-base.sha       # 受保護清單的基準 commit
+        ├── phased-suggestion.json   # spec reviewer 的分階段適用性判斷
+        ├── last-agent-output.txt    # 最近一次 agent 輸出
+        ├── last-agent-cli.raw       # 最近一次 CLI 原始輸出
+        ├── latest-run.txt           # 指向最近一次 run archive 目錄
+        ├── state/<RUN_ID>/          # 續跑狀態(RESUME_RUN 用)
+        │   ├── settings.json        # 設定快照(schema 1)
+        │   ├── ledger.json          # 只增不改的 stage 台帳
+        │   ├── task.txt             # 解析後的 task 快照
+        │   ├── phases.json          # PHASES=1 的階段圖
+        │   ├── tasks-remaining      # write-code 任務佇列
+        │   ├── last-head            # 跨 stage 的 HEAD 記錄
+        │   ├── lock/                # 以 mkdir 當 mutex,一次只允許一個 attempt
+        │   └── completed            # run 正常完成時寫入
+        └── archive/<RUN_ID>/        # 每次 run 的完整中間資料
+            ├── 001-run-metadata.json
+            ├── 002-task-source.md / 003-task.txt
+            ├── NNN-*-prompt.md / NNN-*-output.txt / NNN-*-attempt-*-rc*.raw
+            ├── NNN-review-*.md / NNN-verdict-*.json
+            ├── NNN-*-git-status.txt / NNN-*-git-diff.patch
+            ├── metrics.csv          # stage/角色/engine欄位/輪次/秒數/費用/model/args/time
+            └── logs/001-run.log (+ 001-run.log.meta.json)
 ```
+
+`aac/.run/` 底下直接放的那些檔案描述的是**當前這一輪**,不是整個 run:
+`init_live_state` 會在啟動時清掉暫時性的檔案,續跑時則保留後續 stage 依賴的
+持久控制檔。
 
 Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、`engine`、模型與模型參數。`engine` 是為了相容既有 archive schema 而保留的穩定欄位,記錄該次呼叫實際解析出的 agent command/runtime。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude agent 會回報(`total_cost_usd`)。
 
@@ -451,9 +484,9 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## 受保護測試的逃生口
 
-驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `.workflow/protected-tests.txt` 列出的檔案。acceptance stage 結束後,目前 workflow process 會在記憶體保存 `.workflow/protected-tests.txt` 與 `.workflow/protected-base.sha` 的 exact bytes、解析後 paths 與 base commit,並在每個 active worker boundary 前後驗證 exact bytes。即使 path list 為空,兩個 control files 仍受保護。這個 snapshot 只在目前 process 有效;resume 啟動的新 process 會把當時磁碟上的 controls 視為新的起始信任。這不是 OS-level lock,也不保證能防禦兩個 filesystem calls 之間的 concurrent pathname replacement。
+驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `aac/.run/protected-tests.txt` 列出的檔案。acceptance stage 結束後,目前 workflow process 會在記憶體保存 `aac/.run/protected-tests.txt` 與 `aac/.run/protected-base.sha` 的 exact bytes、解析後 paths 與 base commit,並在每個 active worker boundary 前後驗證 exact bytes。即使 path list 為空,兩個 control files 仍受保護。這個 snapshot 只在目前 process 有效;resume 啟動的新 process 會把當時磁碟上的 controls 視為新的起始信任。這不是 OS-level lock,也不保證能防禦兩個 filesystem calls 之間的 concurrent pathname replacement。
 
-若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工依序處理:編輯修正後的測試、commit 新內容,再把該新 commit SHA 寫入 `.workflow/protected-base.sha`;若該測試不應再受保護,則可改由人工從 `.workflow/protected-tests.txt` 移除 path。確認 controls 已描述預期的 trusted state 後再 resume。
+若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工依序處理:編輯修正後的測試、commit 新內容,再把該新 commit SHA 寫入 `aac/.run/protected-base.sha`;若該測試不應再受保護,則可改由人工從 `aac/.run/protected-tests.txt` 移除 path。確認 controls 已描述預期的 trusted state 後再 resume。
 
 ## 安全性注意事項
 
@@ -485,7 +518,7 @@ uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + co
 
 ## 疑難排解
 
-- **`(B 未產出 verdict.json,視為未通過)`**:審查者 agent 失敗或沒照規範寫檔,看 `.workflow/logs/`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
+- **`(B 未產出 verdict.json,視為未通過)`**:審查者 agent 失敗或沒照規範寫檔,看 `aac/.run/archive/<RUN_ID>/logs/001-run.log`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
 - **卡在權限詢問**:headless 下沒人能按「允許」。Claude Code 需要的指令加進 `TOOLS`;codex 確認 sandbox 模式;agy 確認旗標。
 - **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty,`HUMAN_GATE_PLAN=1` 也是(這個在啟動時就會擋下,不會白燒 AI 額度);在 CI 等無人環境設 `HUMAN_GATE=0`(並讓 `HUMAN_GATE_PLAN` 維持 `0`),並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。

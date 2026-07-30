@@ -15,7 +15,7 @@ All AI participants must follow these rules.
   redirection: on Windows, sandboxed shell writes can produce files that other
   participants and the workflow cannot read.
 
-## Review and replies (.workflow/review.md)
+## Review and replies (aac/.run/review.md)
 
 - Reviewer: list findings one by one. For each finding, name the file and describe
   the problem. When starting a new review round, overwrite old content, but keep
@@ -24,7 +24,7 @@ All AI participants must follow these rules.
   If you disagree, write "Disagree: <reason>". Never ignore a finding silently.
 - Reviewer: in the next round, verify each reply first, then look for new problems.
 
-## Verdict (.workflow/verdict.json)
+## Verdict (aac/.run/verdict.json)
 
 - Write one line of JSON: `{"approved": bool, "blockers": [...], "suggestions": [...]}`
 - A blocker must be fixed before approval: correctness bugs, spec violations,
@@ -33,17 +33,17 @@ All AI participants must follow these rules.
   in the final stage.
 - Set `"approved": true` only when there are zero blockers.
 
-## Phased suggestion (.workflow/phased-suggestion.json)
+## Phased suggestion (aac/.run/phased-suggestion.json)
 
 When the review prompt asks for it, the spec reviewer also writes
-.workflow/phased-suggestion.json as one line of JSON:
+aac/.run/phased-suggestion.json as one line of JSON:
 {"phased": true|false, "reason": "one or two sentences"}. This judgment
 is separate from the verdict: never put it in verdict.json, and never
 let it influence approved or blockers.
 
 ## Test integrity
 
-- Files listed in `.workflow/protected-tests.txt` are acceptance tests.
+- Files listed in `aac/.run/protected-tests.txt` are acceptance tests.
   Never edit, delete, or skip them during implementation.
 - If you believe a test is wrong, record your objection in the
   "Assumptions and Open Questions" section of the spec. Do not touch the test.
@@ -60,7 +60,7 @@ let it influence approved or blockers.
 - In dual spec mode, comparison files must compare both candidates directly and
   call out strengths, weaknesses, missing requirements, stronger acceptance
   criteria, edge cases, assumptions, and a recommended owner.
-- When `.workflow/spec-merge-request.md` exists, the selected spec owner must
+- When `aac/.run/spec-merge-request.md` exists, the selected spec owner must
   explicitly adopt the requested items into `spec.md` before implementation
   planning starts.
 - The task list in plan.md uses `- [ ]` checkboxes. Each item must be small

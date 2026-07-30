@@ -76,7 +76,7 @@ Stage notes:
    asking A to write it; see the import contract in
    [import-format.md](import-format.md).
    When `PHASES` is unset and `IMPORT_PLAN` is not set, the spec reviewer also
-   writes a phased-fitness judgment to `.workflow/phased-suggestion.json`,
+   writes a phased-fitness judgment to `aac/.run/phased-suggestion.json`,
    and the spec human gate may offer to enable Phased ATDD before the plan is
    written.
 2. **Human approval**: the highest-leverage checkpoint. A bad spec amplifies
@@ -111,13 +111,13 @@ Stage notes:
    own "tests pass" claim is never trusted — and acceptance tests must pass
    now. B then reviews the complete branch diff.
 7. **Final review and fixes**: A works through the accumulated
-   `.workflow/suggestions.md` items and its own self-review findings, then B
+   `aac/.run/suggestions.md` items and its own self-review findings, then B
    gives final acceptance.
 8. **Finish**: the workflow prints `git push` / `gh pr create` commands and run
    metrics. `OPEN_PR=1` runs them automatically.
 
 Review verdicts are graded. `verdict.json` is
 `{approved, blockers[], suggestions[]}`: only blockers make the loop repeat,
-while suggestions accumulate in `.workflow/suggestions.md` and are handled in
+while suggestions accumulate in `aac/.run/suggestions.md` and are handled in
 stage 7. This keeps a reviewer from blocking on nitpicks or approving just to
 be polite.

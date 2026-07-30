@@ -256,9 +256,9 @@ Decision commands:
 
 - `a`: copy Candidate A to final `spec.md`
 - `b`: copy Candidate B to final `spec.md`
-- `ma`: use Candidate A as base, edit `.workflow/spec-merge-request.md`, and
+- `ma`: use Candidate A as base, edit `aac/.run/spec-merge-request.md`, and
   require A to adopt selected items from Candidate B
-- `mb`: use Candidate B as base, edit `.workflow/spec-merge-request.md`, and
+- `mb`: use Candidate B as base, edit `aac/.run/spec-merge-request.md`, and
   require B to adopt selected items from Candidate A
 
 After selection, the chosen owner remains responsible for planning, complete
@@ -351,7 +351,7 @@ sanctioned in-run switch. When `PHASES` is unset and no plan is
 imported, the spec reviewer also judges whether the task suits phased
 mode — two or more vertical features that can each be accepted
 independently — and writes its judgment to
-`.workflow/phased-suggestion.json`. If it recommends phased, the spec
+`aac/.run/phased-suggestion.json`. If it recommends phased, the spec
 human gate shows the reason and asks `Enable Phased ATDD for this run? [y/N]:`.
 Answering `y` enables phased mode and rewrites the run snapshot atomically,
 so every later resume still sees one consistent value. With `HUMAN_GATE=0`
@@ -366,15 +366,15 @@ slot-specific args followed by a short prompt-file instruction as the final
 argument:
 
 ```bash
-$AGENT_A $AGENT_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
-$AGENT_B $AGENT_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
-$IMPL_AGENT $IMPL_ARGS "Read the full workflow prompt from this repository file and follow it exactly: .workflow/runs/<RUN_ID>/NNN-*-prompt.md"
+$AGENT_A $AGENT_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
+$AGENT_B $AGENT_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
+$IMPL_AGENT $IMPL_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
 ```
 
 Custom commands must be agentic: they need to read the referenced prompt file,
 inspect and edit the repository as needed, and exit non-zero on execution
-failure. A custom reviewer must write `.workflow/review.md` and
-`.workflow/verdict.json`; stdout JSON verdicts are not parsed. Custom agents
+failure. A custom reviewer must write `aac/.run/review.md` and
+`aac/.run/verdict.json`; stdout JSON verdicts are not parsed. Custom agents
 do not get automatic session resume, and `MODEL_A`, `MODEL_B`, and `IMPL_MODEL`
 are not translated into model flags for them. Put model flags in
 `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS`. Built-in command names may be
@@ -459,10 +459,10 @@ Add `--json` output to the CLI.
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
 | `RETRY_MAX_RESET_WAIT` | `21600` | When the message states a reset time farther away than this, abort instead of waiting. |
-| `RESUME_RUN` | empty | Resume an interrupted run: a run id from `.workflow/state/`, or `last` for the newest unfinished run. Completed stages are skipped. See "Resuming an Interrupted Run". |
+| `RESUME_RUN` | empty | Resume an interrupted run: a run id from `aac/.run/state/`, or `last` for the newest unfinished run. Completed stages are skipped. See "Resuming an Interrupted Run". |
 | `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
-| `SPEC_DIR` | `specs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
+| `SPEC_DIR` | `aac/docs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
 | `TOOLS` | git/go build/test/vet allowlist | Claude Code `--allowedTools` value. |
 
 On Windows, if you want Go race tests in the gate, use:
@@ -474,7 +474,7 @@ GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=
 
 ## Resuming an Interrupted Run
 
-Every run records its progress under `.workflow/state/<run-id>/`: the resolved
+Every run records its progress under `aac/.run/state/<run-id>/`: the resolved
 task, the effective settings, a stage completion ledger, and the remaining
 implementation tasks. When a run aborts, it prints a paste-ready command:
 
@@ -500,7 +500,7 @@ The persisted `IMPL_AGENT`, `IMPL_MODEL`, and `IMPL_ARGS` values follow the
 same non-empty override rule. A non-empty value on the resume command replaces
 the snapshot for that attempt, but an empty environment value cannot clear a
 saved value. To clear one, edit the corresponding lowercase key in
-`.workflow/state/<run-id>/settings.json`, keep it as valid schema-1 JSON, and
+`aac/.run/state/<run-id>/settings.json`, keep it as valid schema-1 JSON, and
 then resume. For example, set `"impl_model": ""` to return to the inheritance
 rule.
 
@@ -519,18 +519,31 @@ What is guaranteed:
 
 Notes:
 
-- `USE_WORKTREE=1` runs keep their state inside the worktree's `.workflow/`.
+- `USE_WORKTREE=1` runs keep their state inside the worktree's `aac/.run/`.
   Resume from inside the worktree; the printed hint includes the `cd` command.
 - A crashed attempt can leave a stale lock. The error message shows the exact
-  `rm` command to clear `.workflow/state/<run-id>/lock` once you confirmed the
+  `rm` command to clear `aac/.run/state/<run-id>/lock` once you confirmed the
   previous attempt is dead.
 - A completed run refuses to resume, and `RESUME_RUN=last` skips completed
   runs.
 
 ## Artifacts
 
-The workflow writes live state under `.workflow/` and archives each run
-under `.workflow/runs/<RUN_ID>/` by default.
+Everything the workflow writes goes under one top-level directory, `aac/`.
+It has exactly two halves, and the split is what decides version control:
+
+- `aac/docs/<RUN_ID>/` is **committed**. It holds the spec and plan, which a
+  human reads at the human gates and a reviewer reads on the pull request.
+  Nothing ignores this path.
+- `aac/.run/` is **never committed**. The workflow writes a `.gitignore`
+  containing a single `*` into it, so the whole subtree is invisible to git
+  without touching your repository's own `.gitignore`. It is hidden because
+  only the workflow reads it.
+
+Commits are made with `git add -A` semantics, so this ignore file is the only
+thing keeping machine artifacts out of your branch. See
+[`docs/adr/0001-single-aac-root-for-run-artifacts.md`](docs/adr/0001-single-aac-root-for-run-artifacts.md)
+for why the layout is shaped this way.
 
 ```text
 adversarial-ai-coding/
@@ -544,42 +557,61 @@ adversarial-ai-coding/
 your-project/
 |-- AGENTS.md
 |-- CLAUDE.md
-|-- specs/<RUN_ID>/
-|   |-- spec-a.md                    # DUAL_SPEC=1 candidate from slot A
-|   |-- spec-b.md                    # DUAL_SPEC=1 candidate from slot B
-|   |-- spec-a.review-by-b.md        # DUAL_SPEC=1 one-shot candidate review
-|   |-- spec-b.review-by-a.md        # DUAL_SPEC=1 one-shot candidate review
-|   |-- spec-comparison-a.md         # DUAL_SPEC=1 comparison from slot A
-|   |-- spec-comparison-b.md         # DUAL_SPEC=1 comparison from slot B
-|   |-- spec-comparison.md           # DUAL_SPEC=1 human decision index
-|   |-- spec-decision.md             # DUAL_SPEC=1 selected owner/reviewer
-|   |-- spec.md
-|   `-- plan.md
-|-- .workflow/
-|   |-- review.md
-|   |-- verdict.json
-|   |-- suggestions.md
-|   |-- spec-merge-request.md        # DUAL_SPEC=1 merge-adoption instructions
-|   |-- protected-tests.txt
-|   |-- protected-base.sha
-|   |-- pr-body.md
-|   |-- latest-run.txt
-|   |-- state/<RUN_ID>/               # resume state: settings snapshot, stage ledger, task queue
-|   `-- runs/<RUN_ID>/
-|       |-- 001-run-metadata.json
-|       |-- 002-task-source.md
-|       |-- 003-task.txt
-|       |-- NNN-*-prompt.md
-|       |-- NNN-*-output.txt
-|       |-- NNN-*-attempt-*-rc*.raw
-|       |-- NNN-*-attempt-*-rc*.cli.raw
-|       |-- NNN-review-*.md
-|       |-- NNN-verdict-*.json
-|       |-- NNN-*-git-status.txt
-|       |-- NNN-*-git-diff.patch
-|       |-- metrics.csv
-|       `-- logs/001-run.log
+`-- aac/
+    |-- docs/<RUN_ID>/                   # committed
+    |   |-- spec.md
+    |   |-- plan.md
+    |   |-- spec-a.md                    # DUAL_SPEC=1 candidate from slot A
+    |   |-- spec-b.md                    # DUAL_SPEC=1 candidate from slot B
+    |   |-- spec-a.review-by-b.md        # DUAL_SPEC=1 one-shot candidate review
+    |   |-- spec-b.review-by-a.md        # DUAL_SPEC=1 one-shot candidate review
+    |   |-- spec-a.verdict-by-b.json     # DUAL_SPEC=1 candidate verdict
+    |   |-- spec-b.verdict-by-a.json     # DUAL_SPEC=1 candidate verdict
+    |   |-- spec-comparison-a.md         # DUAL_SPEC=1 comparison from slot A
+    |   |-- spec-comparison-b.md         # DUAL_SPEC=1 comparison from slot B
+    |   |-- spec-comparison.md           # DUAL_SPEC=1 human decision index
+    |   `-- spec-decision.md             # DUAL_SPEC=1 selected owner/reviewer
+    `-- .run/                            # never committed
+        |-- .gitignore                   # "*", written on every run
+        |-- review.md                    # current round's review and replies
+        |-- verdict.json                 # current round's verdict
+        |-- suggestions.md               # non-blocking findings, handled at the end
+        |-- pr-body.md
+        |-- spec-merge-request.md        # DUAL_SPEC=1 merge-adoption instructions
+        |-- protected-tests.txt          # protected acceptance test paths
+        |-- protected-base.sha           # commit the protected list is measured from
+        |-- phased-suggestion.json       # spec reviewer's phased-fitness judgment
+        |-- last-agent-output.txt        # most recent agent output
+        |-- last-agent-cli.raw           # most recent raw CLI transcript
+        |-- latest-run.txt               # path of the newest archive directory
+        |-- state/<RUN_ID>/              # resume state
+        |   |-- settings.json            # settings snapshot (schema 1)
+        |   |-- ledger.json              # append-only stage ledger
+        |   |-- task.txt                 # resolved task snapshot
+        |   |-- phases.json              # PHASES=1 phase graph
+        |   |-- tasks-remaining          # write-code task queue
+        |   |-- last-head                # cross-stage HEAD record
+        |   |-- lock/                    # mkdir-based mutex for one attempt
+        |   `-- completed                # written when the run finishes
+        `-- archive/<RUN_ID>/            # permanent record of one run
+            |-- 001-run-metadata.json
+            |-- 002-task-source.md
+            |-- 003-task.txt
+            |-- NNN-*-prompt.md
+            |-- NNN-*-output.txt
+            |-- NNN-*-attempt-*-rc*.raw
+            |-- NNN-*-attempt-*-rc*.cli.raw
+            |-- NNN-review-*.md
+            |-- NNN-verdict-*.json
+            |-- NNN-*-git-status.txt
+            |-- NNN-*-git-diff.patch
+            |-- metrics.csv
+            `-- logs/001-run.log
 ```
+
+The files directly under `aac/.run/` describe the current round, not the whole
+run: `init_live_state` clears the transient ones at startup, and a resume keeps
+the durable controls that later stages depend on.
 
 Each archived artifact has a `.meta.json` sidecar with generator, `engine`,
 model, stage, round, run id, and timestamp data. The archive schema keeps the
@@ -656,7 +688,7 @@ their POSIX escape meaning.
 
 Acceptance tests are written by the reviewer and then protected. During
 implementation, the worker must not edit, delete, or skip files listed in
-`.workflow/protected-tests.txt`.
+`aac/.run/protected-tests.txt`.
 
 After the acceptance stage, the active workflow process keeps the exact bytes
 of the protected path list and base control file, together with their parsed
@@ -669,9 +701,9 @@ calls.
 
 If a protected test is wrong, stop the workflow and handle it manually. Edit
 the corrected test, commit the corrected test, and only then write that new
-commit SHA to `.workflow/protected-base.sha`. If the test should no longer be
+commit SHA to `aac/.run/protected-base.sha`. If the test should no longer be
 protected, a human may instead remove its path from
-`.workflow/protected-tests.txt`. Resume only after the manual controls describe
+`aac/.run/protected-tests.txt`. Resume only after the manual controls describe
 the intended trusted state.
 
 ## Safety Notes
@@ -712,8 +744,9 @@ uv run pytest -m e2e -s
 ### Reviewer did not write `verdict.json`
 
 The reviewer failed or did not follow the rules. For custom reviewers, verify
-that the command can write `.workflow/review.md` and `.workflow/verdict.json`.
-Check `.workflow/logs/` or the run archive under `.workflow/runs/<RUN_ID>/`.
+that the command can write `aac/.run/review.md` and `aac/.run/verdict.json`.
+Check the run archive under `aac/.run/archive/<RUN_ID>/`, whose
+`logs/001-run.log` holds the whole run.
 
 ### The run is stuck on a permission prompt
 

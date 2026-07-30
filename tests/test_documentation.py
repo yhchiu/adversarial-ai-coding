@@ -8,6 +8,59 @@ def _read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
 
 
+def test_artifact_layout_is_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        # The committed half and the ignored half, and the fact that one
+        # ignore file is what separates them.
+        assert "aac/docs/<RUN_ID>/" in readme
+        assert "aac/.run/" in readme
+        assert "git add -A" in readme
+        assert "docs/adr/0001-single-aac-root-for-run-artifacts.md" in readme
+        # The old locations must not linger anywhere in the docs.
+        assert ".workflow" not in readme
+        assert "specs/<RUN_ID>" not in readme
+        # Removed knob.
+        assert "RUNS_DIR" not in readme
+    # Every file the workflow writes is listed, including the ones the
+    # section omitted before the layout moved.
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        for name in (
+            "spec-a.verdict-by-b.json",
+            "spec-b.verdict-by-a.json",
+            "phased-suggestion.json",
+            "last-agent-output.txt",
+            "last-agent-cli.raw",
+            "settings.json",
+            "ledger.json",
+            "tasks-remaining",
+            "last-head",
+        ):
+            assert name in readme
+    # The AGENTS.md rules shipped into the target repo must name the same
+    # paths the prompts substitute at render time.
+    template = _read("resources/AGENTS.template.md")
+    assert ".workflow" not in template
+    for name in (
+        "aac/.run/review.md",
+        "aac/.run/verdict.json",
+        "aac/.run/phased-suggestion.json",
+        "aac/.run/protected-tests.txt",
+        "aac/.run/spec-merge-request.md",
+    ):
+        assert name in template
+    for name in ("docs/how-it-works.md", "docs/how-it-works.zh-TW.md"):
+        assert ".workflow" not in _read(name)
+
+
+def test_run_log_location_is_documented_bilingually():
+    # The old text pointed at .workflow/logs/, which never existed: the log
+    # lives inside each run's archive directory.
+    assert "aac/.run/archive/<RUN_ID>/" in _read("README.md")
+    assert "aac/.run/archive/<RUN_ID>/logs/001-run.log" in _read("README.zh-TW.md")
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "logs/001-run.log" in readme
+
+
 def test_codex_reserved_aliases_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "--dangerously-bypass-approvals-and-sandbox" in readme
