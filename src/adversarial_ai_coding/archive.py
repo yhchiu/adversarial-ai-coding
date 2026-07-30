@@ -87,7 +87,7 @@ def metrics_summary(path: Path) -> str:
 
 @dataclass
 class RunArchive:
-    """One run's archive under aac/.run/runs/<run-id>[-N]/ (sh:593-606)."""
+    """One run's archive under aac/.run/archive/<run-id>[-N]/ (sh:593-606)."""
 
     run_dir: Path
     run_id: str
@@ -217,7 +217,7 @@ class RunArchive:
             "run_id": self.run_id,
             "spec_dir": spec_dir,
             "wf": wf,
-            "runs_dir": str(self.run_dir.parent),
+            "archive_dir": str(self.run_dir.parent),
             "wf_run": str(self.run_dir),
             "log": str(self.log_path),
             "metrics": str(self.metrics_path),
@@ -370,13 +370,13 @@ class RunArchive:
 
 
 def establish_run_archive(
-    runs_dir: Path, run_id: str, settings: Settings
+    archive_root: Path, run_id: str, settings: Settings
 ) -> RunArchive:
-    base = runs_dir / run_id
+    base = archive_root / run_id
     candidate = base
     suffix = 2
     while candidate.exists():
-        candidate = runs_dir / f"{run_id}-{suffix}"
+        candidate = archive_root / f"{run_id}-{suffix}"
         suffix += 1
     logs = candidate / "logs"
     logs.mkdir(parents=True, exist_ok=True)

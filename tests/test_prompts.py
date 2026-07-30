@@ -46,9 +46,9 @@ def test_missing_template_fails_and_names_the_file(tmp_path):
 
 def test_prompt_file_instruction_points_at_the_file():
     # helpers.test.sh: "prompt_file_instruction:points engine at prompt file"
-    out = prompt_file_instruction("aac/.run/runs/test/001-worker-prompt.md")
+    out = prompt_file_instruction("aac/.run/archive/test/001-worker-prompt.md")
     assert "Read the full workflow prompt" in out
-    assert "aac/.run/runs/test/001-worker-prompt.md" in out
+    assert "aac/.run/archive/test/001-worker-prompt.md" in out
 
 
 def test_real_repo_templates_render():

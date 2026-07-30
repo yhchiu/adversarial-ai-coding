@@ -36,7 +36,7 @@ def test_archive_git_state_no_side_effects_and_untracked_content(new_repo):
     (new_repo / "new.txt").write_text("new content\n", encoding="utf-8")
     settings = Settings.from_env({}, run_id="test")
     archive = establish_run_archive(
-        new_repo / "aac/.run" / "runs", "test", settings
+        new_repo / "aac/.run" / "archive", "test", settings
     )
     before = porcelain(new_repo)
     archive.archive_git_state(
@@ -62,7 +62,7 @@ def test_archive_git_state_no_side_effects_and_untracked_content(new_repo):
 
 def test_archive_git_state_outside_repo_is_noop(tmp_path):
     settings = Settings.from_env({}, run_id="test")
-    archive = establish_run_archive(tmp_path / "runs", "test", settings)
+    archive = establish_run_archive(tmp_path / "archive", "test", settings)
     archive.archive_git_state(
         "worker",
         agent_ref("A", settings),

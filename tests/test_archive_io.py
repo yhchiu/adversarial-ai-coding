@@ -17,7 +17,7 @@ FIXED = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=8)))
 
 def make_archive(tmp_path, env=None) -> RunArchive:
     settings = Settings.from_env(env or {}, run_id="test")
-    return establish_run_archive(tmp_path / "runs", "test", settings)
+    return establish_run_archive(tmp_path / "archive", "test", settings)
 
 
 def test_establish_run_archive_collision_suffix(tmp_path):

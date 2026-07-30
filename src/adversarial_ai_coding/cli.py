@@ -217,7 +217,7 @@ def main(
         wf.mkdir(parents=True, exist_ok=True)
         (wf / ".gitignore").write_text("*\n", encoding="utf-8")
 
-        archive = establish_run_archive(wf / "runs", run_id, settings)
+        archive = establish_run_archive(wf / "archive", run_id, settings)
         if resume_run:
             init_live_state(wf, resume=True)
         else:

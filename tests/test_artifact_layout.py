@@ -70,7 +70,7 @@ def test_work_dir_is_ignored_and_docs_are_committed(new_repo, tmp_path, monkeypa
 
     assert tracked(new_repo, WORK_DIR) == []
     assert tracked(new_repo, f"{WORK_DIR}/state") == []
-    assert tracked(new_repo, f"{WORK_DIR}/runs") == []
+    assert tracked(new_repo, f"{WORK_DIR}/archive") == []
 
     for name in ("review.md", "verdict.json", "latest-run.txt", ".gitignore"):
         assert is_ignored(new_repo, f"{WORK_DIR}/{name}")

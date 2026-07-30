@@ -43,7 +43,7 @@ def make_ctx(new_repo):
         settings = Settings.from_env(env or {"RETRY_ON_LIMIT": "0"}, run_id="test")
         wf = new_repo / "aac/.run"
         wf.mkdir(parents=True, exist_ok=True)
-        archive = establish_run_archive(wf / "runs", "test", settings)
+        archive = establish_run_archive(wf / "archive", "test", settings)
         return WorkflowContext(
             settings=settings,
             archive=archive,
