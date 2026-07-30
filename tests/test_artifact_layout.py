@@ -17,6 +17,8 @@ branch. These tests fail loudly instead.
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from adversarial_ai_coding.config import ARTIFACT_ROOT, DOCS_ROOT, WORK_DIR
 
 
@@ -53,6 +55,7 @@ def test_layout_constants_match_the_adr():
     assert DOCS_ROOT.startswith(f"{ARTIFACT_ROOT}/")
 
 
+@pytest.mark.slow
 def test_work_dir_is_ignored_and_docs_are_committed(basic_run):
     # Both tests below only read the result of a plain run, so they share
     # one: see the basic_run fixture in conftest.py.
@@ -81,6 +84,7 @@ def test_work_dir_is_ignored_and_docs_are_committed(basic_run):
     assert git(new_repo, "status", "--porcelain").stdout == ""
 
 
+@pytest.mark.slow
 def test_one_top_level_entry_is_added_to_the_repository(basic_run):
     new_repo = basic_run["repo"]
     before = set(basic_run["before"])

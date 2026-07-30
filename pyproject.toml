@@ -21,8 +21,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Nearly every second of this suite is process spawning (git and the fake
-# agent wrappers), so it scales almost linearly across workers.
-addopts = "-m 'not e2e' -n auto"
+# agent wrappers), so it scales almost linearly across workers. The default
+# selection is the fast inner loop; CI runs -m 'not e2e' to include the slow
+# offline integration tests.
+addopts = "-m 'not e2e and not slow' -n auto"
 markers = [
     "e2e: real-agent end-to-end; consumes quota; run manually with -m e2e",
+    "slow: drives a whole offline workflow run (~13s and ~100 processes each)",
 ]

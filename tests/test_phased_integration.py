@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from workflow_harness import (
     calls,
     driver_workdir,
@@ -15,6 +17,10 @@ from workflow_harness import (
 
 from adversarial_ai_coding import cli
 from adversarial_ai_coding.runstate import RunState
+
+# Every test here drives a full phased run (two phases, so more agent
+# calls than a plain run).
+pytestmark = pytest.mark.slow
 
 EXPECTED_STAGES = [
     "write-spec",

@@ -1,5 +1,7 @@
 """Port of tests/resume.test.sh scenarios 1-4 and 6 (offline)."""
 
+import pytest
+
 from adversarial_ai_coding import cli
 from workflow_harness import (
     calls,
@@ -10,6 +12,10 @@ from workflow_harness import (
     state_dir_of,
     wf_env,
 )
+
+# Every test here drives at least one real offline run, and the three that
+# share basic_run still pay for building that template.
+pytestmark = pytest.mark.slow
 
 
 def test_scenario1_quota_abort_then_resume(new_repo, tmp_path, monkeypatch):

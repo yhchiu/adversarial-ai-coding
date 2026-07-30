@@ -34,4 +34,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Run pytest
-        run: uv run pytest -q
+        # The default selection is the fast inner loop; -m overrides it so CI
+        # also runs the slow offline integration tests. Only the real-agent
+        # e2e tests, which consume quota, stay out.
+        run: uv run pytest -q -m "not e2e"

@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from workflow_harness import (
     calls,
     driver_workdir,
@@ -36,6 +38,7 @@ def import_files(work: Path, plan: bool = False) -> dict:
     return overrides
 
 
+@pytest.mark.slow
 def test_import_spec_skips_write_and_keeps_review(new_repo, tmp_path, monkeypatch):
     work = driver_workdir(tmp_path)
     work.mkdir()
@@ -55,6 +58,7 @@ def test_import_spec_skips_write_and_keeps_review(new_repo, tmp_path, monkeypatc
     assert list(run_dir.glob("*imported-spec.md"))
 
 
+@pytest.mark.slow
 def test_relative_import_paths_survive_worktree_setup(
     new_repo, tmp_path, monkeypatch
 ):
@@ -85,6 +89,7 @@ def test_relative_import_paths_survive_worktree_setup(
     assert snapshot["import_plan"] == str(plan_source.resolve())
 
 
+@pytest.mark.slow
 def test_import_spec_and_plan_review_off(new_repo, tmp_path, monkeypatch):
     work = driver_workdir(tmp_path)
     work.mkdir()
@@ -104,6 +109,7 @@ def test_import_spec_and_plan_review_off(new_repo, tmp_path, monkeypatch):
     assert list(run_dir.glob("*imported-plan.md"))
 
 
+@pytest.mark.slow
 def test_import_spec_review_off_still_writes_and_reviews_generated_plan(
     new_repo, tmp_path, monkeypatch
 ):
@@ -134,6 +140,7 @@ def test_import_preflight_fails_before_any_agent_call(
     assert not (work / "calls.log").is_file()
 
 
+@pytest.mark.slow
 def test_import_run_resumes_from_snapshot(new_repo, tmp_path, monkeypatch):
     work = driver_workdir(tmp_path)
     work.mkdir()

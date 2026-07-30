@@ -1,7 +1,8 @@
 """E2E driver, port of tests/e2e/run.sh.
 
-The fixture baseline is offline. The full real-agent workflow is marker-gated
-and excluded from default pytest runs because it consumes quota.
+The fixture baseline is offline, but it shells out to go build, vet and test,
+so it carries the slow marker and stays out of the fast inner loop. The full
+real-agent workflow is marker-gated separately because it consumes quota.
 """
 
 import csv
@@ -98,6 +99,7 @@ def verify_gates(repo: Path):
     run(["go", "test", "./..."], repo)
 
 
+@pytest.mark.slow
 @needs_go
 def test_fixture_baseline(tmp_path):
     repo = make_fixture_repo(tmp_path)
