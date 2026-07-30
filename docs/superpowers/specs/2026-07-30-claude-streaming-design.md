@@ -23,9 +23,10 @@ it arrives, so the user can see what the agent is doing right now.
 
 Out of scope, recorded as follow-ups:
 
-- The stream carries a structured `rate_limit_event` (with a `resetsAt`
+- ~~The stream carries a structured `rate_limit_event` (with a `resetsAt`
   epoch and a `rateLimitType`), which is more reliable than the text
-  scraping in `ratelimit.py`. Not adopted here.
+  scraping in `ratelimit.py`. Not adopted here.~~ Done the same day; see
+  "Quota detection" at the end of this file.
 - ~~`_run_codex_json` still echoes only `agent_message` items, so codex
   tool activity stays invisible. This change only adds its prefix.~~
   Done the same day; see "Codex tool activity" at the end of this file.
@@ -226,3 +227,83 @@ to a separate data-quality change.
 Committed as one commit: implementation, tests, and documentation
 together, because the README live-output row and this file's follow-up
 note are wrong the moment the code lands.
+
+## Quota detection
+
+Adding codex's tool summaries made a pre-existing bug impossible to
+ignore. `agent_call` decided "was this a rate limit?" by scraping the
+whole of `agent_out` for `rate.?limit`, and that file is not a narrow
+channel: for codex it holds every completed tool call as raw JSON,
+including each command's full `aggregated_output`, and for agy it is the
+entire merged transcript.
+
+This repo triggers the false positive on itself. A codex run that
+executes `pytest` captures `tests/test_ratelimit_parsing.py`, and
+`rate.?limit` matches `ratelimit`. Detection only runs when the call
+already failed (`rc != 0`), so a successful run was never misread, but a
+codex failure for an unrelated reason cost the full backoff -- 300, 600,
+1200, 2400, 3600, 3600 seconds, about 3h15m -- before exit 75. Measured
+on two real codex streams, the `item.completed` JSON dumps were 73% and
+80% of `agent_out`.
+
+### The channel
+
+`AgentResult.quota_text` carries only text an adapter can vouch for as
+coming from the agent itself. It is excluded from dataclass equality
+because it is plumbing, not part of what the call produced, which leaves
+the existing whole-object assertions valid.
+
+| Adapter | Channel |
+| --- | --- |
+| claude | The envelope: the result event, or the raw stream when no result event arrived. Never command output. |
+| codex | Only `error`, `turn.failed`, and non-JSON lines (merged stderr). Excluding `item.started` and `item.completed` is the fix. |
+| agy, custom | The whole merged output, unchanged. |
+
+Agy keeps the wide channel deliberately. It has no event boundaries, so
+any narrowing would be a guess, and a missed quota message is worse than
+a false positive: it loses the run rather than costing a wait. This
+residual exposure is recorded in the README and the parity ledger.
+
+`is_rate_limited` and `parse_reset_wait` therefore take text rather than
+a `Path`, and `agent_call` no longer needs an `agent_out` argument. Its
+retry policy, buffers, and messages are untouched.
+
+### Claude's structured signals
+
+Claude reports both halves of a rate limit as data, and the workflow was
+reading neither. The status has always been `api_error_status` on the
+envelope; the `resetsAt` epoch only became visible with the switch to
+stream-json, because the non-streaming envelope has no rate-limit field
+and `rate_limit_event` exists solely as its own NDJSON line. That is why
+the port inherited bash's text scraping: text was all bash could see.
+
+- **Detection** is structured-first. A JSON envelope with a usable
+  `api_error_status` decides on its own, so quota phrasing inside
+  claude's own reply cannot make an unrelated failure look like an
+  exhausted quota. A null or absent field, and codex and agy text, fall
+  back to the regex exactly as before.
+- **The wait** comes from `wait_until_epoch(resetsAt, now)`, with the
+  same 120s buffer the clock format has always used, sidestepping the
+  wall-clock formats and their day and DST rollover rules. An elapsed or
+  implausible epoch falls back to parsing the wording rather than
+  skipping the retry, and `RETRY_MAX_RESET_WAIT` still applies.
+- `rate_limit_event` **never means the call was limited**. The probe that
+  verified its shape showed `status: allowed` on an ordinary successful
+  call, and the full `status` enum is unverified, so the event only ever
+  supplies a wait. When it never arrives, behaviour is identical to
+  before.
+
+A real 429 cannot be forced on demand, so these paths are covered by
+fixtures. The regression test is the point of the whole change: a codex
+stream whose command output contains this repo's test file name yields an
+empty quota channel, while the same run's `agent_out` still matches the
+regex, so the test cannot pass merely because the wording drifted.
+
+Two commits: the narrowed channel, then claude's structured signals.
+
+### Still out of scope
+
+Codex's `item.completed` continues to record its full
+`aggregated_output` as raw JSON in `agent_out`. Now that detection no
+longer reads that file, the remaining cost is artifact size and run-log
+readability, which is a separate data-quality change.

@@ -16,6 +16,17 @@ def test_codex_reserved_aliases_are_documented_bilingually():
         assert "-mMODEL" in readme
 
 
+def test_quota_detection_channel_is_documented_bilingually():
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    assert "Detection reads only the agent's own error channel" in english
+    assert "Agy has no" in english and "whole output is still scanned" in english
+    assert "| Reported reset time | Claude |" in english
+    assert "判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出" in chinese
+    assert "agy 沒有結構化通道,仍然掃整包輸出" in chinese
+    assert "claude 的串流會回報精確的重置時刻" in chinese
+
+
 def test_agent_streaming_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "claude -p --output-format stream-json" in readme

@@ -454,7 +454,7 @@ Add `--json` output to the CLI.
 | `COLOR` | `auto` | Colorize the workflow's own status messages. `auto` normally keeps redirected or non-terminal output plain; `NO_COLOR` disables color, `FORCE_COLOR` can force ANSI color in `auto` mode, including redirects, and `TERM=dumb` disables unforced color. `always` can emit ANSI color to redirected output; `never` disables color; the archived run log never contains color codes, even when color is forced. |
 | `COLOR_THEME` | `dark` | Status message color theme: `dark` or `light`. |
 | `COLOR_<CATEGORY>` | theme default | Per-category color override for `STAGE`, `PROGRESS`, `ERROR`, `WARNING`, `CHECKPOINT`, `SUCCESS`, `AGENT`. Accepts a color name (`red`, `bright-cyan`, `bold-bright-red`) or raw SGR parameters (`1;91`), e.g. `COLOR_ERROR=bold-bright-red`. |
-| `RETRY_ON_LIMIT` | `1` | Wait and retry on rate-limit or quota errors. |
+| `RETRY_ON_LIMIT` | `1` | Wait and retry on rate-limit or quota errors. A reset time the agent reports directly is preferred over one parsed from its message. |
 | `RETRY_MAX` | `6` | Maximum rate-limit retries per agent call. |
 | `RETRY_BASE_WAIT` | `300` | Initial exponential backoff wait, in seconds. |
 | `RETRY_MAX_WAIT` | `3600` | Maximum exponential backoff wait, in seconds. |
@@ -744,11 +744,20 @@ test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
 ### Rate limit or quota errors
 
 By default, the workflow waits and retries on rate-limit or quota errors, for every
-agent. When the message states how long to wait, the workflow waits exactly that
-long instead of guessing. It understands four shapes:
+agent. Detection reads only the agent's own error channel, never the output of a
+command the agent ran, so a test suite that happens to print the words "rate
+limit" cannot send the run to sleep. For Claude that channel is the structured
+response, and its reported status decides on its own; for Codex it is the `error`
+and `turn.failed` events plus anything the CLI writes outside JSON. Agy has no
+structured channel, so its whole output is still scanned.
+
+When the agent states when the quota returns, the workflow waits exactly that long
+instead of guessing. Claude reports an exact reset time in its stream, which is
+used directly; otherwise four message shapes are understood:
 
 | Message | Agent | Wait |
 | --- | --- | --- |
+| Reported reset time | Claude | Until that moment, plus 2 minutes |
 | `resets 10:50am` | Claude | Until that clock time, plus 2 minutes |
 | `try again in 90s` | Codex | That duration, plus 30 seconds |
 | `try again at Jul 14th, 2026 7:23 PM` | Codex | Until that timestamp, plus 30 seconds |
