@@ -1,32 +1,48 @@
 """Shared fixtures. new_repo ports the bash suite's temp-repo helper."""
 
+import shutil
 import subprocess
 
 import pytest
 
 
-@pytest.fixture
-def new_repo(tmp_path):
-    """A throwaway git repo with one commit, like helpers.test.sh new_repo."""
+@pytest.fixture(scope="session")
+def _repo_template(tmp_path_factory):
+    """Build the throwaway repo once per worker; new_repo copies it.
+
+    The five git calls below cost about 0.9s per test on Windows, and 166
+    tests ask for a repo, so this fixture was a fifth of the whole suite.
+    Copying the finished repo instead costs about 0.09s. The copy is a
+    real repository: git init writes no absolute paths into .git/config,
+    so the result works from any directory.
+    """
+    template = tmp_path_factory.mktemp("repo-template")
 
     def _git(*args):
         subprocess.run(
-            ["git", "-C", str(tmp_path), *args],
+            ["git", "-C", str(template), *args],
             check=True,
             capture_output=True,
             text=True,
         )
 
     subprocess.run(
-        ["git", "init", "-q", "-b", "main", str(tmp_path)],
+        ["git", "init", "-q", "-b", "main", str(template)],
         check=True,
         capture_output=True,
     )
     _git("config", "user.email", "test@test")
     _git("config", "user.name", "test")
-    (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
+    (template / "base.txt").write_text("base\n", encoding="utf-8")
     _git("add", "-A")
     _git("commit", "-qm", "base")
+    return template
+
+
+@pytest.fixture
+def new_repo(tmp_path, _repo_template):
+    """A throwaway git repo with one commit, like helpers.test.sh new_repo."""
+    shutil.copytree(_repo_template, tmp_path, dirs_exist_ok=True)
     return tmp_path
 
 
