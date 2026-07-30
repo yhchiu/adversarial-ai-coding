@@ -502,9 +502,19 @@ Stage 流程定義在 `workflow.run_workflow()` 內,由 `begin_stage`、`work`�
 
 ## 測試
 
+開發過程中跑快速迴圈。這是預設選擇,不到一分鐘:
+
 ```bash
-uv run pytest -q   # 單元與整合測試,不呼叫任何 AI
+uv run pytest -q
 ```
+
+推送前跑完整的離線測試。這會加上標記為 `slow` 的測試 — 每個都會用假 agent 驅動一整條 workflow — 也正是 CI 跑的那條:
+
+```bash
+uv run pytest -q -m "not e2e"
+```
+
+上面兩條都不呼叫任何 AI。`-n auto` 預設開啟,兩條都會用滿所有核心。
 
 ### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)
 

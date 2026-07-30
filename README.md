@@ -727,11 +727,23 @@ the intended trusted state.
 
 ## Testing This Repository
 
-Run the unit and integration suite. It does not call any AI agent:
+Run the fast suite while you work. This is the default selection and finishes
+in under a minute:
 
 ```bash
 uv run pytest -q
 ```
+
+Run the whole offline suite before pushing. This adds the tests marked `slow`,
+each of which drives a complete workflow run against fake agents, and it is
+exactly what CI runs:
+
+```bash
+uv run pytest -q -m "not e2e"
+```
+
+Neither of those calls any AI agent. Both run across all cores, because
+`-n auto` is on by default.
 
 Run the full E2E only when changing core workflow behavior. It calls real AI
 agents and consumes quota:
