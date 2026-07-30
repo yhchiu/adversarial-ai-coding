@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable
 
@@ -331,8 +331,17 @@ class AgentIO:
 
 @dataclass
 class AgentResult:
+    """One agent call's outcome.
+
+    `quota_text` is the narrow channel quota detection reads: only the text
+    an adapter can vouch for as coming from the agent itself, never from a
+    command the agent ran. It is excluded from equality because it is
+    diagnostic plumbing, not part of what the call produced.
+    """
+
     rc: int
     text: str
+    quota_text: str = field(default="", compare=False)
 
 
 def _resolve_argv0(name: str) -> str:
@@ -594,41 +603,61 @@ def _codex_item_summary(item: dict[str, object], cwd: Path | None) -> str:
     return f" . {_CODEX_ITEM_LABELS.get(label, label)} {detail}".rstrip()
 
 
-def render_codex_event(
-    line: str, cwd: Path | None = None
-) -> tuple[str, bool, str]:
-    """Render one codex NDJSON line into (text, should echo, thread id).
+@dataclass
+class CodexEvent:
+    """What one codex NDJSON line contributes.
+
+    `text` lands in agent_out, `echo` decides whether it also reaches the
+    terminal, and `quota` marks the text as something quota detection may
+    read -- true only for channels the agent speaks through itself, never
+    for the output of a command it ran.
+    """
+
+    text: str = ""
+    echo: bool = False
+    thread_id: str = ""
+    quota: bool = False
+
+
+def render_codex_event(line: str, cwd: Path | None = None) -> CodexEvent:
+    """Render one codex NDJSON line.
 
     The text is what lands in agent_out; only some of it is worth putting
     on the terminal. Unknown event types still render as raw JSON so a
-    codex upgrade stays diagnosable, and quota wording in an error event
-    keeps reaching ratelimit.py through agent_out.
+    codex upgrade stays diagnosable.
     """
     text = line.rstrip("\r\n")
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return text, True, ""
+        # Codex merges its stderr into stdout, so a non-JSON line is the
+        # CLI speaking -- including how it reports an exhausted quota.
+        return CodexEvent(text=text, echo=True, quota=True)
     if not isinstance(payload, dict):
-        return _jq_raw(payload), False, ""
+        return CodexEvent(text=_jq_raw(payload))
     event_type = payload.get("type")
     if event_type == "thread.started":
         parsed_id = payload.get("thread_id")
-        return "", False, parsed_id if isinstance(parsed_id, str) else ""
+        return CodexEvent(
+            thread_id=parsed_id if isinstance(parsed_id, str) else ""
+        )
     if event_type == "item.started":
         # The live heartbeat: this fires when the tool call starts, not
         # when it finishes, so a ten-minute command is visible up front.
         item = payload.get("item")
         if isinstance(item, dict):
-            return _codex_item_summary(item, cwd), True, ""
-        return json.dumps(payload, ensure_ascii=False), False, ""
+            return CodexEvent(text=_codex_item_summary(item, cwd), echo=True)
+        return CodexEvent(text=json.dumps(payload, ensure_ascii=False))
     if event_type == "item.completed":
         item = payload.get("item")
         if isinstance(item, dict) and item.get("type") == "agent_message":
             body = item.get("text")
             rendered = _jq_raw(body) if body is not None else ""
-            return rendered, bool(rendered), ""
-        return json.dumps(payload, ensure_ascii=False), False, ""
+            return CodexEvent(text=rendered, echo=bool(rendered))
+        # A completed tool call carries its whole aggregated_output, which
+        # is why quota detection must never see it: this repo's own test
+        # names alone would match the rate-limit wording.
+        return CodexEvent(text=json.dumps(payload, ensure_ascii=False))
     if event_type == "error":
         value = payload.get("message")
         rendered = (
@@ -636,7 +665,7 @@ def render_codex_event(
             if value is not None
             else json.dumps(payload, ensure_ascii=False)
         )
-        return rendered, True, ""
+        return CodexEvent(text=rendered, echo=True, quota=True)
     if event_type == "turn.failed":
         error = payload.get("error")
         if isinstance(error, dict) and error.get("message") is not None:
@@ -645,13 +674,13 @@ def render_codex_event(
             rendered = _jq_raw(error)
         else:
             rendered = json.dumps(payload, ensure_ascii=False)
-        return rendered, True, ""
-    return json.dumps(payload, ensure_ascii=False), False, ""
+        return CodexEvent(text=rendered, echo=True, quota=True)
+    return CodexEvent(text=json.dumps(payload, ensure_ascii=False))
 
 
 def _run_codex_json(
     argv: list[str], io: AgentIO, ref: AgentRef
-) -> tuple[int, str, str]:
+) -> tuple[int, str, str, str]:
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
@@ -662,6 +691,7 @@ def _run_codex_json(
         errors="replace",
     )
     rendered: list[str] = []
+    quota: list[str] = []
     thread_id = ""
     cwd = Path.cwd()
     assert proc.stdout is not None
@@ -673,16 +703,19 @@ def _run_codex_json(
     ):
         for raw_line in proc.stdout:
             raw_file.write(raw_line)
-            text, should_echo, parsed_id = render_codex_event(raw_line, cwd)
-            if parsed_id:
-                thread_id = parsed_id
-            if text:
-                rendered.append(text)
-                rendered_file.write(text.rstrip("\n") + "\n")
-                if should_echo:
-                    _echo_agent(io, ref, text)
+            event = render_codex_event(raw_line, cwd)
+            if event.thread_id:
+                thread_id = event.thread_id
+            if not event.text:
+                continue
+            rendered.append(event.text)
+            rendered_file.write(event.text.rstrip("\n") + "\n")
+            if event.quota:
+                quota.append(event.text)
+            if event.echo:
+                _echo_agent(io, ref, event.text)
     rc = proc.wait()
-    return rc, "\n".join(rendered), thread_id
+    return rc, "\n".join(rendered), thread_id, "\n".join(quota)
 
 
 def _write_agent_out(io: AgentIO, text: str) -> None:
@@ -747,23 +780,25 @@ def _worker_claude(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return AgentResult(rc, out)
+        return AgentResult(rc, out, quota_text=out)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         # Lenient divergence: bash's jq failure degraded to empty fields.
-        return AgentResult(0, out)
+        return AgentResult(0, out, quota_text=out)
     if payload is None:
         session.worker_session = "null"
         session.last_cost = ""
-        return AgentResult(0, "")
+        return AgentResult(0, "", quota_text=out)
     if not isinstance(payload, dict):
         session.worker_session = ""
         session.last_cost = ""
-        return AgentResult(5, "")
+        return AgentResult(5, "", quota_text=out)
     session.worker_session = _jq_raw(payload.get("session_id"))
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
-    return AgentResult(0, _jq_coalesce_empty(payload, "result"))
+    return AgentResult(
+        0, _jq_coalesce_empty(payload, "result"), quota_text=out
+    )
 
 
 def _reviewer_claude(
@@ -794,21 +829,21 @@ def _reviewer_claude(
             f"(claude exited with code {rc}; raw output is shown above)",
             file=sys.stderr,
         )
-        return AgentResult(rc, out)
+        return AgentResult(rc, out, quota_text=out)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(5, "")
+        return AgentResult(5, "", quota_text=out)
     if payload is None:
         io.verdict_path.write_text(json.dumps(VERDICT_FALLBACK), encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(0, "")
+        return AgentResult(0, "", quota_text=out)
     if not isinstance(payload, dict):
         io.verdict_path.write_text("", encoding="utf-8")
         session.last_cost = ""
-        return AgentResult(5, "")
+        return AgentResult(5, "", quota_text=out)
     structured_output = payload.get("structured_output")
     verdict = (
         VERDICT_FALLBACK
@@ -817,7 +852,9 @@ def _reviewer_claude(
     )
     io.verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     session.last_cost = _jq_coalesce_empty(payload, "total_cost_usd")
-    return AgentResult(0, _jq_coalesce_empty(payload, "result"))
+    return AgentResult(
+        0, _jq_coalesce_empty(payload, "result"), quota_text=out
+    )
 
 
 def _codex_model_args(ref: AgentRef, settings: Settings) -> list[str]:
@@ -860,7 +897,7 @@ def _worker_codex(
             session.worker_session,
             prompt,
         ]
-    rc, out, thread_id = _run_codex_json(argv, io, ref)
+    rc, out, thread_id, quota_text = _run_codex_json(argv, io, ref)
     if thread_id:
         session.worker_session = thread_id
     elif not session.worker_session:
@@ -869,7 +906,7 @@ def _worker_codex(
             "will start a fresh session)"
         )
     session.last_cost = ""
-    return AgentResult(rc, out)
+    return AgentResult(rc, out, quota_text=quota_text)
 
 
 def _reviewer_codex(
@@ -888,9 +925,9 @@ def _reviewer_codex(
         *_codex_model_args(ref, settings),
         prompt,
     ]
-    rc, out, _ = _run_codex_json(argv, io, ref)
+    rc, out, _, quota_text = _run_codex_json(argv, io, ref)
     session.last_cost = ""
-    return AgentResult(rc, out)
+    return AgentResult(rc, out, quota_text=quota_text)
 
 
 def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
@@ -967,7 +1004,7 @@ def _worker_agy(
             "call will start a fresh session)"
         )
     session.last_cost = ""
-    return AgentResult(rc, out)
+    return AgentResult(rc, out, quota_text=out)
 
 
 def _reviewer_agy(
@@ -987,7 +1024,7 @@ def _reviewer_agy(
     ]
     argv += _agy_model_args(ref, settings)
     rc, out = _run_streaming(argv, io, ref)
-    return AgentResult(rc, out)
+    return AgentResult(rc, out, quota_text=out)
 
 
 def _run_generic(
@@ -999,7 +1036,7 @@ def _run_generic(
         prompt,
     ]
     rc, out = _run_streaming(argv, io, ref)
-    return AgentResult(rc, out)
+    return AgentResult(rc, out, quota_text=out)
 
 
 def run_worker(

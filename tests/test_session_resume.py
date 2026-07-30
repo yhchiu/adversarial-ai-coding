@@ -39,7 +39,7 @@ def test_codex_json_preserves_raw_and_renders_readable_quota_text(tmp_path):
     )
     io, echoed = make_io(tmp_path)
 
-    rc, rendered, thread_id = agents._run_codex_json(
+    rc, rendered, thread_id, quota_text = agents._run_codex_json(
         [sys.executable, str(emitter), str(FIXTURE)],
         io,
         agents.AgentRef("A", "codex"),
@@ -53,8 +53,11 @@ def test_codex_json_preserves_raw_and_renders_readable_quota_text(tmp_path):
     assert "turn failed detail" in rendered
     assert "future.event" in rendered
     assert "stderr line that is not JSON" in rendered
-    assert is_rate_limited(io.agent_out)
-    assert parse_reset_wait(io.agent_out, now=0) == 50
+    # Quota detection sees only the channels codex speaks through itself.
+    assert is_rate_limited(quota_text)
+    assert parse_reset_wait(quota_text, now=0) == 50
+    assert "Remember token BLUEBIRD." not in quota_text
+    assert "future.event" not in quota_text
     assert any("Remember token BLUEBIRD." in line for line in echoed)
     assert not any("future.event" in line for line in echoed)
     # The prefix marks the terminal line only; the rendered file stays clean.
@@ -66,8 +69,8 @@ def test_codex_worker_uses_exact_thread_id_and_slot_model(monkeypatch, tmp_path)
     calls = []
     results = iter(
         [
-            (0, "fresh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-            (0, "resumed", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            (0, "fresh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ""),
+            (0, "resumed", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ""),
         ]
     )
 
@@ -113,7 +116,7 @@ def test_worker_session_is_discarded_when_agent_ref_changes(monkeypatch, tmp_pat
 
     def fake_run(argv, io, ref):
         calls.append(argv)
-        return 0, "ok", next(thread_ids)
+        return 0, "ok", next(thread_ids), ""
 
     monkeypatch.setattr(agents, "_run_codex_json", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
@@ -267,7 +270,7 @@ def test_fake_codex_impl_model_args_and_handoffs_use_real_argv(
 
 def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "")
+        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "", "")
     )
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = settings({"AGENT_A": "codex", "AGENT_B": "claude"})
@@ -282,7 +285,7 @@ def test_codex_worker_keeps_known_id_when_response_has_no_id(monkeypatch, tmp_pa
 
 def test_codex_worker_without_id_stays_fresh_and_warns(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "")
+        agents, "_run_codex_json", lambda argv, io, ref: (0, "ok", "", "")
     )
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
     s = settings({"AGENT_A": "codex", "AGENT_B": "claude"})
@@ -298,13 +301,13 @@ def test_codex_worker_without_id_stays_fresh_and_warns(monkeypatch, tmp_path):
 def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
     calls = []
 
+    quota = "rate limit; try again in 0s"
+
     def fake_run(argv, io, ref):
         calls.append(argv)
         if len(calls) == 1:
-            io.agent_out.write_text("rate limit; try again in 0s\n", encoding="utf-8")
-            return 1, "rate limit", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-        io.agent_out.write_text("ok\n", encoding="utf-8")
-        return 0, "ok", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+            return 1, quota, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", quota
+        return 0, "ok", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", ""
 
     monkeypatch.setattr(agents, "_run_codex_json", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
@@ -330,7 +333,7 @@ def test_codex_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path
         lambda: agents.run_worker(
             ref, "prompt", s, session, io
         ),
-        agent_out=io.agent_out,
+
         settings=s,
         events=events,
         now=lambda: 0,
@@ -518,10 +521,10 @@ def test_agy_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
                 "Created conversation 44444444-4444-4444-8444-444444444444\n",
                 encoding="utf-8",
             )
-            io.agent_out.write_text("rate limit; try again in 0s\n", encoding="utf-8")
-            return 1, "rate limit"
+            # agy has no event boundaries, so its whole output is the quota
+            # channel: the adapter passes this text through as quota_text.
+            return 1, "rate limit; try again in 0s"
         log_path.write_text("resumed\n", encoding="utf-8")
-        io.agent_out.write_text("ok\n", encoding="utf-8")
         return 0, "ok"
 
     monkeypatch.setattr(agents, "_run_streaming", fake_stream)
@@ -547,7 +550,7 @@ def test_agy_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
         lambda: agents.run_worker(
             agents.AgentRef("A", "agy"), "prompt", s, session, io
         ),
-        agent_out=io.agent_out,
+
         settings=s,
         events=events,
         now=lambda: 0,

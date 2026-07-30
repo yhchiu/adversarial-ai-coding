@@ -216,8 +216,8 @@ def test_run_review_quota_abort(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def limited_reviewer(name, prompt, settings, session, io):
-        io.agent_out.write_text("You've hit your usage limit\n", encoding="utf-8")
-        return AgentResult(1, "limited")
+        # Quota wording arrives on the result's narrow channel, not via a file.
+        return AgentResult(1, "limited", quota_text="You've hit your usage limit")
 
     monkeypatch.setattr(review_mod, "run_reviewer", limited_reviewer)
     with pytest.raises(WorkflowAbort) as exc:

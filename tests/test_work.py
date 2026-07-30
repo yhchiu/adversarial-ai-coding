@@ -48,8 +48,8 @@ def test_work_quota_abort_raises_resumable(make_ctx, monkeypatch):
     ctx = make_ctx()
 
     def limited_worker(name, prompt, settings, session, io):
-        io.agent_out.write_text("You've hit your usage limit\n", encoding="utf-8")
-        return AgentResult(1, "limited")
+        # Quota wording arrives on the result's narrow channel, not via a file.
+        return AgentResult(1, "limited", quota_text="You've hit your usage limit")
 
     monkeypatch.setattr(wf_mod, "run_worker", limited_worker)
     with pytest.raises(WorkflowAbort) as exc:

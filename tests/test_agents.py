@@ -945,7 +945,7 @@ def test_codex_implementation_worker_orders_fresh_and_resume_argv(
 
     def fake_run(argv, io, ref):
         calls.append(argv)
-        return 0, "ok", next(thread_ids)
+        return 0, "ok", next(thread_ids), ""
 
     monkeypatch.setattr(agents, "_run_codex_json", fake_run)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)
@@ -1307,19 +1307,26 @@ def test_claude_stream_without_result_event_falls_back_to_the_raw_stream(tmp_pat
     assert envelope == "\n".join(lines)
 
 
-def test_claude_worker_quota_stream_reaches_agent_out_for_ratelimit(tmp_path):
+def test_claude_worker_quota_stream_reaches_the_quota_channel(monkeypatch, tmp_path):
+    # A quota abort leaves no result event, so the envelope is the raw
+    # stream. That text has to arrive as quota_text or retries stop working.
     from adversarial_ai_coding.ratelimit import is_rate_limited
 
-    lines = ['{"type":"system","subtype":"init"}',
-             "You've hit your usage limit. Please try again in 20s."]
+    fallback = (
+        '{"type":"system","subtype":"init"}\n'
+        "You've hit your usage limit. Please try again in 20s."
+    )
+    monkeypatch.setattr(
+        agents, "_run_claude_stream", lambda argv, io, ref: (2, fallback)
+    )
     io, _ = make_io(tmp_path)
 
-    _, envelope = agents._run_claude_stream(
-        _claude_emitter(tmp_path, lines), io, AgentRef("A", "claude")
+    result = run_worker(
+        "claude", "p", Settings.from_env({}, run_id="r"), AgentSession(), io
     )
-    agents._write_agent_out(io, envelope)
 
-    assert is_rate_limited(io.agent_out)
+    assert result.rc == 2
+    assert is_rate_limited(result.quota_text)
 
 
 CODEX_TOOL_FIXTURE = Path(__file__).parent / "fixtures" / "codex_exec_tool_activity.jsonl"
@@ -1350,9 +1357,9 @@ def test_render_codex_event_command_summary_strips_the_shell_wrapper(
 ):
     line = _codex_started({"id": "i", "type": "command_execution", "command": command})
 
-    text, should_echo, thread_id = agents.render_codex_event(line)
+    event = agents.render_codex_event(line)
 
-    assert (text, should_echo, thread_id) == (expected, True, "")
+    assert event == agents.CodexEvent(text=expected, echo=True)
 
 
 def test_render_codex_event_file_change_shows_kind_and_relative_path(tmp_path):
@@ -1368,10 +1375,12 @@ def test_render_codex_event_file_change_shows_kind_and_relative_path(tmp_path):
         }
     )
 
-    text, should_echo, _ = agents.render_codex_event(line, tmp_path)
+    event = agents.render_codex_event(line, tmp_path)
 
-    assert text == f" . edit {Path('src') / 'demo.py'} (add) +1 more"
-    assert should_echo is True
+    assert event.text == f" . edit {Path('src') / 'demo.py'} (add) +1 more"
+    assert event.echo is True
+    # A tool call is never a quota signal, whatever it printed.
+    assert event.quota is False
 
 
 def test_render_codex_event_keeps_paths_outside_the_workspace_absolute(tmp_path):
@@ -1380,15 +1389,15 @@ def test_render_codex_event_keeps_paths_outside_the_workspace_absolute(tmp_path)
         {"id": "i", "type": "file_change", "changes": [{"path": str(outside)}]}
     )
 
-    text, _, _ = agents.render_codex_event(line, tmp_path)
-
-    assert text == f" . edit {outside}"
+    assert agents.render_codex_event(line, tmp_path).text == f" . edit {outside}"
 
 
 def test_render_codex_event_names_unknown_item_types(tmp_path):
     line = _codex_started({"id": "i", "type": "web_search", "query": "anything"})
 
-    assert agents.render_codex_event(line, tmp_path) == (" . web_search", True, "")
+    assert agents.render_codex_event(line, tmp_path) == agents.CodexEvent(
+        text=" . web_search", echo=True
+    )
 
 
 @pytest.mark.parametrize(
@@ -1396,21 +1405,26 @@ def test_render_codex_event_names_unknown_item_types(tmp_path):
     [
         (
             '{"type":"thread.started","thread_id":"t-1"}',
-            ("", False, "t-1"),
+            agents.CodexEvent(thread_id="t-1"),
         ),
         (
             '{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}',
-            ("hi", True, ""),
+            agents.CodexEvent(text="hi", echo=True),
         ),
+        # The three channels codex speaks through itself, and the only ones
+        # quota detection is allowed to read.
         (
             '{"type":"error","message":"boom"}',
-            ("boom", True, ""),
+            agents.CodexEvent(text="boom", echo=True, quota=True),
         ),
         (
             '{"type":"turn.failed","error":{"message":"detail"}}',
-            ("detail", True, ""),
+            agents.CodexEvent(text="detail", echo=True, quota=True),
         ),
-        ("not json at all", ("not json at all", True, "")),
+        (
+            "not json at all",
+            agents.CodexEvent(text="not json at all", echo=True, quota=True),
+        ),
     ],
 )
 def test_render_codex_event_keeps_the_existing_event_handling(line, expected):
@@ -1426,10 +1440,11 @@ def test_render_codex_event_keeps_the_existing_event_handling(line, expected):
     ],
 )
 def test_render_codex_event_records_other_events_without_echoing(line):
-    text, should_echo, _ = agents.render_codex_event(line)
+    event = agents.render_codex_event(line)
 
-    assert json.loads(text) == json.loads(line)
-    assert should_echo is False
+    assert json.loads(event.text) == json.loads(line)
+    assert event.echo is False
+    assert event.quota is False
 
 
 def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
@@ -1441,7 +1456,7 @@ def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
     )
     io, echoed = make_io(tmp_path)
 
-    rc, rendered, thread_id = agents._run_codex_json(
+    rc, rendered, thread_id, quota_text = agents._run_codex_json(
         [sys.executable, str(emitter), str(CODEX_TOOL_FIXTURE)],
         io,
         AgentRef("B", "codex"),
@@ -1449,6 +1464,8 @@ def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
 
     assert rc == 0
     assert thread_id == "22222222-2222-4222-8222-222222222222"
+    # The fixture's commands ran clean, so nothing feeds quota detection.
+    assert quota_text == ""
     assert echoed == [
         "[B codex] Creating the file now.",
         "[B codex]  . edit src/demo.py (add) +1 more",
@@ -1466,6 +1483,68 @@ def test_codex_stream_echoes_tool_activity_and_writes_summaries(tmp_path):
     assert io.raw_out.read_text(encoding="utf-8") == CODEX_TOOL_FIXTURE.read_text(
         encoding="utf-8"
     )
+
+
+# The reason the quota channel was narrowed. This repo's own test file name
+# matches the rate-limit regex, so a codex run that executes pytest used to
+# look quota limited whenever it also exited non-zero, costing hours of
+# pointless backoff.
+PYTEST_OUTPUT_LOOKS_LIKE_A_RATE_LIMIT = (
+    "tests/test_ratelimit_parsing.py .......... [100%]\n"
+    "src/adversarial_ai_coding/ratelimit.py:26: _RATE_LIMIT = re.compile("
+)
+
+
+def test_command_output_that_matches_the_regex_is_not_a_quota_signal(tmp_path):
+    from adversarial_ai_coding.ratelimit import is_rate_limited
+
+    lines = [
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "i1",
+                    "type": "command_execution",
+                    "command": "pytest -q",
+                    "aggregated_output": PYTEST_OUTPUT_LOOKS_LIKE_A_RATE_LIMIT,
+                    "exit_code": 1,
+                    "status": "completed",
+                },
+            }
+        )
+    ]
+    io, _ = make_io(tmp_path)
+
+    _, _, _, quota_text = agents._run_codex_json(
+        _claude_emitter(tmp_path, lines), io, AgentRef("B", "codex")
+    )
+
+    assert quota_text == ""
+    assert not is_rate_limited(quota_text)
+    # Proof the sample really does trip the regex, so the test cannot pass
+    # just because the wording drifted.
+    assert is_rate_limited(io.agent_out.read_text(encoding="utf-8"))
+
+
+def test_real_quota_error_still_reaches_the_quota_channel(tmp_path):
+    from adversarial_ai_coding.ratelimit import is_rate_limited, parse_reset_wait
+
+    lines = [
+        json.dumps(
+            {
+                "type": "error",
+                "message": "You've hit your usage limit. Please try again in 20s.",
+            }
+        )
+    ]
+    io, _ = make_io(tmp_path)
+
+    _, _, _, quota_text = agents._run_codex_json(
+        _claude_emitter(tmp_path, lines), io, AgentRef("B", "codex")
+    )
+
+    assert is_rate_limited(quota_text)
+    assert parse_reset_wait(quota_text, now=0) == 20 + 30
 
 
 def test_claude_worker_parses_json_and_tracks_session(monkeypatch, tmp_path):
@@ -1652,7 +1731,7 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
 
     def fake_stream(argv, io, ref):
         calls.append(argv)
-        return (0, "codex output", next(ids))
+        return (0, "codex output", next(ids), "")
 
     monkeypatch.setattr(agents, "_run_codex_json", fake_stream)
     monkeypatch.setattr(agents.shutil, "which", lambda name: name)

@@ -37,12 +37,6 @@ CODEX_QUOTA_CLOCK = (
 )
 
 
-def out_file(tmp_path, text):
-    p = tmp_path / "agent-out.txt"
-    p.write_text(text, encoding="utf-8")
-    return p
-
-
 @pytest.mark.parametrize(
     "sample",
     [
@@ -62,43 +56,44 @@ def out_file(tmp_path, text):
         "codex-quota-clock",
     ],
 )
-def test_rate_limit_samples_detected(tmp_path, sample):
-    assert is_rate_limited(out_file(tmp_path, sample))
+def test_rate_limit_samples_detected(sample):
+    assert is_rate_limited(sample)
 
 
-def test_ordinary_error_is_not_misclassified(tmp_path):
-    p = out_file(tmp_path, "strutil_test.go:47:14: undefined: IsPalindrome\n")
+def test_ordinary_error_is_not_misclassified():
+    p = "strutil_test.go:47:14: undefined: IsPalindrome\n"
     assert not is_rate_limited(p)
 
 
-def test_missing_file_is_not_rate_limited(tmp_path):
-    assert not is_rate_limited(tmp_path / "nothere.txt")
+def test_empty_quota_channel_is_not_rate_limited():
+    # An adapter that reported nothing must never look rate limited.
+    assert not is_rate_limited("")
 
 
 NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())  # local 09:00
 
 
-def test_clock_two_hours_ahead_waits_2h_plus_buffer(tmp_path):
-    p = out_file(tmp_path, "You have hit your session limit - resets 11:00am (Asia/Taipei)\n")
+def test_clock_two_hours_ahead_waits_2h_plus_buffer():
+    p = "You have hit your session limit - resets 11:00am (Asia/Taipei)\n"
     assert parse_reset_wait(p, NOW) == 7200 + 120
 
 
-def test_past_clock_time_rolls_to_tomorrow(tmp_path):
-    p = out_file(tmp_path, "resets 8:00am\n")
+def test_past_clock_time_rolls_to_tomorrow():
+    p = "resets 8:00am\n"
     assert parse_reset_wait(p, NOW) == 86400 - 3600 + 120  # 82920
 
 
-def test_pm_clock_parses(tmp_path):
-    p = out_file(tmp_path, "resets 12:30pm\n")
+def test_pm_clock_parses():
+    p = "resets 12:30pm\n"
     assert parse_reset_wait(p, NOW) == int(3.5 * 3600) + 120
 
 
-def test_no_reset_info_returns_none_for_backoff(tmp_path):
-    assert parse_reset_wait(out_file(tmp_path, "no reset info here\n"), NOW) is None
+def test_no_reset_info_returns_none_for_backoff():
+    assert parse_reset_wait("no reset info here\n", NOW) is None
 
 
-def test_missing_file_returns_none(tmp_path):
-    assert parse_reset_wait(tmp_path / "nothere.txt", NOW) is None
+def test_empty_quota_channel_returns_none():
+    assert parse_reset_wait("", NOW) is None
 
 
 @pytest.mark.parametrize(
@@ -112,102 +107,102 @@ def test_missing_file_returns_none(tmp_path):
     ],
     ids=["90s", "2min", "3h", "12h-as-is", "ms"],
 )
-def test_relative_durations(tmp_path, text, expected):
-    assert parse_reset_wait(out_file(tmp_path, text), NOW) == expected
+def test_relative_durations(text, expected):
+    assert parse_reset_wait(text, NOW) == expected
 
 
-def test_beyond_30_days_hits_sanity_guard(tmp_path):
-    assert parse_reset_wait(out_file(tmp_path, "try again in 900 hours\n"), NOW) is None
+def test_beyond_30_days_hits_sanity_guard():
+    assert parse_reset_wait("try again in 900 hours\n", NOW) is None
 
 
-def test_absolute_date_across_line_break(tmp_path):
+def test_absolute_date_across_line_break():
     # helpers.test.sh: "reset parser:real codex 'try again at <date>' across a line break"
     now_fixed = int(datetime(2026, 7, 8, 7, 0, 0).timestamp())
     target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
-    p = out_file(tmp_path, CODEX_QUOTA)
+    p = CODEX_QUOTA
     assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
 
 
-def test_absolute_date_already_elapsed_short_buffer(tmp_path):
-    p = out_file(tmp_path, "try again at Jan 2nd, 2020 7:23 PM.\n")
+def test_absolute_date_already_elapsed_short_buffer():
+    p = "try again at Jan 2nd, 2020 7:23 PM.\n"
     assert parse_reset_wait(p, NOW) == 30
 
 
-def test_malformed_clock_minute_falls_through(tmp_path):
+def test_malformed_clock_minute_falls_through():
     # bash: date -d "5:99am" fails silently and the parser keeps scanning.
-    assert parse_reset_wait(out_file(tmp_path, "resets 5:99am\n"), NOW) is None
+    assert parse_reset_wait("resets 5:99am\n", NOW) is None
 
 
-def test_malformed_clock_still_finds_relative_duration(tmp_path):
-    p = out_file(tmp_path, "resets 5:99am, please try again in 90s\n")
+def test_malformed_clock_still_finds_relative_duration():
+    p = "resets 5:99am, please try again in 90s\n"
     assert parse_reset_wait(p, NOW) == 120
 
 
-def test_out_of_range_hour_falls_through(tmp_path):
-    assert parse_reset_wait(out_file(tmp_path, "resets 19:30pm\n"), NOW) is None
+def test_out_of_range_hour_falls_through():
+    assert parse_reset_wait("resets 19:30pm\n", NOW) is None
 
 
-def test_hour_zero_clock_falls_through(tmp_path):
+def test_hour_zero_clock_falls_through():
     # GNU date rejects "0:30am"; bash fell through to no match.
-    assert parse_reset_wait(out_file(tmp_path, "resets 0:30am\n"), NOW) is None
+    assert parse_reset_wait("resets 0:30am\n", NOW) is None
 
 
-def test_hour_zero_absolute_date_returns_none(tmp_path):
-    p = out_file(tmp_path, "try again at Jul 14th, 2026 0:23 PM.\n")
+def test_hour_zero_absolute_date_returns_none():
+    p = "try again at Jul 14th, 2026 0:23 PM.\n"
     assert parse_reset_wait(p, NOW) is None
 
 
-def test_impossible_absolute_date_returns_none(tmp_path):
-    p = out_file(tmp_path, "try again at Feb 30th, 2026 7:23 PM.\n")
+def test_impossible_absolute_date_returns_none():
+    p = "try again at Feb 30th, 2026 7:23 PM.\n"
     assert parse_reset_wait(p, NOW) is None
 
 
-def test_resets_at_absolute_date_parses(tmp_path):
+def test_resets_at_absolute_date_parses():
     # Deliberate divergence from bash, where "resets at/on" are dead branches.
     now_fixed = int(datetime(2026, 7, 8, 7, 0, 0).timestamp())
     target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
-    p = out_file(tmp_path, "resets at Jul 14th, 2026 7:23 PM\n")
+    p = "resets at Jul 14th, 2026 7:23 PM\n"
     assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
 
 
-def test_resets_on_absolute_date_parses(tmp_path):
+def test_resets_on_absolute_date_parses():
     now_fixed = int(datetime(2026, 7, 8, 7, 0, 0).timestamp())
     target = int(datetime(2026, 7, 14, 19, 23, 0).timestamp())
-    p = out_file(tmp_path, "resets on Jul 14th, 2026 7:23 PM\n")
+    p = "resets on Jul 14th, 2026 7:23 PM\n"
     assert parse_reset_wait(p, now_fixed) == target - now_fixed + 30
 
 
-def test_clock_only_try_again_at_waits_until_next_occurrence(tmp_path):
+def test_clock_only_try_again_at_waits_until_next_occurrence():
     # Real incident (2026-07-12 E2E run): hit at 00:37, codex said
     # "try again at 12:50 AM" with no date; expect a precise 13-minute wait.
     now_fixed = int(datetime(2026, 7, 12, 0, 37, 0).timestamp())
-    p = out_file(tmp_path, CODEX_QUOTA_CLOCK)
+    p = CODEX_QUOTA_CLOCK
     assert parse_reset_wait(p, now_fixed) == 13 * 60 + 30
 
 
-def test_clock_only_past_time_rolls_to_tomorrow(tmp_path):
-    p = out_file(tmp_path, "try again at 8:00 AM.\n")
+def test_clock_only_past_time_rolls_to_tomorrow():
+    p = "try again at 8:00 AM.\n"
     assert parse_reset_wait(p, NOW) == 86400 - 3600 + 30  # 82830
 
 
-def test_clock_only_pm_parses(tmp_path):
-    p = out_file(tmp_path, "try again at 12:30 PM.\n")
+def test_clock_only_pm_parses():
+    p = "try again at 12:30 PM.\n"
     assert parse_reset_wait(p, NOW) == int(3.5 * 3600) + 30
 
 
-def test_clock_only_across_line_break(tmp_path):
+def test_clock_only_across_line_break():
     now_fixed = int(datetime(2026, 7, 12, 0, 37, 0).timestamp())
-    p = out_file(tmp_path, "purchase more credits or try again at\n12:50 AM.\n")
+    p = "purchase more credits or try again at\n12:50 AM.\n"
     assert parse_reset_wait(p, now_fixed) == 13 * 60 + 30
 
 
-def test_clock_only_hour_zero_falls_through(tmp_path):
+def test_clock_only_hour_zero_falls_through():
     # Mirrors the "resets 0:30am" rule: hour 0 with an am/pm marker is invalid.
-    assert parse_reset_wait(out_file(tmp_path, "try again at 0:30 AM.\n"), NOW) is None
+    assert parse_reset_wait("try again at 0:30 AM.\n", NOW) is None
 
 
-def test_clock_only_malformed_minute_returns_none(tmp_path):
-    assert parse_reset_wait(out_file(tmp_path, "try again at 5:99 AM.\n"), NOW) is None
+def test_clock_only_malformed_minute_returns_none():
+    assert parse_reset_wait("try again at 5:99 AM.\n", NOW) is None
 
 
 def test_human_duration():

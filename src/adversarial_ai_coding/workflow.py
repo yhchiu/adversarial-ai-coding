@@ -375,7 +375,6 @@ def _work_body(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
     io = ctx.agent_io()
     result = agent_call(
         lambda: run_worker(agent, short_prompt, ctx.settings, ctx.session, io),
-        agent_out=ctx.agent_out,
         settings=ctx.settings,
         events=_retry_events(ctx, "worker", agent, slug, io),
     )

@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -54,16 +53,15 @@ _CLOCK_AT = re.compile(
 )
 
 
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
+def is_rate_limited(text: str) -> bool:
+    """Whether an agent's quota channel reports a rate limit.
 
-
-def is_rate_limited(path: Path) -> bool:
-    text = _read(path)
-    return text is not None and _RATE_LIMIT.search(text) is not None
+    The caller passes `AgentResult.quota_text`, not a whole output file:
+    an agent's own error wording is a quota signal, but the output of a
+    command it ran is not. Scanning everything used to make this repo's
+    own `test_ratelimit_parsing.py` filename read as a rate limit.
+    """
+    return bool(text) and _RATE_LIMIT.search(text) is not None
 
 
 def _hour24(hour12: int, ampm: str) -> int:
@@ -90,9 +88,8 @@ def _next_clock_epoch(now: int, hour12: int, minute: int, ampm: str) -> int | No
     return int(target.timestamp())
 
 
-def parse_reset_wait(path: Path, now: int | None = None) -> int | None:
-    text = _read(path)
-    if text is None:
+def parse_reset_wait(text: str, now: int | None = None) -> int | None:
+    if not text:
         return None
     if now is None:
         now = int(datetime.now().timestamp())
@@ -188,7 +185,6 @@ class RetryEvents:
 def agent_call(
     attempt: "Callable[[], AgentResult]",
     *,
-    agent_out: Path,
     settings: "Settings",
     events: RetryEvents,
     now: Callable[[], int] | None = None,
@@ -207,7 +203,7 @@ def agent_call(
         events.archive_attempt(attempt_no, result.rc)
         if result.rc == 0:
             return result
-        if not is_rate_limited(agent_out):
+        if not is_rate_limited(result.quota_text):
             return result
         if not settings.retry_on_limit:
             return AgentResult(QUOTA_ABORT_RC, result.text)
@@ -217,7 +213,7 @@ def agent_call(
             )
             return AgentResult(QUOTA_ABORT_RC, result.text)
         current_epoch = now() if now else int(datetime.now().timestamp())
-        wait = parse_reset_wait(agent_out, current_epoch)
+        wait = parse_reset_wait(result.quota_text, current_epoch)
         if wait is not None and wait > settings.retry_max_reset_wait:
             # The message told us exactly when the quota returns and it is far
             # away. Backing off would burn hours of sleep and still fail (sh:1149-1155).

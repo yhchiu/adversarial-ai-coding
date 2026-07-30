@@ -1,7 +1,6 @@
 """Ports tests/helpers.test.sh:651-694 (engine_call stub retry behavior)."""
 
 from datetime import datetime
-from pathlib import Path
 
 from adversarial_ai_coding.config import Settings
 from adversarial_ai_coding.agents import AgentResult
@@ -12,10 +11,9 @@ NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())
 
 
 class Stub:
-    """fake_agent from the bash suite: writes stub text and fails, or succeeds."""
+    """fake_agent from the bash suite: reports stub text and fails, or succeeds."""
 
-    def __init__(self, agent_out: Path, stub_text: str):
-        self.agent_out = agent_out
+    def __init__(self, stub_text: str):
         self.stub_text = stub_text
         self.calls = 0
 
@@ -23,13 +21,11 @@ class Stub:
         self.calls += 1
         if not self.stub_text:
             return AgentResult(0, "ok")
-        self.agent_out.write_text(self.stub_text + "\n", encoding="utf-8")
-        return AgentResult(1, self.stub_text)
+        return AgentResult(1, self.stub_text, quota_text=self.stub_text)
 
 
 def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2", notes=None):
-    agent_out = tmp_path / "agent-out.txt"
-    stub = Stub(agent_out, stub_text)
+    stub = Stub(stub_text)
     slept, archived = [], []
     notes = [] if notes is None else notes
     events = RetryEvents(
@@ -42,8 +38,7 @@ def run(tmp_path, stub_text, retry_on_limit="1", retry_max="2", notes=None):
         {"RETRY_ON_LIMIT": retry_on_limit, "RETRY_BASE_WAIT": "1", "RETRY_MAX": retry_max},
         run_id="r",
     )
-    result = agent_call(stub, agent_out=agent_out, settings=settings,
-                         events=events, now=lambda: NOW)
+    result = agent_call(stub, settings=settings, events=events, now=lambda: NOW)
     return result, stub, slept, archived
 
 
@@ -117,8 +112,7 @@ def test_retry_logs_and_notifies_with_local_eta(tmp_path):
 
 
 def test_retry_decision_reads_injected_clock_once(tmp_path):
-    agent_out = tmp_path / "agent-out.txt"
-    stub = Stub(agent_out, "rate limit but no reset info")
+    stub = Stub("rate limit but no reset info")
     current_times = iter([NOW, NOW + 3600])
     clock_calls = []
     notes = []
@@ -134,7 +128,6 @@ def test_retry_decision_reads_injected_clock_once(tmp_path):
 
     agent_call(
         stub,
-        agent_out=agent_out,
         settings=settings,
         events=events,
         now=lambda: (clock_calls.append(True), next(current_times))[1],

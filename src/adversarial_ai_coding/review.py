@@ -193,7 +193,6 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
             ctx.session,
             io,
         ),
-        agent_out=ctx.agent_out,
         settings=ctx.settings,
         events=_retry_events(ctx, "reviewer", agent, slug, io),
     )
