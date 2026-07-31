@@ -1,7 +1,8 @@
 # Keep all run artifacts under a single `aac/` root
 
 Date: 2026-07-30
-Status: Accepted; implementation pending
+Amended: 2026-07-31 (extended to the git namespace, below)
+Status: Accepted
 
 ## Context
 
@@ -46,6 +47,38 @@ machine half is only ever read by the tool, so hiding it is correct.
 `SPEC_DIR` keeps its name even though the directory is now `docs/`. `RUNS_DIR`
 is removed. Existing runs from the old layout are not resumable; there is no
 migration.
+
+## Amendment: the same name in the git namespace
+
+The names the workflow creates in git had the same defect for a different
+reason. `AUTO_BRANCH=1` produced branch `auto/<RUN_ID>`, and `USE_WORKTREE=1`
+produced a worktree directory `<repo>-auto-<RUN_ID>`.
+
+The problem is not squatting — a branch is cheap to delete, unlike the
+permanently committed `specs/<RUN_ID>/` above — it is that neither name says
+what made it. The worktree is the worse of the two. It is a *sibling* of the
+repository, so it appears in whatever directory the user keeps their projects
+in, where `.gitignore` cannot reach it and where it carries the repository's
+name but not the tool's.
+
+Both are now built from the same `ARTIFACT_ROOT` constant as the directory:
+
+```text
+branch     aac/<RUN_ID>
+worktree   ../<repo>-aac-<RUN_ID>
+```
+
+This buys a trail rather than a tidier name. Someone who finds either one
+looks up `aac/` inside the repository, and `aac/docs/<RUN_ID>/` holds the spec
+and plan for that same run. The constant is shared rather than duplicated so
+that renaming the directory cannot leave the branch pointing at a name that no
+longer exists — the two names are one decision, not two.
+
+`AUTO_BRANCH` and `USE_WORKTREE` keep their names. `AUTO_BRANCH` is named for
+its behaviour, creating a branch automatically, not for the string `auto/`, so
+it stayed accurate through the rename. Prefixing the environment surface with
+`AAC_` is still the open question described under the rejected `DOCS_DIR`
+rename below, and deliberately was not started here.
 
 ## Considered options
 
@@ -112,3 +145,18 @@ archive directory is also renamed from `runs/` to `archive/`, because
 - The correctness of the whole layout rests on one invariant that nothing
   previously tested: `aac/docs/**` is reachable by git and `aac/.run/**` is
   not. A test now pins it.
+- The branch rename is *not* breaking, unlike the layout change above. Resume
+  switches to the literal branch name recorded in the settings snapshot and
+  never matches on a prefix, so a run started before the rename still resumes.
+- A branch named exactly `aac` and the `aac/<RUN_ID>` namespace cannot coexist.
+  Git refs are paths, so `refs/heads/aac` cannot be both a file and the
+  directory holding the run branches; whichever is created second fails with
+  `fatal: cannot lock ref ...: 'refs/heads/aac' exists`. This is not a new cost
+  — `auto` had the same property — but it is newly plausible to hit, because a
+  repository using this tool now also contains a directory called `aac/`, and
+  "make a branch called `aac` to work on the `aac/` directory" is a thing
+  someone will try. The damaging order is that one: a user who already holds a
+  branch named `aac` cannot start a run at all, because `setup_workspace` lets
+  the `CalledProcessError` out. It surfaces before any agent is called and the
+  git message names both refs, so the failure is loud and self-explanatory
+  rather than silent, and no handling was added for it.

@@ -325,8 +325,8 @@ spec human gate 會顯示理由並詢問
 | `PHASE_REVIEW` | `0` | `1` 時每個 phase 結尾由 reviewer 審該 phase 的 diff(含 blocker 迴圈)。預設關閉,因為 phase gate 本身就是 reviewer 寫的受保護測試在把關。 |
 | `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |
 | `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈) |
-| `AUTO_BRANCH` | `1` | 自動建立 `auto/<時間戳>` branch |
-| `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好) |
+| `AUTO_BRANCH` | `1` | 自動建立 `aac/<時間戳>` branch |
+| `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好)。worktree 建在 repo 的**兄弟目錄** `<repo>-aac-<時間戳>`,不會自動清除:跑完請自行 `git worktree remove` |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
 | `NOTIFY_CMD` | (空) | 通知指令,訊息以第一個參數傳入,例:`NOTIFY_CMD="ntfy publish mytopic"`。觸發點:待人工核准、各種中止、限額等待、完成 |
 | `COLOR` | `auto` | 為 workflow 自身的狀態訊息上色。`auto` 通常讓重導向或非終端機輸出保持無色碼;`NO_COLOR` 停用上色,`FORCE_COLOR` 可在 `auto` 模式強制 ANSI 色碼,包括重導向輸出,而 `TERM=dumb` 會停用未強制的上色。`always` 可讓重導向輸出包含 ANSI 色碼,`never` 停用。封存的 run log 即使強制上色也永遠不含色碼。 |

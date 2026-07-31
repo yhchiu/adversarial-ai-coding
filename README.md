@@ -448,8 +448,8 @@ Add `--json` output to the CLI.
 | `PHASE_REVIEW` | `0` | `1` adds a reviewer pass over each phase diff, with blocker loops. Off by default because the phase gate already enforces the reviewer's protected tests. |
 | `GATE_CMD` | auto-detected | Full quality gate. Go projects use `go build ./... && go vet ./... && go test ./...`, npm projects with a `test` script use `npm test`, Cargo projects use `cargo test`, and projects without a detected gate skip deterministic gates unless you set it. |
 | `BUILD_GATE_CMD` | auto-detected | Lightweight per-task build gate. Go projects use `go build ./...`, Cargo projects use `cargo build`, and projects without a detected build gate skip this per-task gate unless you set it. |
-| `AUTO_BRANCH` | `1` | Create an `auto/<timestamp>` branch before running. |
-| `USE_WORKTREE` | `0` | Run in a separate Git worktree. |
+| `AUTO_BRANCH` | `1` | Create an `aac/<timestamp>` branch before running. |
+| `USE_WORKTREE` | `0` | Run in a separate Git worktree. The worktree is created next to the repository, as a sibling directory named `<repo>-aac-<timestamp>`, and is not removed for you: `git worktree remove` it when you are done with the run. |
 | `OPEN_PR` | `0` | Push and create a GitHub PR at the end. By default, commands are only printed. |
 | `NOTIFY_CMD` | empty | Notification command. The message is passed as the first argument. |
 | `COLOR` | `auto` | Colorize the workflow's own status messages. `auto` normally keeps redirected or non-terminal output plain; `NO_COLOR` disables color, `FORCE_COLOR` can force ANSI color in `auto` mode, including redirects, and `TERM=dumb` disables unforced color. `always` can emit ANSI color to redirected output; `never` disables color; the archived run log never contains color codes, even when color is forced. |
