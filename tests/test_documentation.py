@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -6,6 +7,38 @@ ROOT = Path(__file__).parents[1]
 
 def _read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
+
+
+def _settings_row(text: str, name: str) -> str:
+    """The one settings-table row documenting a variable."""
+    rows = [line for line in text.splitlines() if line.startswith(f"| `{name}` |")]
+    assert len(rows) == 1, f"expected exactly one `{name}` settings row, got {len(rows)}"
+    return rows[0]
+
+
+def _clause_about(row: str, topic: str) -> str:
+    """The clauses of a settings row that talk about one topic.
+
+    Needed because a knob's own name can satisfy a naive substring check:
+    the COLOR row lists a `never` mode, so "is the run-log guarantee
+    unconditional" cannot be asked of the whole row.
+    """
+    clauses = [part for part in re.split(r"[;。.]", row) if topic in part]
+    assert clauses, f"no clause about {topic!r} in: {row}"
+    return " ".join(clauses)
+
+
+def _adapter_cells(text: str, label: str) -> list[str]:
+    """The Claude, Codex and Agy cells of one adapter-comparison row.
+
+    Reading the row is what keeps assertions about "both Claude and Codex
+    do X" from being written as a count over the whole file, where an
+    unrelated third mention elsewhere would break them.
+    """
+    for line in text.splitlines():
+        if line.startswith(f"| {label} |"):
+            return [cell.strip() for cell in line.strip().strip("|").split("|")][1:]
+    raise AssertionError(f"no {label!r} row in the adapter comparison table")
 
 
 def test_artifact_layout_is_documented_bilingually():
@@ -91,9 +124,17 @@ def test_agent_streaming_is_documented_bilingually():
     assert "archived artifacts and the run log never contain" in english
     assert "`--output-format`、`--verbose` 或 `--json-schema`" in chinese
     assert "封存產物與 run log 永遠不含前綴" in chinese
-    # Codex reports tool calls too, and its shell wrapper is stripped.
-    assert english.count("Messages and a one-line summary per tool call") == 2
-    assert chinese.count("訊息,加上每個工具呼叫一行摘要") == 2
+    # Codex reports tool calls too, and its shell wrapper is stripped. Read
+    # the two adapter cells rather than counting the phrase over the whole
+    # file: documenting a third streaming adapter must not fail this.
+    claude, codex, agy = _adapter_cells(english, "Live output")
+    assert "one-line summary per tool call" in claude
+    assert "one-line summary per tool call" in codex
+    assert "Raw merged output" in agy
+    claude, codex, agy = _adapter_cells(chinese, "即時輸出")
+    assert "每個工具呼叫一行摘要" in claude
+    assert "每個工具呼叫一行摘要" in codex
+    assert "原始合併輸出" in agy
     assert "`powershell -Command` or `bash -c` wrapper" in english
     assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
 
@@ -149,30 +190,32 @@ def test_import_mode_is_documented_bilingually():
 
 
 def test_color_settings_are_documented_bilingually():
-    readmes = {
-        "README.md": (
-            "`auto` normally keeps redirected or non-terminal output plain",
-            "`FORCE_COLOR` can force ANSI color in `auto` mode, including redirects",
-            "`always` can emit ANSI color to redirected output",
-            "the archived run log never contains color codes, even when color is forced",
-        ),
-        "README.zh-TW.md": (
-            "`auto` 通常讓重導向或非終端機輸出保持無色碼",
-            "`FORCE_COLOR` 可在 `auto` 模式強制 ANSI 色碼,包括重導向輸出",
-            "`always` 可讓重導向輸出包含 ANSI 色碼",
-            "封存的 run log 即使強制上色也永遠不含色碼",
-        ),
-    }
-    for name, redirect_details in readmes.items():
+    """The COLOR row names every knob, the redirect rule and the log rule.
+
+    This used to pin four whole sentences per language, which meant any
+    rewording of the row broke it in both. What each knob actually does
+    already has a behavioural test in test_style.py (auto follows isatty,
+    always beats non-tty, NO_COLOR beats auto, FORCE_COLOR enables
+    non-tty, NO_COLOR beats FORCE_COLOR, TERM=dumb disables auto), so the
+    prose adds no coverage. What is left is the review finding that put
+    this test here (dfa38b3): the row has to cover how the modes interact
+    with redirects, and the run-log guarantee has to stay unconditional.
+    """
+    redirect = {"README.md": "redirect", "README.zh-TW.md": "重導向"}
+    unconditional = {"README.md": "never", "README.zh-TW.md": "永遠不"}
+    for name in ("README.md", "README.zh-TW.md"):
         readme = _read(name)
-        assert "`COLOR`" in readme
+        color = _settings_row(readme, "COLOR")
+        for knob in (
+            "`auto`", "`always`", "`never`", "NO_COLOR", "FORCE_COLOR", "TERM=dumb"
+        ):
+            assert knob in color, f"{name}: the COLOR row must document {knob}"
+        assert redirect[name] in color
+        assert unconditional[name] in _clause_about(color, "run log")
         assert "COLOR_THEME" in readme
-        assert "NO_COLOR" in readme
         assert "COLOR_ERROR" in readme
         assert "bold-bright-red" in readme
         assert "1;91" in readme
-        for detail in redirect_details:
-            assert detail in readme
 
 
 def test_agents_drift_note_is_documented_bilingually():
