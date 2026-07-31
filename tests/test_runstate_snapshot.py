@@ -234,7 +234,7 @@ def test_snapshot_round_trips_import_settings(tmp_path):
     )
     values = snapshot_values(
         settings,
-        branch="auto/r",
+        branch="aac/r",
         gate_cmd="",
         build_gate_cmd="",
         phase_gate_cmd="",

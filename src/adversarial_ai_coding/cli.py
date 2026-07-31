@@ -205,7 +205,8 @@ def main(
             if workspace != Path.cwd():
                 os.chdir(workspace)
                 styler.out(
-                    f"Created worktree:{workspace} (branch auto/{run_id}; "
+                    f"Created worktree:{workspace} "
+                    f"(branch {current_branch(workspace)}; "
                     "remove later with git worktree remove)"
                 )
         workspace = Path.cwd()

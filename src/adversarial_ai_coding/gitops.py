@@ -11,7 +11,7 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Callable
 
-from .config import Settings
+from .config import ARTIFACT_ROOT, Settings
 from .runstate import RunState, RunStateError
 
 
@@ -149,13 +149,20 @@ def resume_workspace(
 
 
 def setup_workspace(settings: Settings, run_id: str, cwd: Path) -> Path:
+    # Both names are built from ARTIFACT_ROOT on purpose. They exist to be
+    # traceable: someone who finds an aac/<run_id> branch, or a sibling
+    # directory with -aac- in it, gets there from the aac/ directory in the
+    # repository, whose aac/docs/<run_id>/ holds the spec and plan for that
+    # very run. Naming the branch independently would let the directory be
+    # renamed while the branch kept pointing at a name that no longer exists.
     if settings.use_worktree:
         root = Path(git_out(["rev-parse", "--show-toplevel"], cwd))
-        worktree = root.parent / f"{root.name}-auto-{run_id}"
+        worktree = root.parent / f"{root.name}-{ARTIFACT_ROOT}-{run_id}"
         git_out(
-            ["worktree", "add", "-b", f"auto/{run_id}", str(worktree)], cwd
+            ["worktree", "add", "-b", f"{ARTIFACT_ROOT}/{run_id}", str(worktree)],
+            cwd,
         )
         return worktree
     if settings.auto_branch:
-        git_out(["switch", "-c", f"auto/{run_id}"], cwd)
+        git_out(["switch", "-c", f"{ARTIFACT_ROOT}/{run_id}"], cwd)
     return cwd

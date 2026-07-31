@@ -135,7 +135,7 @@ def test_full_workflow_e2e():
     assert "All stages complete" in log
     assert "Quality gate passed" in log
     branch = run(["git", "branch", "--show-current"], repo).stdout.strip()
-    assert branch.startswith("auto/")
+    assert branch.startswith("aac/")
     assert (repo / "AGENTS.md").is_file() and (repo / "CLAUDE.md").is_file()
 
     spec_dirs = sorted((repo / "aac" / "docs").glob("*/"))

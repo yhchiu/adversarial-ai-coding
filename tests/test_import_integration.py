@@ -8,6 +8,7 @@ artifacts that were actually imported.
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,7 @@ def test_import_spec_skips_write_and_keeps_review(new_repo, tmp_path, monkeypatc
 
 @pytest.mark.slow
 def test_relative_import_paths_survive_worktree_setup(
-    new_repo, tmp_path, monkeypatch
+    new_repo, tmp_path, monkeypatch, capsys
 ):
     work = driver_workdir(tmp_path)
     work.mkdir()
@@ -81,6 +82,15 @@ def test_relative_import_paths_survive_worktree_setup(
 
     workspace = Path.cwd()
     assert workspace != new_repo
+    # The announcement asks git which branch it is on instead of rebuilding
+    # the name, so it cannot drift away from setup_workspace. test_gitops
+    # pins what that name is; this pins only that the message reports it.
+    created = subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert f"(branch {created};" in capsys.readouterr().out
     spec = next((workspace / "aac" / "docs").glob("*/spec.md"))
     assert spec.read_text(encoding="utf-8") == SPEC_TEXT
     state = state_dir_of(workspace)

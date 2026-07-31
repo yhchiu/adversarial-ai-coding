@@ -136,15 +136,15 @@ def test_setup_workspace_branch_mode(new_repo):
     settings = Settings.from_env({}, run_id="20260711-010101")
     workspace = setup_workspace(settings, "20260711-010101", new_repo)
     assert workspace == new_repo
-    assert current_branch(new_repo) == "auto/20260711-010101"
+    assert current_branch(new_repo) == "aac/20260711-010101"
 
 
 def test_setup_workspace_worktree_mode(new_repo):
     settings = Settings.from_env({"USE_WORKTREE": "1"}, run_id="wt1")
     workspace = setup_workspace(settings, "wt1", new_repo)
     assert workspace != new_repo
-    assert workspace.name == f"{new_repo.name}-auto-wt1"
-    assert current_branch(workspace) == "auto/wt1"
+    assert workspace.name == f"{new_repo.name}-aac-wt1"
+    assert current_branch(workspace) == "aac/wt1"
     git(new_repo, "worktree", "prune")
 
 
