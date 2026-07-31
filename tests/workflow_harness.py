@@ -14,19 +14,31 @@ from adversarial_ai_coding import cli
 
 FAKE = str(Path(__file__).parent / "fake_agent.py")
 
+# A workflow run spawns the fake agent about 17 times, so its interpreter
+# startup is a real share of every integration test.
+#
+# -S skips site.py. In a virtualenv that also drags in _virtualenv.py,
+# contextlib, urllib.parse and ipaddress: 72ms of the fake agent's 82ms of
+# startup, for a script that imports nothing outside the standard library.
+#
+# -E ignores PYTHONPATH and PYTHONHOME. Faster, and it makes the fake agent
+# immune to a machine-wide Python 2 install leaking those variables in.
+FAST_STARTUP = "-S -E"
+
 
 def make_wrapper(work: Path, role: str) -> str:
     """A PATH-resolvable command that runs the fake agent in this role."""
     if os.name == "nt":
         path = work / f"fake-{role}.cmd"
         path.write_text(
-            f'@"{sys.executable}" "{FAKE}" --role fake-{role} %*\r\n',
+            f'@"{sys.executable}" {FAST_STARTUP} "{FAKE}" --role fake-{role} %*\r\n',
             encoding="utf-8",
         )
     else:
         path = work / f"fake-{role}"
         path.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" --role fake-{role} "$@"\n',
+            f'#!/bin/sh\nexec "{sys.executable}" {FAST_STARTUP} "{FAKE}" '
+            f'--role fake-{role} "$@"\n',
             encoding="utf-8",
         )
         path.chmod(0o755)

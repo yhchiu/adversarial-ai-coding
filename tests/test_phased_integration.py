@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from workflow_harness import (
+    FAST_STARTUP,
     calls,
     driver_workdir,
     implementation_tasks,
@@ -40,7 +41,7 @@ def phased_env(work: Path, **overrides) -> dict:
     # src.txt, then passes. Phase 1 is red before implementation; phase 2
     # (regression-guard) is green because phase 1 already created src.txt.
     # If cmd.exe misparses the quoted two-path command on some setup, wrap
-    # it in a .cmd file exactly like _make_wrapper in test_resume_integration.
+    # it in a .cmd file exactly like make_wrapper in workflow_harness.
     (work / "check_impl.py").write_text(
         "import pathlib, sys\n"
         "sys.exit(0 if pathlib.Path('src.txt').exists() else 1)\n",
@@ -49,7 +50,7 @@ def phased_env(work: Path, **overrides) -> dict:
     env = wf_env(
         work,
         PHASES="1",
-        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}"',
+        PHASE_GATE_CMD=f'"{sys.executable}" {FAST_STARTUP} "{work / "check_impl.py"}"',
         FAKE_IMPLEMENTATION_TASKS_LOG=str(work / "implementation-tasks.log"),
     )
     env.update(overrides)
@@ -163,7 +164,7 @@ def test_phase_gate_repair_is_committed_not_leaked(new_repo, tmp_path, monkeypat
     )
     env = phased_env(
         work,
-        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "flaky_gate.py"}"',
+        PHASE_GATE_CMD=f'"{sys.executable}" {FAST_STARTUP} "{work / "flaky_gate.py"}"',
     )
     rc = run_cli(new_repo, env, monkeypatch=monkeypatch)
     assert rc == 0
@@ -229,7 +230,7 @@ def suggestion_env(work: Path, **overrides) -> dict:
     env = wf_env(
         work,
         HUMAN_GATE="1",
-        PHASE_GATE_CMD=f'"{sys.executable}" "{work / "check_impl.py"}"',
+        PHASE_GATE_CMD=f'"{sys.executable}" {FAST_STARTUP} "{work / "check_impl.py"}"',
     )
     env.update(overrides)
     assert "PHASES" not in env

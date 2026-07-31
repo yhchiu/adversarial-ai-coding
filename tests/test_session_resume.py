@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from workflow_harness import FAST_STARTUP
+
 from adversarial_ai_coding import agents
 from adversarial_ai_coding.config import Settings, SettingsError
 from adversarial_ai_coding.ratelimit import RetryEvents, agent_call, is_rate_limited, parse_reset_wait
@@ -179,12 +181,13 @@ def test_fake_codex_impl_model_args_and_handoffs_use_real_argv(
     if os.name == "nt":
         shim = bin_dir / "codex.cmd"
         shim.write_text(
-            f'@"{sys.executable}" "{emitter}" %*\r\n', encoding="utf-8"
+            f'@"{sys.executable}" {FAST_STARTUP} "{emitter}" %*\r\n',
+            encoding="utf-8",
         )
     else:
         shim = bin_dir / "codex"
         shim.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{emitter}" "$@"\n',
+            f'#!/bin/sh\nexec "{sys.executable}" {FAST_STARTUP} "{emitter}" "$@"\n',
             encoding="utf-8",
         )
         shim.chmod(0o755)
@@ -396,12 +399,14 @@ def test_fake_codex_keeps_worker_thread_separate_from_reviewer(monkeypatch, tmp_
     if os.name == "nt":
         wrapper = bin_dir / "codex.cmd"
         wrapper.write_text(
-            f'@echo off\r\n"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8"
+            f'@echo off\r\n"{sys.executable}" {FAST_STARTUP} "{fake}" %*\r\n',
+            encoding="utf-8",
         )
     else:
         wrapper = bin_dir / "codex"
         wrapper.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8"
+            f'#!/bin/sh\nexec "{sys.executable}" {FAST_STARTUP} "{fake}" "$@"\n',
+            encoding="utf-8",
         )
         wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
@@ -605,12 +610,14 @@ def test_fake_agy_keeps_worker_conversation_separate_from_reviewer(
     if os.name == "nt":
         wrapper = bin_dir / "agy.cmd"
         wrapper.write_text(
-            f'@echo off\r\n"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8"
+            f'@echo off\r\n"{sys.executable}" {FAST_STARTUP} "{fake}" %*\r\n',
+            encoding="utf-8",
         )
     else:
         wrapper = bin_dir / "agy"
         wrapper.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8"
+            f'#!/bin/sh\nexec "{sys.executable}" {FAST_STARTUP} "{fake}" "$@"\n',
+            encoding="utf-8",
         )
         wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
