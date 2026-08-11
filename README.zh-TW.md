@@ -21,6 +21,18 @@
 
 實作步驟可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
 
+各階段的角色分工:
+
+| 階段 | 產出者 | 審查者 |
+| --- | --- | --- |
+| Spec | A | B |
+| Plan | A | B |
+| Acceptance tests | **B** | A |
+| 實作(逐任務迴圈) | A(`IMPL_AGENT` 可換成 I) | build gate,以及後續的 branch review |
+| Branch review / final acceptance | — | B(中間夾一次 A self-review) |
+
+刻意的職責分離有兩條:**沒有任何 slot 同時寫 spec 和 acceptance tests**(規格要由另一個廠牌的模型操作化成測試,才會逼出規格的模糊與缺口),以及**實作者不寫自己要通過的測試**(否則就是讓 AI 自己出題自己作答)。
+
 預設流程:
 
 ```text

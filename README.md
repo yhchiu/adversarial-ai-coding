@@ -26,6 +26,22 @@ Use different AI brands for the two slots — their blind spots differ. Each slo
 The implementation step can optionally use a third slot `I` (see
 [Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
 
+Roles at each stage:
+
+| Stage | Writes | Reviews |
+| --- | --- | --- |
+| Spec | A | B |
+| Plan | A | B |
+| Acceptance tests | **B** | A |
+| Implementation (per-task loop) | A (`IMPL_AGENT` can swap in I) | build gate, plus the later branch review |
+| Branch review / final acceptance | — | B (one A self-review in between) |
+
+Two separations are deliberate: **no slot writes both the spec and the
+acceptance tests** — turning a spec into tests is what forces a second model to
+walk every corner of it, which is where ambiguities and gaps surface — and **no
+slot implements against tests it wrote itself**, which would let one agent set
+its own exam and then sit it.
+
 The default pipeline:
 
 ```text
