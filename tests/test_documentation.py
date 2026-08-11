@@ -139,6 +139,36 @@ def test_agent_streaming_is_documented_bilingually():
     assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
 
 
+def test_agent_session_lifecycle_is_documented_bilingually():
+    documents = {
+        "README.md": "docs/agent-session-lifecycle.md",
+        "README.zh-TW.md": "docs/agent-session-lifecycle.zh-TW.md",
+    }
+    for readme_name, guide_name in documents.items():
+        assert guide_name in _read(readme_name)
+        guide = _read(guide_name)
+        for detail in (
+            "write-spec",
+            "write-implementation-plan",
+            "write-acceptance-tests",
+            "write-code",
+            "final-review-and-fixes",
+            "phase-N-write-tests",
+            "phase-N-implement",
+            "write-spec-a",
+            "finalize-spec",
+            "RESUME_RUN",
+            "AgentSession",
+        ):
+            assert detail in guide
+    assert "Every reviewer call is fresh" in _read(
+        "docs/agent-session-lifecycle.md"
+    )
+    assert "每次 reviewer 呼叫都是全新 session" in _read(
+        "docs/agent-session-lifecycle.zh-TW.md"
+    )
+
+
 def test_cross_platform_launchers_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "adversarial-ai-coding/scripts" in readme

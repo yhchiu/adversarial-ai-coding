@@ -637,6 +637,10 @@ agent command/runtime used for the call.
 
 ## Agent CLI Session Behavior
 
+For the exact fresh-versus-resumed session behavior of every default, Phased
+ATDD, and Dual Spec stage, including `RESUME_RUN`, see
+[`docs/agent-session-lifecycle.md`](docs/agent-session-lifecycle.md).
+
 | | Claude | Codex | Agy |
 |---|---|---|---|
 | Non-interactive call | `claude -p --output-format stream-json` | `codex exec --json` | `agy --print` |

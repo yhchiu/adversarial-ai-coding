@@ -472,6 +472,10 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ## Agent CLI 差異與限制
 
+若要查每個預設、Phased ATDD 與 Dual Spec stage 的 session 是全新或續接，
+以及 `RESUME_RUN` 對 agent context 的影響，請見
+[`docs/agent-session-lifecycle.zh-TW.md`](docs/agent-session-lifecycle.zh-TW.md)。
+
 | | claude | codex | agy |
 |---|---|---|---|
 | 非互動執行 | `claude -p --output-format stream-json` | `codex exec` | `agy --print` |
