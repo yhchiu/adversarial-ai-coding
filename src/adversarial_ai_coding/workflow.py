@@ -28,7 +28,8 @@ from .agents import (
     run_worker,
 )
 from .archive import RunArchive, safe_slug
-from .config import Settings, WorkflowAbort
+from .config import Settings, WorkflowAbort, render_template
+from .i18n import emit
 from .gitops import protected_violations
 from .prompts import prompt_file_instruction, render_prompt
 from .ratelimit import QUOTA_ABORT_RC, RetryEvents, agent_call
@@ -101,11 +102,11 @@ class WorkflowContext:
     gate_cmd: str = ""
     build_gate_cmd: str = ""
     phase_gate_cmd: str = ""
-    echo: Callable[[str], None] = print
-    echo_err: Callable[[str], None] = _print_err
+    echo: Callable[..., None] = print
+    echo_err: Callable[..., None] = _print_err
     spec_roles: SpecRoles = field(default_factory=SpecRoles)
     dual_spec_decision: str = ""
-    ask: Callable[[str], str] = _default_ask
+    ask: Callable[..., str] = _default_ask
     run_id: str = ""
     protected_controls: ProtectedControlsSnapshot | None = None
 
@@ -148,9 +149,10 @@ class WorkflowContext:
     def suggestions_path(self) -> Path:
         return self.wf / "suggestions.md"
 
-    def log(self, text: str) -> None:
-        self.log_file(text)
-        self.echo(text)
+    def log(self, template: str, **fields: object) -> None:
+        english = render_template(template, fields)
+        self.log_file(english)
+        emit(self.echo, template, **fields)
 
     def log_file(self, text: str) -> None:
         self.archive.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,15 +556,26 @@ def _human_approval(
         f"adversarial-ai-coding: {subject} awaits human approval ({path})"
     )
     ctx.echo("")
-    ctx.echo(f"### Human checkpoint: review {path}, especially {focus}")
-    ctx.echo(
-        "### You may edit the file before continuing; your edits will be "
-        f"committed with the {subject}."
+    emit(
+        ctx.echo,
+        "### Human checkpoint: review {path}, especially {focus}",
+        path=path,
+        focus=focus,
     )
-    answer = ctx.ask("Enter y to approve and continue; anything else aborts:")
+    emit(
+        ctx.echo,
+        "### You may edit the file before continuing; your edits will be "
+        "committed with the {subject}.",
+        subject=subject,
+    )
+    answer = emit(
+        ctx.ask, "Enter y to approve and continue; anything else aborts:"
+    )
     if answer not in ("y", "Y"):
-        raise WorkflowAbort(f"Aborted: {subject} was not approved.")
-    ctx.log(f"{subject.capitalize()} approved by human")
+        raise WorkflowAbort(
+            "Aborted: {subject} was not approved.", subject=subject
+        )
+    ctx.log("{subject} approved by human", subject=subject.capitalize())
 
 
 def human_gate_spec(ctx: WorkflowContext) -> None:
@@ -597,7 +610,7 @@ def offer_phased_suggestion(ctx: WorkflowContext) -> None:
         return
     ctx.echo("")
     ctx.echo(f"### Reviewer suggests Phased ATDD{detail}")
-    answer = ctx.ask("Enable Phased ATDD for this run? [y/N]:")
+    answer = emit(ctx.ask, "Enable Phased ATDD for this run? [y/N]:")
     if answer not in ("y", "Y"):
         ctx.log("Phased ATDD suggestion declined; keeping the single-shot flow")
         return

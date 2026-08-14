@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .agents import AgentRef
 from .config import WorkflowAbort
+from .i18n import emit
 from .prompts import render_prompt
 from .review import review_loop, run_review
 from .workflow import (
@@ -250,7 +251,7 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
         "adversarial-ai-coding: dual spec comparison awaits human selection "
         f"({ctx.spec_dir / 'spec-comparison.md'})"
     )
-    ctx.echo("\n### Human checkpoint: compare dual spec candidates.")
+    emit(ctx.echo, "\n### Human checkpoint: compare dual spec candidates.")
     for name in (
         "spec-a.md",
         "spec-b.md",
@@ -259,17 +260,18 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
         "spec-comparison.md",
     ):
         ctx.echo(f"### - {ctx.spec_dir / name}")
-    ctx.echo(
+    emit(
+        ctx.echo,
         "### Choose: a, b, ma, or mb. Final spec review and human approval "
-        "run after this selection."
+        "run after this selection.",
     )
     while True:
         decision = normalize_dual_spec_decision(
-            ctx.ask("Dual spec decision [a/b/ma/mb]:")
+            emit(ctx.ask, "Dual spec decision [a/b/ma/mb]:")
         )
         if decision:
             break
-        ctx.echo("Invalid decision. Enter a, b, ma, or mb.")
+        emit(ctx.echo, "Invalid decision. Enter a, b, ma, or mb.")
     owner_slot = dual_spec_owner_slot(decision)
     other_slot = reviewer_slot_for_owner_slot(owner_slot)
     if decision.startswith("merge-"):
@@ -279,8 +281,9 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
             "### List the exact items the selected owner must adopt from "
             f"{candidate_spec_for_slot(ctx, other_slot)}."
         )
-        answer = ctx.ask(
-            "Enter y after editing the merge request; anything else aborts:"
+        answer = emit(
+            ctx.ask,
+            "Enter y after editing the merge request; anything else aborts:",
         )
         if answer not in ("y", "Y"):
             raise WorkflowAbort("Aborted: merge request was not approved.")

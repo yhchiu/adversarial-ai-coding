@@ -237,6 +237,15 @@ def test_paint_wraps_classified_line_with_sgr_and_reset():
     )
 
 
+def test_paint_mapped_classifies_english_and_paints_display():
+    s = make({"COLOR": "always"})
+    painted = s.paint_mapped(
+        "!! Workflow interrupted (exit=130).",
+        "!! Workflow 已中斷（exit=130）。",
+    )
+    assert painted == "\x1b[1;91m!! Workflow 已中斷（exit=130）。\x1b[0m"
+
+
 def test_paint_leaves_unclassified_lines_alone():
     s = make({"COLOR": "always"})
     assert s.paint("plain line") == "plain line"

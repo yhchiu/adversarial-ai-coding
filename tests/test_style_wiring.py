@@ -14,6 +14,7 @@ from pathlib import Path
 
 from adversarial_ai_coding import cli
 from adversarial_ai_coding import workflow as wf_mod
+from adversarial_ai_coding.i18n import Presenter
 from adversarial_ai_coding.style import Styler
 
 BASE_ENV = {
@@ -86,3 +87,19 @@ def test_ctx_log_file_stays_plain_when_echo_is_styled(make_ctx, capsys):
     log_text = ctx.archive.log_path.read_text(encoding="utf-8")
     assert "\x1b[" not in log_text
     assert "!! Protected acceptance test files were modified:" in log_text
+
+
+def test_ctx_log_stays_english_when_presenter_is_zh_tw(make_ctx, capsys):
+    styler = Styler.from_env(
+        {"COLOR": "never"},
+        stdout_isatty=False,
+        stderr_isatty=False,
+        enable_vt=lambda _stream: True,
+    )
+    ctx = make_ctx()
+    ctx.echo = Presenter(styler, "zh-TW").out
+    ctx.log("!! Workflow interrupted (exit={rc}).", rc=130)
+    assert "中斷" in capsys.readouterr().out
+    log_text = ctx.archive.log_path.read_text(encoding="utf-8")
+    assert "!! Workflow interrupted (exit=130)." in log_text
+    assert "中斷" not in log_text

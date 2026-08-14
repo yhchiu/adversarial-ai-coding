@@ -25,6 +25,7 @@ from .gitops import (
     resume_workspace,
     setup_workspace,
 )
+from .i18n import Presenter, bind_ask, emit_exception, resolve_lang
 from .imports import import_preflight
 from .prompts import (
     PromptTemplateError,
@@ -43,7 +44,12 @@ from .runstate import (
     write_snapshot,
 )
 from .style import Styler
-from .workflow import WorkflowContext, plan_gate_preflight, run_workflow
+from .workflow import (
+    WorkflowContext,
+    _default_ask,
+    plan_gate_preflight,
+    run_workflow,
+)
 
 USAGE = """Usage:adversarial-ai-coding "request description"
       adversarial-ai-coding request.md      # If the argument is a file, use its contents as the request
@@ -70,19 +76,22 @@ def _print_resume_hint(
     use_worktree: bool,
     workspace: Path,
     printed: set,
-    echo_err: Callable[[str], None],
+    echo_err: Callable[..., None],
 ) -> None:
     if printed:
         return
     printed.add(True)
     if use_worktree:
         echo_err(
-            f"To resume this run:\n  cd {workspace} && "
-            f"RESUME_RUN={run_id} adversarial-ai-coding"
+            "To resume this run:\n  cd {workspace} && "
+            "RESUME_RUN={run_id} adversarial-ai-coding",
+            workspace=workspace,
+            run_id=run_id,
         )
     else:
         echo_err(
-            f"To resume this run:\n  RESUME_RUN={run_id} adversarial-ai-coding"
+            "To resume this run:\n  RESUME_RUN={run_id} adversarial-ai-coding",
+            run_id=run_id,
         )
 
 
@@ -103,15 +112,17 @@ def main(
 
     task_arg = argv[0] if argv else ""
     resume_run = env.get("RESUME_RUN", "")
+    lang = resolve_lang(env)
+    presenter = Presenter(Styler.plain(), lang)
     if not task_arg and not resume_run:
-        print(USAGE, file=sys.stderr)
+        presenter.err(USAGE)
         return 1
     if task_arg == "print-agents":
         try:
             print(write_agents_section(default_agents_template(env)), end="")
             return 0
         except PromptTemplateError as exc:
-            print(exc, file=sys.stderr)
+            emit_exception(presenter.err, exc)
             return 1
 
     state: RunState | None = None
@@ -119,9 +130,10 @@ def main(
     run_id = ""
     use_worktree = False
     workspace = Path.cwd()
-    styler = Styler.plain()
+    styler = presenter.styler
     try:
         styler = Styler.from_env(env)
+        presenter = Presenter(styler, lang)
         task_source_kind, task_source_path = "literal", ""
         task = task_arg
         if task_arg and Path(task_arg).is_file():
@@ -149,8 +161,10 @@ def main(
             task_arg = snapshot.get("TASK_ARG", "")
             task_source_kind = snapshot.get("TASK_SOURCE_KIND", "literal")
             task_source_path = snapshot.get("TASK_SOURCE_PATH", "")
-            styler.err(
-                f"Resuming run {run_id} (state: {state.state_dir})"
+            presenter.err(
+                "Resuming run {run_id} (state: {state_dir})",
+                run_id=run_id,
+                state_dir=state.state_dir,
             )
         else:
             run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -167,7 +181,7 @@ def main(
         # injectable command resolver instead of a definition-time default.
         validate_agents(settings, which=shutil.which)
         if not is_inside_work_tree(Path.cwd()):
-            styler.err(
+            presenter.err(
                 "Run this script from the root of the target git repository."
             )
             return 1
@@ -236,8 +250,8 @@ def main(
         bootstrap_agents_md(
             workspace,
             default_agents_template(env),
-            styler.out,
-            styler.err,
+            presenter.out,
+            presenter.err,
         )
 
         gate_cmd = (
@@ -256,7 +270,7 @@ def main(
         if gate_cmd:
             styler.out(f"Quality gate:{gate_cmd}")
         else:
-            styler.err(
+            presenter.err(
                 "(warning: no quality gate command detected; deterministic "
                 "gates are disabled. Set GATE_CMD to enable one.)"
             )
@@ -274,8 +288,9 @@ def main(
             build_gate_cmd=build_gate_cmd,
             phase_gate_cmd=phase_gate_cmd,
             run_id=run_id,
-            echo=styler.out,
-            echo_err=styler.err,
+            echo=presenter.out,
+            echo_err=presenter.err,
+            ask=bind_ask(_default_ask, lang),
         )
         ctx.spec_dir.mkdir(parents=True, exist_ok=True)
 
@@ -299,21 +314,21 @@ def main(
     except KeyboardInterrupt:
         _abort_message(
             130, state, run_id, use_worktree, workspace, hint_printed,
-            styler.err,
+            presenter.err,
         )
         return 130
     except WorkflowAbort as exc:
-        styler.err(str(exc))
+        emit_exception(presenter.err, exc)
         _abort_message(
             exc.rc, state, run_id, use_worktree, workspace, hint_printed,
-            styler.err,
+            presenter.err,
         )
         return exc.rc
     except (SettingsError, RunStateError, PromptTemplateError) as exc:
-        styler.err(str(exc))
+        emit_exception(presenter.err, exc)
         _abort_message(
             1, state, run_id, use_worktree, workspace, hint_printed,
-            styler.err,
+            presenter.err,
         )
         return 1
     finally:
@@ -331,7 +346,7 @@ def _abort_message(
     echo_err,
 ) -> None:
     if rc != 0 and state is not None and not state.is_completed():
-        echo_err(f"!! Workflow interrupted (exit={rc}).")
+        echo_err("!! Workflow interrupted (exit={rc}).", rc=rc)
         _print_resume_hint(
             run_id, use_worktree, workspace, hint_printed, echo_err
         )

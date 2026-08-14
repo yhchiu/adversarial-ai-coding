@@ -65,6 +65,15 @@ def test_no_args_prints_usage_rc1(capsys):
     err = capsys.readouterr().err
     assert "Usage:" in err
     assert "print-agents" in err
+    assert "若參數是檔案" not in err
+
+
+def test_no_args_usage_follows_aac_lang(capsys):
+    assert cli.main([], {"AAC_LANG": "zh-TW"}, stdin_isatty=False) == 1
+    err = capsys.readouterr().err
+    assert "Usage:" in err
+    assert "print-agents" in err
+    assert "若參數是檔案" in err
 
 
 def test_print_agents(capsys):
@@ -225,6 +234,34 @@ def test_resume_hint_printed_once_and_lock_released(
     run_dir = next(state_root.iterdir())
     assert not (run_dir / "lock").exists()
     assert not (run_dir / "completed").exists()
+
+
+def test_zh_tw_surface_leaves_run_log_in_english(new_repo, monkeypatch, capsys):
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda ctx, task: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    rc = cli.main(
+        ["task"],
+        {
+            "AGENT_A": "sh",
+            "AGENT_B": "pwd",
+            "AUTO_BRANCH": "0",
+            "AAC_LANG": "zh-TW",
+        },
+        stdin_isatty=False,
+    )
+    assert rc == 130
+    err = capsys.readouterr().err
+    assert "已中斷" in err
+    assert "若要續跑這次 run" in err
+    logs = list((new_repo / "aac/.run" / "archive").rglob("*-run.log"))
+    log_text = "\n".join(path.read_text(encoding="utf-8") for path in logs)
+    assert "!! Workflow interrupted" not in log_text
+    assert "已中斷" not in log_text
 
 
 def test_completed_run_does_not_advertise_resume(new_repo, monkeypatch, capsys):

@@ -118,8 +118,10 @@ def _sgr_from_value(name: str, raw: str) -> str:
         code = _NAMED_COLORS[parts[0]] + (60 if bright else 0)
         return f"1;{code}" if bold else str(code)
     raise SettingsError(
-        f"{name} must be a color name like red, bright-cyan, or "
-        f"bold-bright-red, or raw SGR parameters like 1;91, got: {raw}"
+        "{name} must be a color name like red, bright-cyan, or "
+        "bold-bright-red, or raw SGR parameters like 1;91, got: {raw}",
+        name=name,
+        raw=raw,
     )
 
 
@@ -127,7 +129,7 @@ def _resolve_mode(env: Mapping[str, str]) -> str:
     mode = env.get("COLOR") or "auto"
     if mode not in ("auto", "always", "never"):
         raise SettingsError(
-            f"COLOR must be auto, always, or never, got: {mode}"
+            "COLOR must be auto, always, or never, got: {mode}", mode=mode
         )
     return mode
 
@@ -203,7 +205,8 @@ class Styler:
         theme_name = env.get("COLOR_THEME") or "dark"
         if theme_name not in THEMES:
             raise SettingsError(
-                f"COLOR_THEME must be dark or light, got: {theme_name}"
+                "COLOR_THEME must be dark or light, got: {theme_name}",
+                theme_name=theme_name,
             )
         colors = dict(THEMES[theme_name])
         for category in colors:
@@ -229,11 +232,19 @@ class Styler:
 
     def paint(self, text: str) -> str:
         """Style each classified line; unclassified lines pass through."""
+        return self.paint_mapped(text, text)
+
+    def paint_mapped(self, classify_text: str, display_text: str) -> str:
+        """Classify on English lines; apply the colour to the display lines."""
+        c_lines = classify_text.split("\n")
         styled = []
-        for line in text.split("\n"):
-            category = classify(line)
+        for index, display_line in enumerate(display_text.split("\n")):
+            source = c_lines[index] if index < len(c_lines) else display_line
+            category = classify(source)
             sgr = self.colors.get(category) if category else None
-            styled.append(f"\x1b[{sgr}m{line}\x1b[0m" if sgr else line)
+            styled.append(
+                f"\x1b[{sgr}m{display_line}\x1b[0m" if sgr else display_line
+            )
         return "\n".join(styled)
 
     def out(self, text: str) -> None:

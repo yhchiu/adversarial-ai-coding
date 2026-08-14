@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
+from .i18n import emit_exception
+
 PACKAGE_DIR = Path(__file__).resolve().parent
 # src/adversarial_ai_coding -> src -> repo root. The tool runs from a repo
 # checkout (never released as a wheel), so this is the SCRIPT_DIR equivalent.
@@ -18,6 +20,13 @@ REPO_ROOT = PACKAGE_DIR.parents[1]
 
 class PromptTemplateError(Exception):
     """A workflow prompt template is missing or unreadable."""
+
+    def __init__(self, template: str, **fields: object) -> None:
+        from .config import render_template
+
+        self.template = template
+        self.fields = fields
+        super().__init__(render_template(template, fields))
 
 
 def default_prompts_dir(env: Mapping[str, str]) -> Path:
@@ -33,8 +42,9 @@ def read_prompt_template(prompts_dir: Path, name: str) -> str:
     path = prompt_template_path(prompts_dir, name)
     if not path.is_file():
         raise PromptTemplateError(
-            f"(workflow prompt template not found:{path}; "
-            "keep resources/prompts with the script or set PROMPTS_DIR)"
+            "(workflow prompt template not found:{path}; "
+            "keep resources/prompts with the script or set PROMPTS_DIR)",
+            path=path,
         )
     return path.read_text(encoding="utf-8")
 
@@ -91,8 +101,9 @@ def default_agents_template(env: Mapping[str, str]) -> Path:
 def write_agents_section(template: Path) -> str:
     if not template.is_file():
         raise PromptTemplateError(
-            f"(AGENTS.md template not found:{template}; keep "
-            "resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)"
+            "(AGENTS.md template not found:{template_path}; keep "
+            "resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)",
+            template_path=template,
         )
     return template.read_text(encoding="utf-8")
 
@@ -128,13 +139,13 @@ def bootstrap_agents_md(cwd: Path, template: Path, echo, echo_err) -> None:
         try:
             _report_agents_section(agents, template, echo_err)
         except PromptTemplateError as exc:
-            echo_err(str(exc))
+            emit_exception(echo_err, exc)
             return
     else:
         try:
             agents.write_text(write_agents_section(template), encoding="utf-8")
         except PromptTemplateError as exc:
-            echo_err(str(exc))
+            emit_exception(echo_err, exc)
             return
         echo("Created AGENTS.md with adversarial-ai-coding cross-review rules.")
     claude = cwd / "CLAUDE.md"

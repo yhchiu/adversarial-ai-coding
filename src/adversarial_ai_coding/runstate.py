@@ -69,6 +69,13 @@ IMMUTABLE_KEYS = (
 class RunStateError(Exception):
     """A state problem that must stop the run before any AI call."""
 
+    def __init__(self, template: str, **fields: object) -> None:
+        from .config import render_template
+
+        self.template = template
+        self.fields = fields
+        super().__init__(render_template(template, fields))
+
 
 def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + f".tmp.{os.getpid()}")

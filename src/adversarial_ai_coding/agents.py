@@ -136,7 +136,7 @@ def validate_agents(
         required.append(settings.impl_agent)
     for name in required:
         if which(name) is None:
-            raise SettingsError(f"Missing required command:{name}")
+            raise SettingsError("Missing required command:{name}", name=name)
     _validate_reserved_args(settings)
     _validate_custom_impl_command(settings)
     # Built-in agents resume by exact session IDs. Custom agents still have an
@@ -145,8 +145,9 @@ def validate_agents(
         if is_builtin_agent(settings.agent_a):
             return
         raise SettingsError(
-            f"A and B cannot both use custom agent command {settings.agent_a}. "
-            "Use separate wrapper command names for worker and reviewer."
+            "A and B cannot both use custom agent command {command}. "
+            "Use separate wrapper command names for worker and reviewer.",
+            command=settings.agent_a,
         )
 
 
@@ -158,8 +159,9 @@ def _impl_owner_candidates(settings: Settings) -> tuple[str, ...]:
 
 def _custom_impl_conflict(name: str) -> SettingsError:
     return SettingsError(
-        f"Implementation slot cannot reuse custom agent command {name}. "
-        "Set IMPL_AGENT to a different wrapper command."
+        "Implementation slot cannot reuse custom agent command {name}. "
+        "Set IMPL_AGENT to a different wrapper command.",
+        name=name,
     )
 
 

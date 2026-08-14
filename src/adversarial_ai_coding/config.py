@@ -16,6 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+
+def render_template(
+    template: str, fields: Mapping[str, object] | None = None
+) -> str:
+    if not fields:
+        return template
+    return template.format(**fields)
+
 DEFAULT_TOOLS = "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
 
 # The one top-level directory this workflow claims in the target repository
@@ -32,6 +40,11 @@ WORK_DIR = f"{ARTIFACT_ROOT}/.run"
 class SettingsError(Exception):
     """A configuration problem the user must fix before the run starts."""
 
+    def __init__(self, template: str, **fields: object) -> None:
+        self.template = template
+        self.fields = fields
+        super().__init__(render_template(template, fields))
+
 
 class WorkflowAbort(Exception):
     """Typed workflow stop; cli maps rc to the process exit code.
@@ -41,8 +54,10 @@ class WorkflowAbort(Exception):
     review, and workflow can raise it without import cycles.
     """
 
-    def __init__(self, message: str, rc: int = 1):
-        super().__init__(message)
+    def __init__(self, template: str, rc: int = 1, **fields: object) -> None:
+        self.template = template
+        self.fields = fields
+        super().__init__(render_template(template, fields))
         self.rc = rc
 
 
@@ -50,12 +65,16 @@ def _to_int(name: str, raw: str) -> int:
     try:
         return int(raw)
     except ValueError:
-        raise SettingsError(f"{name} must be an integer, got: {raw}") from None
+        raise SettingsError(
+            "{name} must be an integer, got: {raw}", name=name, raw=raw
+        ) from None
 
 
 def _to_binary_flag(name: str, raw: str) -> bool:
     if raw not in {"0", "1"}:
-        raise SettingsError(f"{name} must be 0 or 1, got: {raw}")
+        raise SettingsError(
+            "{name} must be 0 or 1, got: {raw}", name=name, raw=raw
+        )
     return raw == "1"
 
 
