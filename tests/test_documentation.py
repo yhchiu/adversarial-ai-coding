@@ -219,6 +219,16 @@ def test_import_mode_is_documented_bilingually():
     assert "- [ ] " in prompt
 
 
+def test_aac_lang_is_documented_bilingually():
+    for name in ("README.md", "README.zh-TW.md"):
+        row = _settings_row(_read(name), "AAC_LANG")
+        assert "zh-TW" in row
+        assert "scripts/aac" in row
+        assert "scripts/aac.cmd" in row
+        assert "LANG" in row
+        assert "English" in row or "英文" in row
+
+
 def test_color_settings_are_documented_bilingually():
     """The COLOR row names every knob, the redirect rule and the log rule.
 
