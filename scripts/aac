@@ -3,6 +3,18 @@ set -eu
 
 AAC_PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
+# Presentation only: the Python package never reads LANG/LC_*. When the
+# caller has not set AAC_LANG, map Traditional Chinese OS tags to zh-TW.
+if [ -z "${AAC_LANG:-}" ]; then
+  loc=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+  case $loc in
+    zh_TW*|zh-TW*|zh_HK*|zh-HK*|zh_Hant*|zh-Hant*)
+      AAC_LANG=zh-TW
+      export AAC_LANG
+      ;;
+  esac
+fi
+
 exec uv run \
   --project "$AAC_PROJECT_ROOT" \
   --locked \
