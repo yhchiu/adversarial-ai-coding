@@ -142,4 +142,9 @@ def stage_import(ctx, kind: str, src_str: str, dst: Path) -> None:
             f"(archive {archive_name} under {ctx.archive.run_dir}): {exc}"
         ) from exc
     review = "on" if ctx.settings.import_review else "off"
-    ctx.log(f"Imported {kind} from {src} (review: {review})")
+    ctx.log(
+        "Imported {kind} from {src} (review: {review})",
+        kind=kind,
+        src=src,
+        review=review,
+    )

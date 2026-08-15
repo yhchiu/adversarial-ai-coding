@@ -536,7 +536,11 @@ def ensure_named_task_queue(state: RunState, name: str, tasks: list[str]) -> Non
     _atomic_write(queue, "".join(task + "\n" for task in tasks))
 
 
-def ensure_task_queue(state: RunState, plan_path: Path) -> None:
+def ensure_task_queue(
+    state: RunState,
+    plan_path: Path,
+    echo_err: Callable[..., None] | None = None,
+) -> None:
     # The script-held queue is control flow; plan.md checkboxes are UI only.
     # An existing EMPTY queue means every task already committed (C2).
     queue = _queue_path(state)
@@ -544,12 +548,19 @@ def ensure_task_queue(state: RunState, plan_path: Path) -> None:
         return
     tasks = plan_tasks(plan_path)
     if not tasks:
-        import sys
+        from .i18n import emit
 
-        print(
+        def _fallback_err(template: str, **fields: object) -> None:
+            import sys
+
+            from .config import render_template
+
+            print(render_template(template, fields), file=sys.stderr)
+
+        emit(
+            echo_err or _fallback_err,
             '(warning: plan.md has no "- [ ] " task list; falling back to '
             "one whole-plan implementation task)",
-            file=sys.stderr,
         )
         tasks = [f"Complete the full implementation described in {plan_path}"]
     _atomic_write(queue, "".join(task + "\n" for task in tasks))

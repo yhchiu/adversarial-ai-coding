@@ -14,6 +14,7 @@ from .agents import AgentRef, run_reviewer
 from .archive import safe_slug
 from .config import WorkflowAbort
 from .gates import gate_loop
+from .i18n import emit
 from .phased_suggestion import DEFAULT_SUGGESTION, reset_suggestion, suggestion_path
 from .prompts import prompt_file_instruction, render_prompt
 from .ratelimit import QUOTA_ABORT_RC, agent_call
@@ -53,10 +54,12 @@ def _recover_unreadable_output(
         return False
     except OSError:
         pass
-    ctx.echo_err(
-        f"(warning: reviewer output {path.name} is unreadable; discarding it "
+    emit(
+        ctx.echo_err,
+        "(warning: reviewer output {name} is unreadable; discarding it "
         "and writing a safe fallback. A sandboxed reviewer may have written "
-        "it with a broken ACL.)"
+        "it with a broken ACL.)",
+        name=path.name,
     )
     try:
         path.unlink(missing_ok=True)
@@ -81,7 +84,11 @@ def _disable_phased_suggestion(ctx: WorkflowContext, exc: OSError | WorkflowAbor
     """Discard an optional suggestion failure without affecting review flow."""
 
     ctx.phased_suggestion_valid = False
-    ctx.echo_err(f"(warning: ignoring phased suggestion: {exc})")
+    emit(
+        ctx.echo_err,
+        "(warning: ignoring phased suggestion: {exc})",
+        exc=exc,
+    )
 
 
 def _reset_phased_suggestion(ctx: WorkflowContext) -> None:
@@ -148,7 +155,7 @@ def show_blockers(ctx: WorkflowContext) -> None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return
     for blocker in payload.get("blockers") or []:
-        ctx.log(f"  - {blocker}")
+        ctx.log("  - {blocker}", blocker=blocker)
 
 
 def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
@@ -162,7 +169,11 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    ctx.echo(f">>> Reviewer({agent.name}) is reviewing...")
+    emit(
+        ctx.echo,
+        ">>> Reviewer({name}) is reviewing...",
+        name=agent.name,
+    )
     slug = f"reviewer-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
     prompt = compose_review_prompt(agent, scope, ctx.prompts_dir, ctx.wf)
     prompt_artifact = ctx.archive.archive_text(
@@ -208,7 +219,7 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
             rc=QUOTA_ABORT_RC,
         )
     if result.rc != 0:
-        ctx.echo_err("(warning: reviewer execution failed)")
+        emit(ctx.echo_err, "(warning: reviewer execution failed)")
     ctx.archive.archive_snapshot(
         ctx.agent_out,
         f"{slug}-final.raw",
@@ -247,7 +258,10 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         except (OSError, WorkflowAbort) as exc:
             _disable_phased_suggestion(ctx, exc)
     if not ctx.verdict_path.is_file():
-        ctx.echo_err("(reviewer did not write verdict.json; treating as failed)")
+        emit(
+            ctx.echo_err,
+            "(reviewer did not write verdict.json; treating as failed)",
+        )
         return False
     review_missing = not ctx.review_path.is_file()
     if ctx.collect_review_suggestions and not (review_unreadable or review_missing):
@@ -269,9 +283,10 @@ def run_review(ctx: WorkflowContext, agent: AgentRef, scope: str) -> bool:
         ctx.cur_round,
     )
     if review_unreadable or review_missing:
-        ctx.echo_err(
+        emit(
+            ctx.echo_err,
             "(reviewer review.md was unreadable or missing; treating the "
-            "round as failed)"
+            "round as failed)",
         )
         return False
     if not verdict_approved(ctx.verdict_path):
@@ -302,8 +317,10 @@ def review_loop(
             )
         ctx.cur_round += 1
         ctx.log(
-            f"--- [{ctx.cur_stage}] round {ctx.cur_round}: worker updates "
-            "from review findings ---"
+            "--- [{stage}] round {round}: worker updates "
+            "from review findings ---",
+            stage=ctx.cur_stage,
+            round=ctx.cur_round,
         )
         prompt = render_prompt(
             ctx.prompts_dir,
@@ -329,4 +346,4 @@ def review_loop(
             notify=ctx.notify,
             stage=ctx.cur_stage,
         )
-    ctx.log(f"[{ctx.cur_stage}] Review approved")
+    ctx.log("[{stage}] Review approved", stage=ctx.cur_stage)

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
-from .i18n import emit_exception
+from .i18n import emit, emit_exception
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 # src/adversarial_ai_coding -> src -> repo root. The tool runs from a repo
@@ -119,17 +119,19 @@ def _report_agents_section(agents: Path, template: Path, echo_err) -> None:
 
     current = managed_agents_section(agents.read_text(encoding="utf-8"))
     if current is None:
-        echo_err(
+        emit(
+            echo_err,
             "(note: AGENTS.md exists but does not include "
             "adversarial-ai-coding rules; run \"print-agents\" and "
-            "merge them manually)"
+            "merge them manually)",
         )
         return
     expected = managed_agents_section(write_agents_section(template))
     if expected is not None and current != expected:
-        echo_err(
+        emit(
+            echo_err,
             "(note: the adversarial-ai-coding rules in AGENTS.md are out "
-            "of date; run \"print-agents\" and merge the changes manually)"
+            "of date; run \"print-agents\" and merge the changes manually)",
         )
 
 
@@ -147,7 +149,10 @@ def bootstrap_agents_md(cwd: Path, template: Path, echo, echo_err) -> None:
         except PromptTemplateError as exc:
             emit_exception(echo_err, exc)
             return
-        echo("Created AGENTS.md with adversarial-ai-coding cross-review rules.")
+        emit(
+            echo,
+            "Created AGENTS.md with adversarial-ai-coding cross-review rules.",
+        )
     claude = cwd / "CLAUDE.md"
     if not claude.is_file():
         claude.write_text(

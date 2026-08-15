@@ -259,7 +259,7 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
         "spec-comparison-b.md",
         "spec-comparison.md",
     ):
-        ctx.echo(f"### - {ctx.spec_dir / name}")
+        emit(ctx.echo, "### - {path}", path=ctx.spec_dir / name)
     emit(
         ctx.echo,
         "### Choose: a, b, ma, or mb. Final spec review and human approval "
@@ -276,10 +276,16 @@ def human_gate_dual_spec_decision(ctx: WorkflowContext) -> None:
     other_slot = reviewer_slot_for_owner_slot(owner_slot)
     if decision.startswith("merge-"):
         write_spec_merge_request_template(ctx, owner_slot, other_slot)
-        ctx.echo(f"\n### Edit {ctx.wf / 'spec-merge-request.md'} now.")
-        ctx.echo(
+        emit(
+            ctx.echo,
+            "\n### Edit {path} now.",
+            path=ctx.wf / "spec-merge-request.md",
+        )
+        emit(
+            ctx.echo,
             "### List the exact items the selected owner must adopt from "
-            f"{candidate_spec_for_slot(ctx, other_slot)}."
+            "{path}.",
+            path=candidate_spec_for_slot(ctx, other_slot),
         )
         answer = emit(
             ctx.ask,
@@ -333,9 +339,12 @@ def restore_dual_spec_decision(ctx: WorkflowContext) -> None:
         )
     ctx.dual_spec_decision = decision
     set_spec_roles_from_slot(ctx, slot)
-    ctx.echo_err(
-        f"(restored dual-spec decision: {decision}; owner "
-        f"{ctx.spec_roles.owner_slot}={ctx.spec_roles.owner_agent.name})"
+    emit(
+        ctx.echo_err,
+        "(restored dual-spec decision: {decision}; owner {slot}={agent})",
+        decision=decision,
+        slot=ctx.spec_roles.owner_slot,
+        agent=ctx.spec_roles.owner_agent.name,
     )
 
 

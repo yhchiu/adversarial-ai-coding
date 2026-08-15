@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable
 
+from .i18n import emit
+
 if TYPE_CHECKING:
     from .config import Settings
     from .agents import AgentResult
@@ -215,7 +217,7 @@ def human_duration(seconds: int) -> str:
 @dataclass
 class RetryEvents:
     archive_attempt: Callable[[int, int], None]
-    log_retry: Callable[[str], None]
+    log_retry: Callable[..., None]
     notify: Callable[[str], None]
     sleep: Callable[[float], None]
 
@@ -246,8 +248,10 @@ def agent_call(
         if not settings.retry_on_limit:
             return AgentResult(QUOTA_ABORT_RC, result.text)
         if n >= settings.retry_max:
-            events.log_retry(
-                f"!! Rate limit did not clear after {settings.retry_max} retries; giving up."
+            emit(
+                events.log_retry,
+                "!! Rate limit did not clear after {retry_max} retries; giving up.",
+                retry_max=settings.retry_max,
             )
             return AgentResult(QUOTA_ABORT_RC, result.text)
         current_epoch = now() if now else int(datetime.now().timestamp())
@@ -263,10 +267,14 @@ def agent_call(
             eta = datetime.fromtimestamp(current_epoch + wait).strftime(
                 "%Y-%m-%d %H:%M"
             )
-            events.log_retry(
-                f"!! Quota resets in {human_duration(wait)} (about {eta}), beyond "
-                f"RETRY_MAX_RESET_WAIT={settings.retry_max_reset_wait}s. "
-                "Not waiting; rerun after the reset."
+            emit(
+                events.log_retry,
+                "!! Quota resets in {duration} (about {eta}), beyond "
+                "RETRY_MAX_RESET_WAIT={max_wait}s. "
+                "Not waiting; rerun after the reset.",
+                duration=human_duration(wait),
+                eta=eta,
+                max_wait=settings.retry_max_reset_wait,
             )
             events.notify(
                 f"adversarial-ai-coding: quota exhausted until {eta}; run aborted"
@@ -276,10 +284,14 @@ def agent_call(
         if wait is None:
             wait = min(settings.retry_base_wait * (1 << (n - 1)), settings.retry_max_wait)
         eta = datetime.fromtimestamp(current_epoch + wait).strftime("%H:%M")
-        events.log_retry(
-            f"== Rate limit hit; waiting {wait // 60} minutes, about until {eta}, "
-            "before retry "
-            f"{n}/{settings.retry_max} =="
+        emit(
+            events.log_retry,
+            "== Rate limit hit; waiting {minutes} minutes, about until {eta}, "
+            "before retry {n}/{retry_max} ==",
+            minutes=wait // 60,
+            eta=eta,
+            n=n,
+            retry_max=settings.retry_max,
         )
         events.notify(
             f"adversarial-ai-coding: rate limit hit; retry around {eta} (attempt {n})"

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Settings
+from .i18n import emit
 
 SUGGESTION_NAME = "phased-suggestion.json"
 DEFAULT_SUGGESTION = '{"phased": false, "reason": ""}\n'
@@ -53,30 +54,44 @@ def read_suggestion(
     judgment are normal and stay quiet.
     """
 
-    def report(message: str) -> None:
+    def report(template: str, **fields: object) -> None:
         if warn is not None:
-            warn(f"(warning: {SUGGESTION_NAME} {message})")
+            emit(warn, template, **fields)
 
     try:
         text = suggestion_path(wf).read_text(encoding="utf-8")
     except FileNotFoundError:
         return (False, "")
     except (OSError, UnicodeDecodeError) as exc:
-        report(f"is unreadable ({exc}); treating it as no suggestion")
+        report(
+            "(warning: {name} is unreadable ({exc}); treating it as no suggestion)",
+            name=SUGGESTION_NAME,
+            exc=exc,
+        )
         return (False, "")
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        report(f"is unreadable as JSON ({exc}); treating it as no suggestion")
+        report(
+            "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)",
+            name=SUGGESTION_NAME,
+            exc=exc,
+        )
         return (False, "")
     phased = payload.get("phased") if isinstance(payload, dict) else None
     if not isinstance(phased, bool):
-        report('has no boolean "phased" field; treating it as no suggestion')
+        report(
+            '(warning: {name} has no boolean "phased" field; treating it as no suggestion)',
+            name=SUGGESTION_NAME,
+        )
         return (False, "")
     if not phased:
         return (False, "")
     reason = payload.get("reason")
     if not isinstance(reason, str):
-        report('has no string "reason"; keeping the recommendation without one')
+        report(
+            '(warning: {name} has no string "reason"; keeping the recommendation without one)',
+            name=SUGGESTION_NAME,
+        )
         return (True, "")
     return (True, reason)

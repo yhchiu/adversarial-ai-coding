@@ -139,7 +139,7 @@ def main(
         if task_arg and Path(task_arg).is_file():
             task_source_kind = "file"
             task_source_path = str(Path(task_arg).resolve())
-            styler.out(f"Reading request from file:{task_arg}")
+            presenter.out("Reading request from file:{path}", path=task_arg)
             task = Path(task_arg).read_text(encoding="utf-8")
 
         snapshot: dict[str, str] = {}
@@ -189,22 +189,28 @@ def main(
         dual_spec_preflight(settings, stdin_isatty)
         plan_gate_preflight(settings, stdin_isatty)
 
-        styler.out(
-            f"Workflow settings:A={settings.agent_a}  B={settings.agent_b}  "
-            f"DUAL_SPEC={'1' if settings.dual_spec else '0'}  "
-            f"MAX_ROUNDS={settings.max_rounds}  SPEC_DIR={settings.spec_dir}  "
-            f"PHASES={'1' if settings.phases else '0'}"
+        presenter.out(
+            "Workflow settings:A={agent_a}  B={agent_b}  "
+            "DUAL_SPEC={dual_spec}  MAX_ROUNDS={max_rounds}  "
+            "SPEC_DIR={spec_dir}  PHASES={phases}",
+            agent_a=settings.agent_a,
+            agent_b=settings.agent_b,
+            dual_spec="1" if settings.dual_spec else "0",
+            max_rounds=settings.max_rounds,
+            spec_dir=settings.spec_dir,
+            phases="1" if settings.phases else "0",
         )
-        print(f"Request:{task}")
+        presenter.out("Request:{task}", task=task)
         if settings.import_spec:
-            styler.out(
-                f"Importing spec:{settings.import_spec}"
-                + (
+            presenter.out(
+                "Importing spec:{spec}{plan_part}  IMPORT_REVIEW={review}",
+                spec=settings.import_spec,
+                plan_part=(
                     f"  plan:{settings.import_plan}"
                     if settings.import_plan
                     else ""
-                )
-                + f"  IMPORT_REVIEW={'1' if settings.import_review else '0'}"
+                ),
+                review="1" if settings.import_review else "0",
             )
 
         if resume_run:
@@ -212,16 +218,18 @@ def main(
                 snapshot.get("BRANCH", ""),
                 state,
                 Path.cwd(),
-                styler.err,
+                presenter.err,
             )
         else:
             workspace = setup_workspace(settings, run_id, Path.cwd())
             if workspace != Path.cwd():
                 os.chdir(workspace)
-                styler.out(
-                    f"Created worktree:{workspace} "
-                    f"(branch {current_branch(workspace)}; "
-                    "remove later with git worktree remove)"
+                presenter.out(
+                    "Created worktree:{workspace} "
+                    "(branch {branch}; "
+                    "remove later with git worktree remove)",
+                    workspace=workspace,
+                    branch=current_branch(workspace),
                 )
         workspace = Path.cwd()
         wf = workspace / WORK_DIR
@@ -268,7 +276,7 @@ def main(
             env.get("PHASE_GATE_CMD") or snapshot.get("PHASE_GATE_CMD") or ""
         )
         if gate_cmd:
-            styler.out(f"Quality gate:{gate_cmd}")
+            presenter.out("Quality gate:{cmd}", cmd=gate_cmd)
         else:
             presenter.err(
                 "(warning: no quality gate command detected; deterministic "

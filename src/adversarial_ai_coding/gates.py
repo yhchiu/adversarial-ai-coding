@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import WorkflowAbort
+from .i18n import emit
 from .prompts import render_prompt
 
 
@@ -68,7 +69,7 @@ def gate_loop(
     prompts_dir: Path,
     max_rounds: int,
     do_work: Callable[[str], None],
-    log: Callable[[str], None],
+    log: Callable[..., None],
     notify: Callable[[str], None],
     stage: str,
     run_shell: Callable[[str, Path], tuple[int, str]] = run_shell,
@@ -77,12 +78,12 @@ def gate_loop(
         return
     attempt = 1
     while True:
-        log(f">>> Quality gate:{cmd}")
+        emit(log, ">>> Quality gate:{cmd}", cmd=cmd)
         rc, output = run_shell(cmd, cwd)
         if rc == 0:
-            log("Quality gate passed")
+            emit(log, "Quality gate passed")
             return
-        log(f"Quality gate failed (attempt {attempt})")
+        emit(log, "Quality gate failed (attempt {attempt})", attempt=attempt)
         if attempt >= max_rounds:
             notify(
                 f"adversarial-ai-coding:[{stage}] quality gate failed "

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import ARTIFACT_ROOT, Settings
+from .i18n import emit
 from .runstate import RunState, RunStateError
 
 
@@ -65,11 +66,14 @@ def protected_violations(
 
 
 def ensure_committed(
-    cwd: Path, stage: str, echo_err: Callable[[str], None]
+    cwd: Path, stage: str, echo_err: Callable[..., None]
 ) -> None:
     if not status_porcelain(cwd):
         return
-    echo_err("(worker left uncommitted changes; script is creating a fallback commit)")
+    emit(
+        echo_err,
+        "(worker left uncommitted changes; script is creating a fallback commit)",
+    )
     git_out(["add", "-A"], cwd)
     git_out(
         [
@@ -85,7 +89,7 @@ def ensure_committed(
 
 
 def verify_last_head(
-    state: RunState, cwd: Path, echo_err: Callable[[str], None]
+    state: RunState, cwd: Path, echo_err: Callable[..., None]
 ) -> None:
     recorded = state.read_last_head()
     if recorded is None:
@@ -100,9 +104,11 @@ def verify_last_head(
     if head == recorded:
         return
     if _git(["merge-base", "--is-ancestor", recorded, "HEAD"], cwd).returncode == 0:
-        echo_err(
-            f"(warning: new commits exist after the resume checkpoint "
-            f"{recorded}; continuing)"
+        emit(
+            echo_err,
+            "(warning: new commits exist after the resume checkpoint "
+            "{recorded}; continuing)",
+            recorded=recorded,
         )
         return
     raise RunStateError(
@@ -117,12 +123,14 @@ def resume_workspace(
     resumed_branch: str,
     state: RunState,
     cwd: Path,
-    echo_err: Callable[[str], None],
+    echo_err: Callable[..., None],
 ) -> None:
     current = current_branch(cwd)
     if not resumed_branch:
-        echo_err(
-            f"(warning: the resume snapshot has no branch record; staying on {current})"
+        emit(
+            echo_err,
+            "(warning: the resume snapshot has no branch record; staying on {current})",
+            current=current,
         )
     elif current != resumed_branch:
         exists = (
@@ -141,9 +149,10 @@ def resume_workspace(
         git_out(["switch", resumed_branch], cwd)
     verify_last_head(state, cwd, echo_err)
     if status_porcelain(cwd):
-        echo_err(
+        emit(
+            echo_err,
             "!! The working tree is dirty. These changes will be absorbed "
-            "into the next automatic commit (git add -A):"
+            "into the next automatic commit (git add -A):",
         )
         echo_err(git_out(["status", "--short"], cwd))
 

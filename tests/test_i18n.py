@@ -61,6 +61,30 @@ def test_translate_uses_catalog_and_keeps_fields():
     assert "!! " in text
 
 
+def test_progress_lines_keep_industry_terms():
+    worker = translate(
+        ">>> Worker({name}) is running...", "zh-TW", {"name": "claude"}
+    )
+    assert "Worker" in worker
+    assert "claude" in worker
+    assert "執行中" in worker
+    reviewer = translate(
+        ">>> Reviewer({name}) is reviewing...", "zh-TW", {"name": "codex"}
+    )
+    assert "Reviewer" in reviewer
+    assert "審查中" in reviewer
+    tree = translate(
+        "Created worktree:{workspace} "
+        "(branch {branch}; "
+        "remove later with git worktree remove)",
+        "zh-TW",
+        {"workspace": "repo-aac-1", "branch": "aac/1"},
+    )
+    assert "worktree" in tree
+    assert "git worktree remove" in tree
+    assert "已建立" in tree
+
+
 def test_english_is_identity():
     assert (
         translate("!! Workflow interrupted (exit={rc}).", "en", {"rc": 1})

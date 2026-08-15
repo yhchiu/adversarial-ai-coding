@@ -301,6 +301,27 @@ def test_quota_abort_maps_to_75(new_repo, monkeypatch, capsys):
     assert "RESUME_RUN=" in capsys.readouterr().err
 
 
+def test_task_file_argument_reads_in_zh_tw(new_repo, monkeypatch, capsys):
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    monkeypatch.setattr(cli, "run_workflow", lambda ctx, task: None)
+    (new_repo / "task.md").write_text("task from file\n", encoding="utf-8")
+    rc = cli.main(
+        ["task.md"],
+        {
+            "AGENT_A": "sh",
+            "AGENT_B": "pwd",
+            "AUTO_BRANCH": "0",
+            "AAC_LANG": "zh-TW",
+        },
+        stdin_isatty=False,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "正在從檔案讀取 request:task.md" in out
+    assert "Request:task from file" in out
+
+
 def test_task_file_argument_is_read(new_repo, monkeypatch):
     monkeypatch.chdir(new_repo)
     monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)

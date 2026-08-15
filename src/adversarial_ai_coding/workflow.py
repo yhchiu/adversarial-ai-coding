@@ -328,13 +328,14 @@ def record_protected_tests(
     )
     if merged:
         ctx.log(
-            "Protected acceptance test files:\n"
-            + "\n".join(f"  - {name}" for name in merged)
+            "Protected acceptance test files:\n{listing}",
+            listing="\n".join(f"  - {name}" for name in merged),
         )
     else:
-        ctx.echo_err(
+        emit(
+            ctx.echo_err,
             "(warning: no acceptance-test paths were recorded; protected "
-            "control files remain active)"
+            "control files remain active)",
         )
     return names
 
@@ -363,7 +364,7 @@ def _work_body(ctx: WorkflowContext, agent: AgentRef, instruction: str) -> None:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    ctx.echo(f">>> Worker({agent.name}) is running...")
+    emit(ctx.echo, ">>> Worker({name}) is running...", name=agent.name)
     slug = f"worker-{safe_slug(ctx.cur_stage or 'startup')}-r{ctx.cur_round}"
     prompt_artifact = ctx.archive.archive_text(
         f"{slug}-prompt.md",
@@ -447,7 +448,10 @@ def check_protected(ctx: WorkflowContext, agent: AgentRef) -> None:
         if not violations:
             return
         listing = "\n".join(f"  - {violation}" for violation in violations)
-        ctx.log(f"!! Protected acceptance test files were modified:\n{listing}")
+        ctx.log(
+            "!! Protected acceptance test files were modified:\n{listing}",
+            listing=listing,
+        )
         if recoveries >= 2:
             ctx.notify(
                 f"adversarial-ai-coding:[{ctx.cur_stage}] protected tests were "
@@ -494,7 +498,11 @@ def begin_stage(ctx: WorkflowContext, name: str, *artifacts: Path) -> bool:
                     f"under {ctx.archive.run_dir.parent}, or delete "
                     f"{ctx.state.state_dir} to start over."
                 )
-        ctx.log(f"== skip [{name}] (already completed in run {ctx.run_id})")
+        ctx.log(
+            "== skip [{name}] (already completed in run {run_id})",
+            name=name,
+            run_id=ctx.run_id,
+        )
         return False
     ctx.cur_stage = name
     ctx.session.worker_session = ""
@@ -508,7 +516,7 @@ def begin_stage(ctx: WorkflowContext, name: str, *artifacts: Path) -> bool:
         ctx.cur_round,
         echo=ctx.echo,
     )
-    ctx.log(f"\n================ [{name}] ================")
+    ctx.log("\n================ [{name}] ================", name=name)
     return True
 
 
@@ -602,14 +610,28 @@ def offer_phased_suggestion(ctx: WorkflowContext) -> None:
     phased, reason = read_suggestion(ctx.wf, warn=ctx.echo_err)
     if not phased:
         return
-    detail = f": {reason}" if reason else " (no reason given)"
     if not ctx.settings.human_gate:
-        ctx.log(
-            f"reviewer suggests Phased ATDD{detail}; HUMAN_GATE=0, not asking"
-        )
+        if reason:
+            ctx.log(
+                "reviewer suggests Phased ATDD: {reason}; "
+                "HUMAN_GATE=0, not asking",
+                reason=reason,
+            )
+        else:
+            ctx.log(
+                "reviewer suggests Phased ATDD (no reason given); "
+                "HUMAN_GATE=0, not asking"
+            )
         return
     ctx.echo("")
-    ctx.echo(f"### Reviewer suggests Phased ATDD{detail}")
+    if reason:
+        emit(
+            ctx.echo,
+            "### Reviewer suggests Phased ATDD: {reason}",
+            reason=reason,
+        )
+    else:
+        emit(ctx.echo, "### Reviewer suggests Phased ATDD (no reason given)")
     answer = emit(ctx.ask, "Enable Phased ATDD for this run? [y/N]:")
     if answer not in ("y", "Y"):
         ctx.log("Phased ATDD suggestion declined; keeping the single-shot flow")
@@ -749,15 +771,20 @@ def finish(
         "worker edits.\n",
         encoding="utf-8",
     )
-    ctx.echo(
-        f"\nAll stages complete. Spec and plan are in {ctx.spec_dir}/, "
-        f"and the run log is at {ctx.archive.log_path}"
+    emit(
+        ctx.echo,
+        "\nAll stages complete. Spec and plan are in {spec_dir}/, "
+        "and the run log is at {log_path}",
+        spec_dir=ctx.spec_dir,
+        log_path=ctx.archive.log_path,
     )
     if ctx.archive.metrics_path.is_file():
         ctx.echo("")
-        ctx.echo(
-            f"Run metrics (details:{ctx.archive.metrics_path}; review rounds "
-            "are a prompt-quality signal):"
+        emit(
+            ctx.echo,
+            "Run metrics (details:{path}; review rounds "
+            "are a prompt-quality signal):",
+            path=ctx.archive.metrics_path,
         )
         ctx.echo(metrics_summary(ctx.archive.metrics_path))
     ctx.archive.archive_snapshot(
@@ -786,7 +813,11 @@ def finish(
             ["pr", "view", "--json", "url", "--jq", ".url"], ctx.workspace
         )
         if rc == 0 and url:
-            ctx.echo(f"PR already exists: {url} (skipping gh pr create)")
+            emit(
+                ctx.echo,
+                "PR already exists: {url} (skipping gh pr create)",
+                url=url,
+            )
         else:
             run_gh(
                 [
@@ -801,15 +832,19 @@ def finish(
             )
     else:
         ctx.echo("")
-        ctx.echo("Next steps, run manually:")
-        ctx.echo(f"  git push -u origin {branch}")
-        ctx.echo(
-            f'  gh pr create --title "{title}" --body-file {ctx.wf / "pr-body.md"}'
+        emit(ctx.echo, "Next steps, run manually:")
+        emit(ctx.echo, "  git push -u origin {branch}", branch=branch)
+        emit(
+            ctx.echo,
+            '  gh pr create --title "{title}" --body-file {path}',
+            title=title,
+            path=ctx.wf / "pr-body.md",
         )
         if ctx.settings.open_pr:
-            ctx.echo_err(
+            emit(
+                ctx.echo_err,
                 "(OPEN_PR=1 but gh or origin remote is missing; printed "
-                "commands instead)"
+                "commands instead)",
             )
     ctx.notify(f"adversarial-ai-coding: all stages complete ({branch})")
 
@@ -972,21 +1007,31 @@ def run_workflow(ctx: WorkflowContext, task: str) -> None:
             impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)
             ctx.log(
                 "Resolved implementation: "
-                f"agent={impl.name} model={agent_model(impl, ctx.settings)} "
-                f"args={resolve_model_args(impl, ctx.settings)}"
+                "agent={agent} model={model} args={args}",
+                agent=impl.name,
+                model=agent_model(impl, ctx.settings),
+                args=resolve_model_args(impl, ctx.settings),
             )
             if ctx.settings.impl_model and not is_builtin_agent(impl.name):
                 ctx.log(
                     "warning: IMPL_MODEL is ignored for custom implementation "
-                    f"agent {impl.name}"
+                    "agent {name}",
+                    name=impl.name,
                 )
             if ctx.state is not None:
-                ensure_task_queue(ctx.state, plan_file)
+                ensure_task_queue(
+                    ctx.state, plan_file, echo_err=ctx.echo_err
+                )
                 total = len(remaining_tasks(ctx.state))
                 index = 1
                 while remaining_tasks(ctx.state):
                     task_line = remaining_tasks(ctx.state)[0]
-                    ctx.log(f"--- Task {index}/{total}:{task_line} ---")
+                    ctx.log(
+                        "--- Task {index}/{total}:{task} ---",
+                        index=index,
+                        total=total,
+                        task=task_line,
+                    )
                     work(
                         ctx,
                         impl,

@@ -17,6 +17,7 @@ from .agents import (
     resolve_model_args,
 )
 from .config import WorkflowAbort
+from .i18n import emit
 from .phases import Phase, PhasePlanError, parse_phases
 from .prompts import render_prompt
 
@@ -29,7 +30,10 @@ def phased_plan_structure_check(ctx: wf.WorkflowContext, plan_file: Path) -> Non
         try:
             parse_phases(plan_file)
         except PhasePlanError as exc:
-            ctx.log(f"Phased plan structure check failed (attempt {attempt})")
+            ctx.log(
+                "Phased plan structure check failed (attempt {attempt})",
+                attempt=attempt,
+            )
             if attempt >= ctx.settings.max_rounds:
                 ctx.notify(
                     f"adversarial-ai-coding:[{ctx.cur_stage}] phased plan "
@@ -64,15 +68,16 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> bool:
     from .gates import run_shell
 
     if not cmd:
-        ctx.echo_err(
+        emit(
+            ctx.echo_err,
             "(warning: no phase gate command; the red check is skipped. Set "
-            "PHASE_GATE_CMD or GATE_CMD to enable it.)"
+            "PHASE_GATE_CMD or GATE_CMD to enable it.)",
         )
         return False
     attempt = 1
     repaired = False
     while True:
-        ctx.log(f">>> Phase red check:{cmd}")
+        ctx.log(">>> Phase red check:{cmd}", cmd=cmd)
         rc, output = run_shell(cmd, ctx.workspace)
         if phase.regression_guard:
             ok = rc == 0
@@ -90,7 +95,9 @@ def red_check(ctx: wf.WorkflowContext, phase: Phase, cmd: str) -> bool:
         if ok:
             ctx.log("Phase red check passed")
             return repaired
-        ctx.log(f"Phase red check failed (attempt {attempt})")
+        ctx.log(
+            "Phase red check failed (attempt {attempt})", attempt=attempt
+        )
         if attempt >= ctx.settings.max_rounds:
             ctx.notify(
                 f"adversarial-ai-coding:[{ctx.cur_stage}] phase red check "
@@ -179,13 +186,16 @@ def run_phased_stages(
     impl = impl_ref(ctx.spec_roles.owner_agent, ctx.settings)
     ctx.log(
         "Resolved implementation: "
-        f"agent={impl.name} model={agent_model(impl, ctx.settings)} "
-        f"args={resolve_model_args(impl, ctx.settings)}"
+        "agent={agent} model={model} args={args}",
+        agent=impl.name,
+        model=agent_model(impl, ctx.settings),
+        args=resolve_model_args(impl, ctx.settings),
     )
     if ctx.settings.impl_model and not is_builtin_agent(impl.name):
         ctx.log(
             "warning: IMPL_MODEL is ignored for custom implementation "
-            f"agent {impl.name}"
+            "agent {name}",
+            name=impl.name,
         )
     done_titles: list[str] = []
     for phase in phases:
@@ -195,8 +205,9 @@ def run_phased_stages(
             controls_checkpoint = f"{label}-controls-recorded"
             if checkpoint_done(ctx.state, controls_checkpoint):
                 ctx.log(
-                    f"== [{label}-write-tests] protected controls already "
-                    "recorded; finishing the interrupted stage"
+                    "== [{label}-write-tests] protected controls already "
+                    "recorded; finishing the interrupted stage",
+                    label=label,
                 )
             else:
                 test_base = restore_or_record_base(
@@ -241,7 +252,11 @@ def run_phased_stages(
                 task_line = remaining_tasks(ctx.state, queue)[0]
                 index = total - len(remaining_tasks(ctx.state, queue)) + 1
                 ctx.log(
-                    f"--- Phase {phase.number} task {index}/{total}:{task_line} ---"
+                    "--- Phase {number} task {index}/{total}:{task} ---",
+                    number=phase.number,
+                    index=index,
+                    total=total,
+                    task=task_line,
                 )
                 wf.work(
                     ctx,
@@ -270,8 +285,9 @@ def run_phased_stages(
                 pop_task_queue(ctx.state, queue)
                 mark_plan_task_done(plan_file, task_line)
             ctx.log(
-                f"--- Phase {phase.number} tasks complete; running the phase "
-                "gate. All tests written so far must pass. ---"
+                "--- Phase {number} tasks complete; running the phase "
+                "gate. All tests written so far must pass. ---",
+                number=phase.number,
             )
             wf.gate_loop_ref(
                 phase_gate,
