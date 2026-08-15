@@ -206,6 +206,13 @@ Print the agent rules template for manual merging into an existing `AGENTS.md`:
 aac print-agents
 ```
 
+Show the CLI help or version:
+
+```bash
+aac --help
+aac --version
+```
+
 An existing `AGENTS.md` is never overwritten. Every run compares the block
 between the `adversarial-ai-coding:begin` and `adversarial-ai-coding:end`
 markers against the current template and prints a note when it is missing or

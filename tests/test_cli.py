@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from adversarial_ai_coding import cli
+from adversarial_ai_coding import __version__, cli
 from adversarial_ai_coding.prompts import AGENTS_MARKER
 
 
@@ -90,6 +90,73 @@ def test_no_args_usage_follows_new_locales(capsys, lang, needle):
     err = capsys.readouterr().err
     assert "Usage:" in err
     assert needle in err
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_help_flag_prints_usage_to_stdout_rc0(capsys, flag):
+    assert cli.main([flag], {}, stdin_isatty=False) == 0
+    captured = capsys.readouterr()
+    assert "Usage:" in captured.out
+    assert "print-agents" in captured.out
+    assert "--version" in captured.out
+    assert captured.err == ""
+
+
+def test_help_flag_follows_aac_lang(capsys):
+    assert cli.main(["--help"], {"AAC_LANG": "zh-TW"}, stdin_isatty=False) == 0
+    out = capsys.readouterr().out
+    assert "Usage:" in out
+    assert "若參數是檔案" in out
+
+
+def test_help_does_not_require_git_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--help"], {}, stdin_isatty=False) == 0
+    captured = capsys.readouterr()
+    assert "Usage:" in captured.out
+    assert "root of the target git repository" not in captured.err
+
+
+@pytest.mark.parametrize("flag", ["-V", "-v", "--version"])
+def test_version_flag_prints_package_version_rc0(capsys, flag):
+    assert cli.main([flag], {}, stdin_isatty=False) == 0
+    captured = capsys.readouterr()
+    assert f"adversarial-ai-coding {__version__}" in captured.out
+    assert captured.err == ""
+
+
+def test_help_takes_precedence_over_task_and_version(capsys):
+    assert cli.main(["request.md", "--version", "-h"], {}, stdin_isatty=False) == 0
+    captured = capsys.readouterr()
+    assert "Usage:" in captured.out
+    assert __version__ not in captured.out
+
+
+def test_unknown_option_prints_usage_rc1(capsys):
+    assert cli.main(["--nope"], {}, stdin_isatty=False) == 1
+    captured = capsys.readouterr()
+    assert "unrecognized option:--nope" in captured.err
+    assert "Usage:" in captured.err
+    assert captured.out == ""
+
+
+def test_unknown_option_follows_aac_lang(capsys):
+    assert cli.main(["--nope"], {"AAC_LANG": "zh-TW"}, stdin_isatty=False) == 1
+    err = capsys.readouterr().err
+    assert "無法辨識的選項:--nope" in err
+    assert "若參數是檔案" in err
+
+
+def test_parse_argv_classifies_flags_and_operands():
+    assert cli._parse_argv(["-h"]) == ("help", "")
+    assert cli._parse_argv(["--version"]) == ("version", "")
+    assert cli._parse_argv(["print-agents"]) == ("print-agents", "")
+    assert cli._parse_argv(["task"]) == ("run", "task")
+    assert cli._parse_argv([]) == ("run", "")
+    assert cli._parse_argv(["--", "-h"]) == ("run", "-h")
+    assert cli._parse_argv(["--", "print-agents"]) == ("run", "print-agents")
+    assert cli._parse_argv(["--nope"]) == ("error", "--nope")
+    assert cli._parse_argv(["-"]) == ("run", "-")
 
 
 def test_print_agents(capsys):
@@ -336,6 +403,22 @@ def test_task_file_argument_reads_in_zh_tw(new_repo, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "正在從檔案讀取 request:task.md" in out
     assert "Request:task from file" in out
+
+
+def test_double_dash_keeps_dashed_request(new_repo, monkeypatch):
+    monkeypatch.chdir(new_repo)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    captured = {}
+    monkeypatch.setattr(
+        cli, "run_workflow", lambda ctx, task: captured.update(task=task)
+    )
+    rc = cli.main(
+        ["--", "--help"],
+        {"AGENT_A": "sh", "AGENT_B": "pwd", "AUTO_BRANCH": "0"},
+        stdin_isatty=False,
+    )
+    assert rc == 0
+    assert captured["task"] == "--help"
 
 
 def test_task_file_argument_is_read(new_repo, monkeypatch):

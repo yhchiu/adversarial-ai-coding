@@ -169,6 +169,12 @@ def test_agent_session_lifecycle_is_documented_bilingually():
     )
 
 
+def test_cli_help_and_version_flags_are_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "aac --help" in readme
+        assert "aac --version" in readme
+
+
 def test_cross_platform_launchers_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "adversarial-ai-coding/scripts" in readme

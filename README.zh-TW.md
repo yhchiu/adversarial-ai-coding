@@ -147,6 +147,10 @@ DUAL_SPEC=1 aac request.md
 
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
 aac print-agents
+
+# 顯示 CLI 說明或版本
+aac --help
+aac --version
 ```
 
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`

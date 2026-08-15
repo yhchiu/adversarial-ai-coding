@@ -21,7 +21,7 @@ Python replacement or an `intentionally-dropped(...)` rationale.
 | `resume_check_immutable` | `runstate.check_immutable` |
 | `resume_load` | `runstate.RunState.resume` plus the resume block in `cli.main` |
 | `init_run_state` | `runstate.RunState.create` |
-| `usage` | `cli.USAGE` and the no-argument branch in `cli.main` |
+| `usage` | `cli.USAGE`, `cli._parse_argv`, and the no-argument / `--help` / `--version` branches in `cli.main` |
 | `need` | `agents.validate_agents` and the git-work-tree check in `cli.main`; jq is intentionally no longer checked |
 | `validate_engines` | `agents.validate_agents` |
 | `notify` | `agents.notify` and `workflow.WorkflowContext.notify` |

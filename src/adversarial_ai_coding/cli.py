@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
+from . import __version__
 from .agents import AgentSession, validate_agents
 from .archive import establish_run_archive
 from .config import WORK_DIR, Settings, SettingsError, WorkflowAbort
@@ -51,9 +52,57 @@ from .workflow import (
     run_workflow,
 )
 
-USAGE = """Usage:adversarial-ai-coding "request description"
-      adversarial-ai-coding request.md      # If the argument is a file, use its contents as the request
-      adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit"""
+USAGE = """Usage:adversarial-ai-coding [options] "request description"
+      adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request
+      adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit
+      adversarial-ai-coding -h, --help      # Show this help and exit
+      adversarial-ai-coding -V, -v, --version  # Print version and exit"""
+
+_HELP_FLAGS = frozenset({"-h", "--help"})
+_VERSION_FLAGS = frozenset({"-V", "-v", "--version"})
+
+
+def _parse_argv(argv: list[str]) -> tuple[str, str]:
+    """Classify argv into (action, payload) before any work starts.
+
+    Actions: help, version, print-agents, run, error.
+    A bare "--" ends flag parsing so a request may start with a dash.
+    """
+    help_requested = False
+    version_requested = False
+    unknown = ""
+    positionals: list[str] = []
+    ended = False
+
+    for token in argv:
+        if ended:
+            positionals.append(token)
+            continue
+        if token == "--":
+            ended = True
+            continue
+        if token in _HELP_FLAGS:
+            help_requested = True
+            continue
+        if token in _VERSION_FLAGS:
+            version_requested = True
+            continue
+        if len(token) > 1 and token.startswith("-"):
+            if not unknown:
+                unknown = token
+            continue
+        positionals.append(token)
+
+    if help_requested:
+        return "help", ""
+    if version_requested:
+        return "version", ""
+    if unknown:
+        return "error", unknown
+    if not ended and positionals and positionals[0] == "print-agents":
+        return "print-agents", ""
+    task = positionals[0] if positionals else ""
+    return "run", task
 
 
 def _absolute_import_path(raw: str, startup_dir: Path) -> str:
@@ -110,20 +159,32 @@ def main(
     if stdin_isatty is None:
         stdin_isatty = sys.stdin.isatty()
 
-    task_arg = argv[0] if argv else ""
-    resume_run = env.get("RESUME_RUN", "")
     lang = resolve_lang(env)
     presenter = Presenter(Styler.plain(), lang)
-    if not task_arg and not resume_run:
+    action, payload = _parse_argv(argv)
+    if action == "help":
+        presenter.out(USAGE)
+        return 0
+    if action == "version":
+        presenter.out("adversarial-ai-coding {version}", version=__version__)
+        return 0
+    if action == "error":
+        presenter.err("!! unrecognized option:{option}", option=payload)
         presenter.err(USAGE)
         return 1
-    if task_arg == "print-agents":
+    if action == "print-agents":
         try:
             print(write_agents_section(default_agents_template(env)), end="")
             return 0
         except PromptTemplateError as exc:
             emit_exception(presenter.err, exc)
             return 1
+
+    task_arg = payload
+    resume_run = env.get("RESUME_RUN", "")
+    if not task_arg and not resume_run:
+        presenter.err(USAGE)
+        return 1
 
     state: RunState | None = None
     hint_printed: set = set()
