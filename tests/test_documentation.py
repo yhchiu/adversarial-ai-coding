@@ -111,6 +111,31 @@ def test_quota_detection_channel_is_documented_bilingually():
     assert "判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出" in chinese
     assert "agy 沒有結構化通道,仍然掃整包輸出" in chinese
     assert "claude 的串流會回報精確的重置時刻" in chinese
+    # OpenCode relays each provider's own wording, so what makes a 429
+    # detectable is the status it reports, not the words in the message.
+    assert "HTTP status the provider" in english
+    assert "HTTP status 一起帶進訊息" in chinese
+
+
+def test_opencode_permission_and_reserved_args_are_documented_bilingually():
+    """`--auto` is a safety note, not only a table cell.
+
+    It approves every permission the user has not explicitly denied, which
+    is the same trust level the Agy note already warns about.
+    """
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    assert "`opencode` runs with `--auto`" in english
+    assert "explicitly denied" in english
+    assert "**opencode agent 使用 `--auto`**" in chinese
+    assert "自動核准" in chinese
+    for readme in (english, chinese):
+        # Reserved flags must be flags `opencode run` really has. --command
+        # would replace the workflow prompt; --interactive and --prompt do
+        # not exist and were never ours to reserve.
+        assert "`--command`" in readme
+        assert "--interactive" not in readme
+        assert "`--prompt`" not in readme
 
 
 def test_agent_streaming_is_documented_bilingually():

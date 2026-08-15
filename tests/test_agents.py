@@ -23,6 +23,7 @@ from adversarial_ai_coding.agents import (
     run_worker as _run_worker,
     validate_agents,
 )
+from adversarial_ai_coding.ratelimit import is_rate_limited
 
 
 def make(env=None):
@@ -635,9 +636,9 @@ def test_validate_agents_rejects_agy_workflow_owned_args(value):
         "--attach=http://localhost:4096",
         "--auto",
         "--share",
-        "--interactive",
-        "-i",
-        "--prompt hi",
+        # --command runs a stored command instead of the workflow prompt.
+        "--command review",
+        "--command=review",
         "--dir /tmp",
     ],
 )
@@ -649,10 +650,12 @@ def test_validate_agents_rejects_opencode_workflow_owned_args(value):
 
 
 def test_validate_agents_allows_opencode_variant_and_quoted_session_mention():
+    # Only flags `opencode run` really owns are reserved: --file adds context
+    # to the message the workflow still writes, so it stays the user's.
     s = make(
         {
             "AGENT_A": "opencode",
-            "OPENCODE_ARGS": '--variant high --agent build --thinking --title "mention --session safely"',
+            "OPENCODE_ARGS": '--variant high --agent build --thinking --file notes.md --title "mention --session safely"',
         }
     )
 
@@ -2266,6 +2269,24 @@ OPENCODE_ERROR = {
         },
     },
 }
+# opencode passes the provider's own wording through, and only some
+# providers say "rate limit": this is what Gemini reports on a 429.
+OPENCODE_ERROR_NO_LIMIT_WORDING = {
+    "type": "error",
+    "sessionID": "ses_quota",
+    "error": {
+        "name": "APIError",
+        "data": {
+            "message": "Resource has been exhausted (e.g. check quota).",
+            "statusCode": 429,
+        },
+    },
+}
+OPENCODE_ERROR_UNSTRUCTURED = {
+    "type": "error",
+    "sessionID": "ses_quota",
+    "error": {"name": "UnknownError", "data": {"statusCode": 429}},
+}
 
 
 def test_render_opencode_event_echoes_text_and_tool_file_path():
@@ -2290,13 +2311,52 @@ def test_render_opencode_event_sums_only_finish_cost_and_marks_error_quota():
     assert start.echo == []
     assert start.cost is None
     assert "Rate limit exceeded" in error.quota
-    assert error.echo == ["Rate limit exceeded"]
+    assert error.echo == ["Rate limit exceeded (status 429)"]
+    assert is_rate_limited(error.quota)
+
+
+def test_render_opencode_event_keeps_the_reported_status_for_quota_detection():
+    """A 429 must be detected from the status, not from the wording.
+
+    Every provider reports the status; only some of them word a quota
+    error as "rate limit". Dropping the status would leave a Gemini or
+    Ollama run with no retry at all.
+    """
+    worded = agents.render_opencode_event(
+        json.dumps(OPENCODE_ERROR_NO_LIMIT_WORDING)
+    )
+    unstructured = agents.render_opencode_event(
+        json.dumps(OPENCODE_ERROR_UNSTRUCTURED)
+    )
+    other = agents.render_opencode_event(
+        json.dumps(
+            {
+                "type": "error",
+                "sessionID": "ses_x",
+                "error": {"data": {"message": "model not found", "statusCode": 404}},
+            }
+        )
+    )
+
+    assert worded.quota == "Resource has been exhausted (e.g. check quota). (status 429)"
+    assert is_rate_limited(worded.quota)
+    # No message anywhere: the payload itself is the agent's own wording.
+    assert "UnknownError" in unstructured.quota
+    assert is_rate_limited(unstructured.quota)
+    # The status travels with every error; only 429 means a quota wait.
+    assert other.quota == "model not found (status 404)"
+    assert not is_rate_limited(other.quota)
 
 
 def test_render_opencode_event_passes_through_non_json(tmp_path):
     rendered = agents.render_opencode_event("not json")
+    early = agents.render_opencode_event("Error: 429 Too Many Requests")
 
     assert rendered.echo == ["not json"]
+    # A failure before the event stream starts is still the CLI itself, so
+    # a quota it never got past reaches the retry loop (codex parity).
+    assert rendered.quota == "not json"
+    assert is_rate_limited(early.quota)
 
 
 def test_opencode_stream_echoes_tools_sums_cost_and_keeps_quota_narrow(
@@ -2357,6 +2417,8 @@ def test_opencode_error_event_reaches_the_quota_channel(tmp_path):
     assert "Rate limit exceeded" in quota
     assert "Rate limit exceeded" in text
     assert cost == ""
+    # What the retry loop actually asks of this channel.
+    assert is_rate_limited(quota)
 
 
 def test_opencode_worker_fresh_then_resume_argv(monkeypatch, tmp_path):

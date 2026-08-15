@@ -286,9 +286,11 @@ def _validate_builtin_arg_tokens(
                 f"{variable} cannot contain session-control argument:{token}"
             )
 
+        # Only flags `opencode run` really has. --command belongs here too:
+        # it replaces the message with a stored command, which would drop
+        # the workflow's own prompt.
         if adapter == "opencode" and (
-            token in {"-c", "-s", "-i"}
-            or any(
+            any(
                 _matches_option(token, option)
                 for option in {
                     "--format",
@@ -298,14 +300,12 @@ def _validate_builtin_arg_tokens(
                     "--attach",
                     "--auto",
                     "--share",
-                    "--interactive",
-                    "--prompt",
+                    "--command",
                     "--dir",
                 }
             )
             or _matches_short_option(token, "-s")
             or _matches_short_option(token, "-c")
-            or _matches_short_option(token, "-i")
         ):
             raise SettingsError(
                 f"{variable} cannot contain workflow-owned argument:{token}"
@@ -1069,12 +1069,24 @@ def _opencode_tool_summary(part: dict[str, object]) -> str:
     return f" . {label} {detail}".rstrip()
 
 
-def _opencode_error_message(payload: dict[str, object]) -> str:
-    error = payload.get("error")
-    if isinstance(error, str) and error.strip():
-        return error
-    if not isinstance(error, dict):
+def _opencode_error_status(error: dict[str, object]) -> str:
+    """The HTTP status an opencode error reports, worded for the detector.
+
+    opencode passes the provider's own error through, and a 429 does not
+    always say "rate limit": Gemini says "Resource has been exhausted".
+    The status is the one part of the payload every provider agrees on,
+    so it travels with the message instead of being dropped.
+    """
+    data = error.get("data")
+    if not isinstance(data, dict):
         return ""
+    status = data.get("statusCode")
+    if isinstance(status, bool) or not isinstance(status, (int, float)):
+        return ""
+    return f"status {int(status)}"
+
+
+def _opencode_error_body(error: dict[str, object]) -> str:
     data = error.get("data")
     if isinstance(data, dict):
         message = data.get("message")
@@ -1086,6 +1098,17 @@ def _opencode_error_message(payload: dict[str, object]) -> str:
     return json.dumps(error, ensure_ascii=False)
 
 
+def _opencode_error_message(payload: dict[str, object]) -> str:
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return error
+    if not isinstance(error, dict):
+        return ""
+    body = _opencode_error_body(error)
+    status = _opencode_error_status(error)
+    return f"{body} ({status})" if status else body
+
+
 def render_opencode_event(line: str) -> OpenCodeEvent:
     """Render one opencode NDJSON line from `opencode run --format json`."""
     text = line.rstrip("\r\n")
@@ -1094,9 +1117,12 @@ def render_opencode_event(line: str) -> OpenCodeEvent:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return OpenCodeEvent(echo=[text])
+        # opencode merges its stderr into stdout and keeps its logs out of
+        # this stream, so a non-JSON line is the CLI speaking -- including
+        # how it reports a quota it could not even start the run with.
+        return OpenCodeEvent(echo=[text], quota=text)
     if not isinstance(payload, dict):
-        return OpenCodeEvent(echo=[text])
+        return OpenCodeEvent(echo=[text], quota=text)
     session_id = _opencode_session_id(payload)
     event_type = payload.get("type")
     if event_type == "text":

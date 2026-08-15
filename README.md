@@ -718,8 +718,8 @@ output contract through `--output-format`, `--verbose`, or `--json-schema`.
 `AGY_ARGS` and Agy-targeted `IMPL_ARGS` must not contain `--log-file`,
 `--continue`, or `--conversation`. `OPENCODE_ARGS` and OpenCode-targeted
 `IMPL_ARGS` must not contain `--format`, `--session` / `-s`, `--continue` /
-`-c`, `--fork`, `--attach`, `--auto`, `--share`, `--interactive` / `-i`,
-`--prompt`, or `--dir`. Built-in argument variables also cannot set
+`-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, or `--dir`.
+Built-in argument variables also cannot set
 a model with `--model`, `-m`, or Codex `-c model=` / `--config model=`; use
 `MODEL_A`, `MODEL_B`, or `IMPL_MODEL` so actual calls and archived metadata
 agree. Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are
@@ -762,6 +762,9 @@ the intended trusted state.
 - Deterministic gates are run by the workflow, not trusted from AI output.
 - `agy` currently uses `--dangerously-skip-permissions`; prefer a worktree or
   container when using it.
+- `opencode` runs with `--auto`, which approves every permission you have not
+  explicitly denied in your OpenCode config. Deny rules are the only filter, so
+  write them first or prefer a worktree or container, as with `agy`.
 - Branches and worktrees isolate Git state, but they do not isolate the full
   filesystem or network. Use a container for stronger isolation.
 - Two AI agents can consume a lot of quota. `MAX_ROUNDS`, graded verdicts, and
@@ -843,9 +846,11 @@ agent. Detection reads only the agent's own error channel, never the output of a
 command the agent ran, so a test suite that happens to print the words "rate
 limit" cannot send the run to sleep. For Claude that channel is the structured
 response, and its reported status decides on its own; for Codex it is the `error`
-and `turn.failed` events plus anything the CLI writes outside JSON. OpenCode
-uses `error` events from `--format json`. Agy has no
-structured channel, so its whole output is still scanned.
+and `turn.failed` events plus anything the CLI writes outside JSON. OpenCode uses
+`error` events from `--format json`, plus anything it writes outside JSON, and
+keeps the HTTP status the provider reported next to its message, because OpenCode
+passes provider wording through and only some providers say "rate limit" on a
+429. Agy has no structured channel, so its whole output is still scanned.
 
 When the agent states when the quota returns, the workflow waits exactly that long
 instead of guessing. Claude reports an exact reset time in its stream, which is
