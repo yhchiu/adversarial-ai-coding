@@ -643,3 +643,143 @@ def test_fake_agy_keeps_worker_conversation_separate_from_reviewer(
     assert "--conversation" not in recorded[1]
     index = recorded[2].index("--conversation")
     assert recorded[2][index + 1] == "55555555-5555-4555-8555-555555555555"
+
+
+def test_opencode_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_path):
+    calls = []
+    quota = "Resource has been exhausted (e.g. check quota). (status 429)"
+
+    def fake_run(argv, io, ref):
+        calls.append(argv)
+        if len(calls) == 1:
+            # The session exists even though the turn died on the quota, so
+            # the retry must continue it instead of paying for a fresh one.
+            return 1, quota, "ses_retry", quota, ""
+        return 0, "ok", "ses_retry", "", "0.01"
+
+    monkeypatch.setattr(agents, "_run_opencode_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    s = settings(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "claude",
+            "RETRY_BASE_WAIT": "0",
+            "RETRY_MAX": "1",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+    ref = agents.AgentRef("A", "opencode")
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=lambda message: None,
+        notify=lambda message: None,
+        sleep=lambda seconds: None,
+    )
+
+    result = agent_call(
+        lambda: agents.run_worker(ref, "prompt", s, session, io),
+        settings=s,
+        events=events,
+        now=lambda: 0,
+    )
+
+    assert is_rate_limited(quota)  # the wording alone would not have matched
+    assert result.rc == 0
+    assert "--session" not in calls[0]
+    assert calls[1][-3:] == ["--session", "ses_retry", "prompt"]
+    assert session.owner == ref
+
+
+def test_opencode_same_agent_validation_and_reserved_args():
+    same = settings({"AGENT_A": "opencode", "AGENT_B": "opencode"})
+    agents.validate_agents(same, which=lambda name: "C:/fake/" + name)
+
+    for value in (
+        "--format json",
+        "--session ses_abc",
+        "--continue",
+        "--fork",
+        "--attach=http://localhost:4096",
+        "--auto",
+        "--share",
+        "--command review",
+        "--dir /tmp",
+    ):
+        invalid = settings({"AGENT_A": "opencode", "OPENCODE_ARGS": value})
+        with pytest.raises(SettingsError, match="OPENCODE_ARGS"):
+            agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
+
+
+def test_fake_opencode_keeps_worker_session_separate_from_reviewer(
+    monkeypatch, tmp_path
+):
+    fake = tmp_path / "fake_opencode.py"
+    calls = tmp_path / "opencode-calls.jsonl"
+    fake.write_text(
+        "import json, os, sys\n"
+        "args = sys.argv[1:]\n"
+        "prompt = args[-1]\n"
+        "if '--session' in args:\n"
+        "    session_id = args[args.index('--session') + 1]\n"
+        "elif 'reviewer' in prompt:\n"
+        "    session_id = 'ses_reviewer'\n"
+        "else:\n"
+        "    session_id = 'ses_worker'\n"
+        "with open(os.environ['FAKE_OPENCODE_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(args) + '\\n')\n"
+        "print(json.dumps({'type': 'step_start', 'sessionID': session_id, "
+        "'part': {}}))\n"
+        "print(json.dumps({'type': 'text', 'sessionID': session_id, "
+        "'part': {'type': 'text', 'text': session_id}}))\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "opencode-bin"
+    bin_dir.mkdir()
+    if os.name == "nt":
+        wrapper = bin_dir / "opencode.cmd"
+        wrapper.write_text(
+            f'@echo off\r\n"{sys.executable}" {FAST_STARTUP} "{fake}" %*\r\n',
+            encoding="utf-8",
+        )
+    else:
+        wrapper = bin_dir / "opencode"
+        wrapper.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" {FAST_STARTUP} "{fake}" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("FAKE_OPENCODE_CALLS", str(calls))
+    s = settings(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "MODEL_A": "google/gemini-2.5-pro",
+            "MODEL_B": "xai/grok-4.6",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session = agents.AgentSession()
+
+    first = agents.run_worker(
+        agents.AgentRef("A", "opencode"), "worker one", s, session, io
+    )
+    review = agents.run_reviewer(
+        agents.AgentRef("B", "opencode"), "reviewer call", s, session, io
+    )
+    second = agents.run_worker(
+        agents.AgentRef("A", "opencode"), "worker two", s, session, io
+    )
+
+    recorded = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
+    assert first.text == "ses_worker"
+    assert review.text == "ses_reviewer"
+    assert second.text == "ses_worker"
+    assert recorded[0][recorded[0].index("-m") + 1] == "google/gemini-2.5-pro"
+    assert recorded[1][recorded[1].index("-m") + 1] == "xai/grok-4.6"
+    # One runtime in both slots is allowed, so the reviewer sharing the
+    # command must still never inherit the worker's session.
+    assert "--session" not in recorded[1]
+    assert recorded[2][recorded[2].index("--session") + 1] == "ses_worker"
+    assert Path(agents._resolve_argv0("opencode")).parent == bin_dir
