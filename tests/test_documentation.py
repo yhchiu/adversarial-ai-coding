@@ -157,11 +157,19 @@ def test_agent_streaming_is_documented_bilingually():
     assert "one-line summary per tool call" in codex
     assert "Raw merged output" in agy
     assert "one-line summary per tool call" in opencode
+    # OpenCode reports a tool call only once it is over, so "streams while
+    # it works" must not be read as "a slow tool call is visible up front".
+    assert "(at completion)" in opencode
     claude, codex, agy, opencode = _adapter_cells(chinese, "即時輸出")
     assert "每個工具呼叫一行摘要" in claude
     assert "每個工具呼叫一行摘要" in codex
     assert "原始合併輸出" in agy
     assert "每個工具呼叫一行摘要" in opencode
+    assert "(工具結束時)" in opencode
+    assert "Claude and Codex report a" in english
+    assert "OpenCode reports one only once the call has finished" in english
+    assert "Claude 與 Codex 在工具呼叫「開始」時就印" in chinese
+    assert "OpenCode 只在呼叫「結束」時才印" in chinese
     assert "`powershell -Command` or `bash -c` wrapper" in english
     assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
 

@@ -671,7 +671,7 @@ ATDD, and Dual Spec stage, including `RESUME_RUN`, see
 | Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` | `--session <id>` |
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record | JSONL `sessionID` |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` | `--auto` (user deny rules still apply) |
-| Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output | Messages and a one-line summary per tool call |
+| Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output | Messages and a one-line summary per tool call (at completion) |
 
 Claude, Codex, Agy, and OpenCode may each be used in A, B, and I. OpenCode
 is the BYO-model runtime: `MODEL_A=google/gemini-2.5-pro` and
@@ -697,14 +697,17 @@ next time; if an established session later omits the ID, the known ID is
 retained. Claude, Codex, and OpenCode JSONL and Agy logs are archived as
 per-attempt `.cli.raw` artifacts for diagnosis.
 
-All built-in agents stream their output while they work, so a long step is never a
+All built-in agents stream their output while they work, so a long step is rarely a
 silent wait. Every streamed line is prefixed with its slot and command, as in
 `[A claude] `, and printed in the `AGENT` color category. The prefix is what
 keeps an agent's own `### heading` from being read as a workflow checkpoint, and
 it is added at print time only: archived artifacts and the run log never contain
 it. Claude, Codex, and OpenCode also report each tool call as one line naming the
 tool and the file, command, or pattern it acts on; the rest of the tool input is
-dropped, so a large write still costs one short line. Codex reports a shell call
+dropped, so a large write still costs one short line. Claude and Codex report a
+tool call when it starts, so a ten-minute command is visible while it runs.
+OpenCode reports one only once the call has finished, marking it `(failed)` when
+it did, so a slow tool call is silent until it returns. Codex reports a shell call
 as the full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is stripped and only the command you care about is shown.
 
 Built-in session, output, sandbox, and log flags belong to the workflow.

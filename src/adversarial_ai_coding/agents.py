@@ -378,8 +378,8 @@ class AgentResult:
 
 
 def _resolve_argv0(name: str) -> str:
-    # Windows: claude/codex/agy install as .cmd shims; Popen needs the
-    # resolved path (bash resolved via PATH natively).
+    # Windows: claude/codex/agy/opencode install as .cmd shims; Popen needs
+    # the resolved path (bash resolved via PATH natively).
     return shutil.which(name) or name
 
 
@@ -1044,29 +1044,39 @@ def _opencode_part(payload: dict[str, object]) -> dict[str, object]:
     return part if isinstance(part, dict) else {}
 
 
-def _opencode_tool_summary(part: dict[str, object]) -> str:
-    name = part.get("tool")
-    label = name if isinstance(name, str) and name else "tool"
-    state = part.get("state")
-    payload = state.get("input") if isinstance(state, dict) else None
-    detail = ""
+def _opencode_tool_detail(state: dict[str, object]) -> str:
+    payload = state.get("input")
     if isinstance(payload, dict):
         for key in _TOOL_ARG_KEYS:
             value = payload.get(key)
             if isinstance(value, (str, int, float)) and not isinstance(value, bool):
                 detail = str(value).split("\n", 1)[0].strip()
                 if detail:
-                    break
-                detail = ""
-    if not detail:
-        title = part.get("state")
-        if isinstance(title, dict):
-            raw_title = title.get("title")
-            if isinstance(raw_title, str):
-                detail = raw_title.split("\n", 1)[0].strip()
+                    return detail
+    # opencode titles a call with what it acted on, which is the best
+    # remaining answer for a tool whose input this list does not name.
+    title = state.get("title")
+    if isinstance(title, str):
+        return title.split("\n", 1)[0].strip()
+    return ""
+
+
+def _opencode_tool_summary(part: dict[str, object]) -> str:
+    """One line naming an opencode tool call and the thing it acts on.
+
+    opencode emits this only once the call has finished, so unlike the
+    codex heartbeat the outcome is already known here and a failure is
+    worth marking.
+    """
+    name = part.get("tool")
+    label = name if isinstance(name, str) and name else "tool"
+    raw_state = part.get("state")
+    state = raw_state if isinstance(raw_state, dict) else {}
+    detail = _opencode_tool_detail(state)
     if len(detail) > _TOOL_ARG_LIMIT:
         detail = detail[:_TOOL_ARG_LIMIT] + "..."
-    return f" . {label} {detail}".rstrip()
+    summary = f" . {label} {detail}".rstrip()
+    return f"{summary} (failed)" if state.get("status") == "error" else summary
 
 
 def _opencode_error_status(error: dict[str, object]) -> str:
@@ -1134,6 +1144,10 @@ def render_opencode_event(line: str) -> OpenCodeEvent:
             session_id=session_id,
         )
     if event_type == "tool_use":
+        # opencode emits this when the call reaches a terminal state, not
+        # when it starts, so a slow tool is silent until it returns. The
+        # codex adapter reports the start instead; the difference is
+        # documented in both READMEs.
         return OpenCodeEvent(
             echo=[_opencode_tool_summary(_opencode_part(payload))],
             session_id=session_id,
@@ -1154,12 +1168,15 @@ def render_opencode_event(line: str) -> OpenCodeEvent:
 
 
 def _format_opencode_cost(amounts: list[float]) -> str:
+    """The run's total cost, or empty when the CLI reported none.
+
+    A local model really costing nothing is not the same as a call that
+    reported no cost at all, so a zero total still renders as "0" and
+    only a missing report leaves the metrics column empty.
+    """
     if not amounts:
         return ""
-    total = sum(amounts)
-    if total == 0:
-        return ""
-    return format(total, ".10f").rstrip("0").rstrip(".")
+    return format(sum(amounts), ".10f").rstrip("0").rstrip(".") or "0"
 
 
 def _run_opencode_json(
@@ -1199,7 +1216,13 @@ def _run_opencode_json(
                 rendered_file.write(text + "\n")
                 _echo_agent(io, ref, text)
     rc = proc.wait()
-    return rc, "\n".join(rendered), session_id, "\n".join(quota), _format_opencode_cost(costs)
+    return (
+        rc,
+        "\n".join(rendered),
+        session_id,
+        "\n".join(quota),
+        _format_opencode_cost(costs),
+    )
 
 
 def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:

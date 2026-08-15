@@ -2348,6 +2348,38 @@ def test_render_opencode_event_keeps_the_reported_status_for_quota_detection():
     assert not is_rate_limited(other.quota)
 
 
+def test_render_opencode_event_marks_a_failed_tool_call():
+    failed = json.loads(json.dumps(OPENCODE_TOOL))
+    failed["part"]["tool"] = "bash"
+    failed["part"]["state"] = {
+        "status": "error",
+        "input": {"command": "go build ./..."},
+        "error": "exit status 1",
+    }
+    titled = {
+        "type": "tool_use",
+        "sessionID": "ses_x",
+        "part": {"tool": "todowrite", "state": {"status": "completed", "title": "3 todos"}},
+    }
+
+    # opencode only reports a call once it is over, so the outcome is known.
+    assert agents.render_opencode_event(json.dumps(failed)).echo == [
+        " . bash go build ./... (failed)"
+    ]
+    # No input key this list names: the title is what the call acted on.
+    assert agents.render_opencode_event(json.dumps(titled)).echo == [
+        " . todowrite 3 todos"
+    ]
+
+
+def test_format_opencode_cost_separates_free_from_unreported():
+    # A local model that really costs nothing must not read as "the CLI
+    # told us nothing", which is what an empty metrics column means.
+    assert agents._format_opencode_cost([]) == ""
+    assert agents._format_opencode_cost([0.0, 0.0]) == "0"
+    assert agents._format_opencode_cost([0.015496, 0.004392]) == "0.019888"
+
+
 def test_render_opencode_event_passes_through_non_json(tmp_path):
     rendered = agents.render_opencode_event("not json")
     early = agents.render_opencode_event("Error: 429 Too Many Requests")
@@ -2397,6 +2429,9 @@ def test_opencode_stream_echoes_tools_sums_cost_and_keeps_quota_narrow(
     assert '"type": "tool_use"' in raw or '"type":"tool_use"' in raw
     assert "rate limit in tool output" in raw
     assert "rate limit in tool output" not in quota
+    # The readable artifact keeps the rendered lines and never the prefix.
+    assert io.agent_out.read_text(encoding="utf-8") == text + "\n"
+    assert "[A opencode]" not in io.agent_out.read_text(encoding="utf-8")
 
 
 def test_opencode_error_event_reaches_the_quota_channel(tmp_path):
