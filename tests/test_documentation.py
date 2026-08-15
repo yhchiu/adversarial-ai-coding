@@ -223,6 +223,9 @@ def test_aac_lang_is_documented_bilingually():
     for name in ("README.md", "README.zh-TW.md"):
         row = _settings_row(_read(name), "AAC_LANG")
         assert "zh-TW" in row
+        assert "zh-CN" in row
+        assert "ja-JP" in row
+        assert "ko-KR" in row
         assert "scripts/aac" in row
         assert "scripts/aac.cmd" in row
         assert "LANG" in row

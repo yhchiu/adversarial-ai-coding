@@ -76,6 +76,21 @@ def test_no_args_usage_follows_aac_lang(capsys):
     assert "若參數是檔案" in err
 
 
+@pytest.mark.parametrize(
+    ("lang", "needle"),
+    [
+        ("zh-CN", "若参数是文件"),
+        ("ja-JP", "引数がファイルなら"),
+        ("ko-KR", "인자가 파일이면"),
+    ],
+)
+def test_no_args_usage_follows_new_locales(capsys, lang, needle):
+    assert cli.main([], {"AAC_LANG": lang}, stdin_isatty=False) == 1
+    err = capsys.readouterr().err
+    assert "Usage:" in err
+    assert needle in err
+
+
 def test_print_agents(capsys):
     assert cli.main(["print-agents"], {}, stdin_isatty=False) == 0
     assert AGENTS_MARKER in capsys.readouterr().out

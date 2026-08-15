@@ -1,8 +1,9 @@
 """Presentation-layer locale for human-facing CLI surface strings.
 
 The package itself only honours AAC_LANG (unset or unknown → English).
-scripts/aac and aac.cmd may set AAC_LANG from the OS locale when it is
-unset. Run logs, exceptions, and artifacts stay on the English template.
+Shipped catalogs: zh-TW, zh-CN, ja-JP, ko-KR. scripts/aac and aac.cmd
+may set AAC_LANG from the OS locale when it is unset. Run logs,
+exceptions, and artifacts stay on the English template.
 """
 
 from __future__ import annotations
@@ -20,23 +21,47 @@ from .style import Styler
 LOCALES_DIR = Path(__file__).resolve().parent / "locales"
 
 
-def is_zh_tw_tag(tag: str) -> bool:
-    """True for Traditional Chinese tags the launchers also accept.
-
-    Matches zh-TW / zh_TW / zh-Hant* / zh-HK / zh_HK after stripping a
-    codeset or modifier (zh_TW.UTF-8, zh-Hant-TW@xxx). zh-CN / zh-Hans
-    stay English: there is no Simplified catalog.
-    """
-
+def _fold_tag(tag: str) -> str:
     base = tag.strip().split(".", 1)[0].split("@", 1)[0]
-    folded = base.lower().replace("_", "-")
+    return base.lower().replace("_", "-")
+
+
+def is_zh_tw_tag(tag: str) -> bool:
+    """Traditional Chinese: zh-TW / zh_TW / zh-Hant* / zh-HK / zh_HK."""
+
+    folded = _fold_tag(tag)
     return folded in {"zh-tw", "zh-hk"} or folded.startswith("zh-hant")
+
+
+def is_zh_cn_tag(tag: str) -> bool:
+    """Simplified Chinese: zh-CN / zh_CN / zh-Hans* / zh-SG."""
+
+    folded = _fold_tag(tag)
+    return folded in {"zh-cn", "zh-sg"} or folded.startswith("zh-hans")
+
+
+def is_ja_tag(tag: str) -> bool:
+    folded = _fold_tag(tag)
+    return folded == "ja" or folded.startswith("ja-")
+
+
+def is_ko_tag(tag: str) -> bool:
+    folded = _fold_tag(tag)
+    return folded == "ko" or folded.startswith("ko-")
 
 
 def resolve_lang(env: Mapping[str, str]) -> str:
     raw = (env.get("AAC_LANG") or "").strip()
-    if raw and is_zh_tw_tag(raw):
+    if not raw:
+        return "en"
+    if is_zh_tw_tag(raw):
         return "zh-TW"
+    if is_zh_cn_tag(raw):
+        return "zh-CN"
+    if is_ja_tag(raw):
+        return "ja-JP"
+    if is_ko_tag(raw):
+        return "ko-KR"
     return "en"
 
 

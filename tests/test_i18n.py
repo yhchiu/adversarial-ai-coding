@@ -7,6 +7,9 @@ from adversarial_ai_coding.i18n import (
     Presenter,
     emit,
     emit_exception,
+    is_ja_tag,
+    is_ko_tag,
+    is_zh_cn_tag,
     is_zh_tw_tag,
     resolve_lang,
     translate,
@@ -19,8 +22,6 @@ def test_resolve_lang_defaults_to_english():
     assert resolve_lang({"AAC_LANG": ""}) == "en"
     assert resolve_lang({"AAC_LANG": "en"}) == "en"
     assert resolve_lang({"AAC_LANG": "fr"}) == "en"
-    assert resolve_lang({"AAC_LANG": "zh-CN"}) == "en"
-    assert resolve_lang({"AAC_LANG": "zh-Hans"}) == "en"
     assert resolve_lang({"LANG": "zh_TW.UTF-8"}) == "en"
 
 
@@ -37,12 +38,30 @@ def test_resolve_lang_accepts_traditional_chinese_aliases():
         assert resolve_lang({"AAC_LANG": raw}) == "zh-TW", raw
 
 
+def test_resolve_lang_accepts_simplified_chinese_aliases():
+    for raw in ("zh-CN", "zh_CN", "zh-cn", "zh-Hans", "zh-Hans-CN", "zh-SG"):
+        assert resolve_lang({"AAC_LANG": raw}) == "zh-CN", raw
+
+
+def test_resolve_lang_accepts_japanese_and_korean_aliases():
+    for raw in ("ja", "ja-JP", "ja_JP", "ja-jp"):
+        assert resolve_lang({"AAC_LANG": raw}) == "ja-JP", raw
+    for raw in ("ko", "ko-KR", "ko_KR", "ko-kr"):
+        assert resolve_lang({"AAC_LANG": raw}) == "ko-KR", raw
+
+
 def test_is_zh_tw_tag_strips_codeset_and_rejects_simplified():
     assert is_zh_tw_tag("zh_TW.UTF-8")
     assert is_zh_tw_tag("zh-Hant-TW@cns")
     assert not is_zh_tw_tag("zh_CN.UTF-8")
     assert not is_zh_tw_tag("zh-Hans-CN")
     assert not is_zh_tw_tag("en_US")
+    assert is_zh_cn_tag("zh_CN.UTF-8")
+    assert is_zh_cn_tag("zh-Hans-CN")
+    assert not is_zh_cn_tag("zh_TW.UTF-8")
+    assert is_ja_tag("ja_JP.UTF-8")
+    assert is_ko_tag("ko_KR.UTF-8")
+    assert not is_ja_tag("en_US")
 
 
 def test_translate_falls_back_when_key_is_missing():
@@ -135,11 +154,37 @@ def test_render_template_without_fields_is_identity():
 
 
 def test_catalog_file_is_json_object():
-    path = (
-        Path(__file__).parents[1]
-        / "src"
-        / "adversarial_ai_coding"
-        / "locales"
-        / "zh_TW.json"
+    root = (
+        Path(__file__).parents[1] / "src" / "adversarial_ai_coding" / "locales"
     )
-    assert path.is_file()
+    for name in ("zh_TW.json", "zh_CN.json", "ja_JP.json", "ko_KR.json"):
+        assert (root / name).is_file()
+
+
+def test_new_locales_translate_progress_and_keep_jargon():
+    cases = {
+        "zh-CN": ("执行中", "已创建"),
+        "ja-JP": ("実行中", "作成しました"),
+        "ko-KR": ("실행 중", "만들었습니다"),
+    }
+    for lang, (running, created) in cases.items():
+        worker = translate(
+            ">>> Worker({name}) is running...", lang, {"name": "claude"}
+        )
+        assert "Worker" in worker
+        assert running in worker
+        tree = translate(
+            "Created worktree:{workspace} "
+            "(branch {branch}; "
+            "remove later with git worktree remove)",
+            lang,
+            {"workspace": "repo-aac-1", "branch": "aac/1"},
+        )
+        assert "worktree" in tree
+        assert "git worktree remove" in tree
+        assert created in tree
+        interrupted = translate(
+            "!! Workflow interrupted (exit={rc}).", lang, {"rc": 130}
+        )
+        assert "130" in interrupted
+        assert interrupted != "!! Workflow interrupted (exit=130)."

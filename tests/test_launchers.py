@@ -168,7 +168,34 @@ def test_posix_launcher_does_not_infer_zh_cn(tmp_path):
         env=env,
         check=False,
     )
-    assert _captured_lang(tmp_path) != "zh-TW"
+    assert _captured_lang(tmp_path) == "zh-CN"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX launcher")
+def test_posix_launcher_infers_ja_and_ko(tmp_path):
+    capture = _capture_program(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        '#!/bin/sh\nexec "$AAC_TEST_PYTHON" "$AAC_TEST_CAPTURE" "$@"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+
+    for lang, expected in (("ja_JP.UTF-8", "ja-JP"), ("ko_KR.UTF-8", "ko-KR")):
+        env = _launcher_env(tmp_path, capture, fake_bin)
+        env["LANG"] = lang
+        env.pop("LC_ALL", None)
+        env.pop("LC_MESSAGES", None)
+        env.pop("AAC_LANG", None)
+        subprocess.run(
+            [str(ROOT / "scripts" / "aac"), "task"],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+        assert _captured_lang(tmp_path) == expected, lang
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX launcher")
