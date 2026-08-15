@@ -183,6 +183,8 @@ def test_cross_platform_launchers_are_documented_bilingually():
         assert "aac request.md" in readme
         assert "Windows PowerShell" in readme
         assert "--locked" in readme
+        assert "PYTHONHOME" in readme
+        assert "PYTHONPATH" in readme
         assert 'uv run --project "$AAC_PROJECT"' not in readme
 
 

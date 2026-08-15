@@ -9,5 +9,10 @@ if not defined AAC_LANG (
   for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$c=(Get-Culture).Name; if ($c -match '^(zh-TW|zh_TW|zh-Hant|zh-HK|zh_HK)') { 'zh-TW' } elseif ($c -match '^(zh-CN|zh_CN|zh-Hans|zh-SG)') { 'zh-CN' } elseif ($c -match '^ja') { 'ja-JP' } elseif ($c -match '^ko') { 'ko-KR' } elseif ($c -match '^pt') { 'pt-BR' }"`) do set "AAC_LANG=%%I"
 )
 
+rem The locked uv environment is the only Python this launcher should see.
+rem Machine-wide PYTHONHOME/PYTHONPATH crash CPython before our code runs.
+set "PYTHONHOME="
+set "PYTHONPATH="
+
 uv run --project "%AAC_PROJECT_ROOT%" --locked adversarial-ai-coding %*
 exit /b %errorlevel%

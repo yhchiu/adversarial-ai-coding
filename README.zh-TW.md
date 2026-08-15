@@ -122,7 +122,8 @@ set "PATH=C:\path\to\adversarial-ai-coding\scripts;%PATH%"
 
 若要讓設定在新的終端 session 仍然生效,請將相同設定加入 shell profile 或使用者
 `PATH`。`aac` launcher 會從自身位置找到 workflow checkout,以 `--locked`
-執行該環境,並保持目前工作目錄不變。
+執行該環境,並保持目前工作目錄不變。它們會清掉 `PYTHONHOME` 與 `PYTHONPATH`,
+避免系統層的 Python 安裝把 locked interpreter 弄掛。
 
 之後從目標專案根目錄執行 `aac`:
 

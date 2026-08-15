@@ -24,6 +24,9 @@ Path(os.environ["AAC_TEST_LOG"]).write_text(
         "argv": sys.argv[1:],
         "cwd": os.getcwd(),
         "aac_lang": os.environ.get("AAC_LANG"),
+        "pythonhome": os.environ.get("PYTHONHOME"),
+        "pythonpath": os.environ.get("PYTHONPATH"),
+        "pythonioencoding": os.environ.get("PYTHONIOENCODING"),
     }),
     encoding="utf-8",
 )
@@ -116,10 +119,19 @@ def test_windows_launcher_forwards_project_cwd_arguments_and_exit_code(tmp_path)
     _assert_forwarded_call(tmp_path, proc)
 
 
+def _captured_call(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / "uv-call.json").read_text(encoding="utf-8"))
+
+
+def _assert_python_env_sanitized(tmp_path: Path) -> None:
+    call = _captured_call(tmp_path)
+    assert not call["pythonhome"]
+    assert not call["pythonpath"]
+    assert call["pythonioencoding"] == "utf-8"
+
+
 def _captured_lang(tmp_path: Path) -> str | None:
-    return json.loads((tmp_path / "uv-call.json").read_text(encoding="utf-8"))[
-        "aac_lang"
-    ]
+    return _captured_call(tmp_path)["aac_lang"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX launcher")
@@ -225,6 +237,31 @@ def test_posix_launcher_keeps_explicit_english(tmp_path):
     assert _captured_lang(tmp_path) == "en"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX launcher")
+def test_posix_launcher_clears_pythonhome_and_pythonpath(tmp_path):
+    capture = _capture_program(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        '#!/bin/sh\nexec "$AAC_TEST_PYTHON" "$AAC_TEST_CAPTURE" "$@"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    env = _launcher_env(tmp_path, capture, fake_bin)
+    env["PYTHONHOME"] = "C:/poisoned"
+    env["PYTHONPATH"] = "C:/poisoned/lib"
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [str(ROOT / "scripts" / "aac"), "task"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 23
+    _assert_python_env_sanitized(tmp_path)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
 def test_windows_launcher_keeps_explicit_english(tmp_path):
     capture = _capture_program(tmp_path)
@@ -249,3 +286,32 @@ def test_windows_launcher_keeps_explicit_english(tmp_path):
         check=False,
     )
     assert _captured_lang(tmp_path) == "en"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
+def test_windows_launcher_clears_pythonhome_and_pythonpath(tmp_path):
+    capture = _capture_program(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "uv.cmd").write_text(
+        '@echo off\r\n"%AAC_TEST_PYTHON%" "%AAC_TEST_CAPTURE%" %*\r\n',
+        encoding="utf-8",
+    )
+    env = _launcher_env(tmp_path, capture, fake_bin)
+    env["PYTHONHOME"] = "C:/poisoned"
+    env["PYTHONPATH"] = "C:/poisoned/lib"
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [
+            "cmd.exe",
+            "/d",
+            "/c",
+            str(ROOT / "scripts" / "aac.cmd"),
+            "task",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 23
+    _assert_python_env_sanitized(tmp_path)

@@ -152,7 +152,8 @@ set "PATH=C:\path\to\adversarial-ai-coding\scripts;%PATH%"
 Put the equivalent setting in your shell profile or user `PATH` to keep it
 across terminal sessions. The `aac` launchers find the workflow checkout from
 their own location, run its environment with `--locked`, and leave the current
-working directory unchanged.
+working directory unchanged. They unset `PYTHONHOME` and `PYTHONPATH` so a
+machine-wide Python install cannot crash the locked interpreter.
 
 Then run `aac` from the root of the target project:
 

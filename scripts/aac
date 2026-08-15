@@ -29,6 +29,10 @@ if [ -z "${AAC_LANG:-}" ]; then
   fi
 fi
 
+# The locked uv environment is the only Python this launcher should see.
+# Machine-wide PYTHONHOME/PYTHONPATH crash CPython before our code runs.
+unset PYTHONHOME PYTHONPATH
+
 exec uv run \
   --project "$AAC_PROJECT_ROOT" \
   --locked \
