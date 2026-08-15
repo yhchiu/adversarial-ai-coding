@@ -225,6 +225,11 @@ def test_custom_agent_args_use_slot_when_names_match():
             [("AGY_ARGS", '--append-system-prompt "agy words"')],
         ),
         (
+            AgentRef("A", "opencode"),
+            {"OPENCODE_ARGS": "--variant high"},
+            [("OPENCODE_ARGS", "--variant high")],
+        ),
+        (
             AgentRef("A", "worker-wrapper"),
             {
                 "AGENT_A": "worker-wrapper",
@@ -915,6 +920,11 @@ def make_io(tmp_path, lines=None):
             AgentRef("B", "agy"),
             ["--model", "model-b", "--shared", "two words"],
         ),
+        (
+            agents._opencode_model_args,
+            AgentRef("A", "opencode"),
+            ["-m", "model-a", "--shared", "two words"],
+        ),
     ],
 )
 def test_builtin_model_arg_builders_append_shared_agent_args(
@@ -1092,6 +1102,68 @@ def test_agy_implementation_worker_orders_fresh_and_resume_argv(
         assert argv[model_index : model_index + len(expected_args)] == expected_args
     assert "--conversation" not in calls[0]
     assert calls[1][-2:] == ["--conversation", conversation_id]
+
+
+def test_opencode_implementation_worker_orders_fresh_and_resume_argv(
+    monkeypatch, tmp_path
+):
+    calls = []
+    session_ids = iter(["ses_worker_1", "ses_worker_1"])
+
+    def fake_run(argv, io, ref):
+        calls.append(argv)
+        return 0, "ok", next(session_ids), "", "0.01"
+
+    monkeypatch.setattr(agents, "_run_opencode_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "MODEL_A": "owner-model",
+            "OPENCODE_ARGS": '--variant high --title "base words"',
+            "IMPL_MODEL": "xai/grok-4.6",
+            "IMPL_ARGS": '--agent build --title "impl words"',
+        }
+    )
+    ref = agents.impl_ref(AgentRef("A", "opencode"), settings)
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+
+    agents.run_worker(ref, "fresh prompt", settings, session, io)
+    agents.run_worker(ref, "resume prompt", settings, session, io)
+
+    model_and_args = [
+        "-m",
+        "xai/grok-4.6",
+        "--variant",
+        "high",
+        "--title",
+        "base words",
+        "--agent",
+        "build",
+        "--title",
+        "impl words",
+    ]
+    assert calls[0] == [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--auto",
+        *model_and_args,
+        "fresh prompt",
+    ]
+    assert calls[1] == [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--auto",
+        *model_and_args,
+        "--session",
+        "ses_worker_1",
+        "resume prompt",
+    ]
 
 
 def test_custom_implementation_worker_uses_impl_args_exactly_once(
@@ -2148,6 +2220,233 @@ def test_agy_reviewer_uses_30m_timeout_and_no_continue(monkeypatch, tmp_path):
     argv = seen["argv"]
     assert "--print-timeout" in argv and "30m" in argv
     assert "--continue" not in argv  # reviewers always start fresh
+
+
+OPENCODE_TEXT = {
+    "type": "text",
+    "sessionID": "ses_ffcabee46fferqp1FW1lyDROUA",
+    "part": {"type": "text", "text": "OK"},
+}
+OPENCODE_TOOL = {
+    "type": "tool_use",
+    "sessionID": "ses_ffcaaebd8ffeje788qiYbvCRxS",
+    "part": {
+        "type": "tool",
+        "tool": "read",
+        "state": {
+            "status": "completed",
+            "input": {
+                "filePath": r"C:\Project\adversarial-ai-coding\README.md",
+                "limit": 1,
+            },
+            "output": "rate limit in tool output must not be quota",
+            "title": "README.md",
+        },
+    },
+}
+OPENCODE_FINISH_TOOL = {
+    "type": "step_finish",
+    "sessionID": "ses_ffcaaebd8ffeje788qiYbvCRxS",
+    "part": {"reason": "tool-calls", "cost": 0.015496},
+}
+OPENCODE_FINISH_STOP = {
+    "type": "step_finish",
+    "sessionID": "ses_ffcaaebd8ffeje788qiYbvCRxS",
+    "part": {"reason": "stop", "cost": 0.004392},
+}
+OPENCODE_ERROR = {
+    "type": "error",
+    "sessionID": "ses_quota",
+    "error": {
+        "name": "APIError",
+        "data": {
+            "message": "Rate limit exceeded",
+            "statusCode": 429,
+            "isRetryable": True,
+        },
+    },
+}
+
+
+def test_render_opencode_event_echoes_text_and_tool_file_path():
+    text = agents.render_opencode_event(json.dumps(OPENCODE_TEXT))
+    tool = agents.render_opencode_event(json.dumps(OPENCODE_TOOL))
+
+    assert text.echo == ["OK"]
+    assert text.session_id == "ses_ffcabee46fferqp1FW1lyDROUA"
+    assert tool.echo == [r" . read C:\Project\adversarial-ai-coding\README.md"]
+    assert tool.quota == ""
+
+
+def test_render_opencode_event_sums_only_finish_cost_and_marks_error_quota():
+    finish = agents.render_opencode_event(json.dumps(OPENCODE_FINISH_STOP))
+    start = agents.render_opencode_event(
+        json.dumps({"type": "step_start", "sessionID": "ses_x", "part": {}})
+    )
+    error = agents.render_opencode_event(json.dumps(OPENCODE_ERROR))
+
+    assert finish.echo == []
+    assert finish.cost == 0.004392
+    assert start.echo == []
+    assert start.cost is None
+    assert "Rate limit exceeded" in error.quota
+    assert error.echo == ["Rate limit exceeded"]
+
+
+def test_render_opencode_event_passes_through_non_json(tmp_path):
+    rendered = agents.render_opencode_event("not json")
+
+    assert rendered.echo == ["not json"]
+
+
+def test_opencode_stream_echoes_tools_sums_cost_and_keeps_quota_narrow(
+    tmp_path,
+):
+    emitter = tmp_path / "emit.py"
+    events = [
+        {"type": "step_start", "sessionID": "ses_stream", "part": {}},
+        OPENCODE_TOOL,
+        OPENCODE_FINISH_TOOL,
+        OPENCODE_TEXT,
+        OPENCODE_FINISH_STOP,
+    ]
+    emitter.write_text(
+        "import json\n"
+        + "".join(f"print({json.dumps(json.dumps(event))})\n" for event in events),
+        encoding="utf-8",
+    )
+    io, echoed = make_io(tmp_path)
+    ref = AgentRef("A", "opencode")
+
+    rc, text, session_id, quota, cost = agents._run_opencode_json(
+        [sys.executable, str(emitter)], io, ref
+    )
+
+    assert rc == 0
+    assert session_id == "ses_ffcaaebd8ffeje788qiYbvCRxS"
+    assert text == (
+        r" . read C:\Project\adversarial-ai-coding\README.md" + "\nOK"
+    )
+    assert quota == ""
+    assert cost == "0.019888"
+    assert echoed == [
+        r"[A opencode]  . read C:\Project\adversarial-ai-coding\README.md",
+        "[A opencode] OK",
+    ]
+    raw = io.raw_out.read_text(encoding="utf-8")
+    assert '"type": "tool_use"' in raw or '"type":"tool_use"' in raw
+    assert "rate limit in tool output" in raw
+    assert "rate limit in tool output" not in quota
+
+
+def test_opencode_error_event_reaches_the_quota_channel(tmp_path):
+    emitter = tmp_path / "emit.py"
+    emitter.write_text(
+        "import json\n"
+        f"print({json.dumps(json.dumps(OPENCODE_ERROR))})\n",
+        encoding="utf-8",
+    )
+    io, _ = make_io(tmp_path)
+
+    rc, text, session_id, quota, cost = agents._run_opencode_json(
+        [sys.executable, str(emitter)], io, AgentRef("B", "opencode")
+    )
+
+    assert rc == 0
+    assert session_id == "ses_quota"
+    assert "Rate limit exceeded" in quota
+    assert "Rate limit exceeded" in text
+    assert cost == ""
+
+
+def test_opencode_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
+    calls = []
+    ids = iter(["ses_1", "ses_1"])
+
+    def fake_run(argv, io, ref):
+        calls.append(argv)
+        return 0, "ok", next(ids), "", "0.02"
+
+    monkeypatch.setattr(agents, "_run_opencode_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "MODEL_A": "google/gemini-2.5-pro",
+            "OPENCODE_ARGS": "--variant high",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+
+    run_worker("opencode", "p1", settings, session, io)
+    run_worker("opencode", "p2", settings, session, io)
+
+    assert calls[0] == [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--auto",
+        "-m",
+        "google/gemini-2.5-pro",
+        "--variant",
+        "high",
+        "p1",
+    ]
+    assert calls[1][-3:] == ["--session", "ses_1", "p2"]
+    assert session.worker_session == "ses_1"
+    assert session.last_cost == "0.02"
+
+
+def test_opencode_worker_warns_when_fresh_call_omits_session(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        agents,
+        "_run_opencode_json",
+        lambda argv, io, ref: (0, "ok", "", "", ""),
+    )
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    io, echoed = make_io(tmp_path)
+    session = AgentSession()
+
+    run_worker("opencode", "p", make({"AGENT_A": "opencode"}), session, io)
+
+    assert session.worker_session == ""
+    assert any("did not report a session ID" in line for line in echoed)
+
+
+def test_opencode_reviewer_is_always_fresh(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(
+        agents,
+        "_run_opencode_json",
+        lambda argv, io, ref: (
+            seen.update(argv=argv),
+            (0, "review", "ses_ignored", "", "0.01"),
+        )[1],
+    )
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make({"AGENT_B": "opencode", "MODEL_B": "xai/grok-4.6"})
+    io, _ = make_io(tmp_path)
+
+    result = run_reviewer(
+        "opencode",
+        "review prompt",
+        settings,
+        AgentSession(
+            worker_session="ses_worker", owner=AgentRef("A", "opencode")
+        ),
+        io,
+    )
+
+    argv = seen["argv"]
+    assert argv[:5] == ["opencode", "run", "--format", "json", "--auto"]
+    assert argv[argv.index("-m") + 1] == "xai/grok-4.6"
+    assert "--session" not in argv
+    assert argv[-1] == "review prompt"
+    assert result.text == "review"
 
 
 def test_notify_noop_when_unset_and_warns_on_failure(tmp_path, capsys):

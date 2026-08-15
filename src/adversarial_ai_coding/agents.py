@@ -427,6 +427,7 @@ def _run_streaming(argv: list[str], io: AgentIO, ref: AgentRef) -> tuple[int, st
 # with a thousand-line body still costs one short line.
 _TOOL_ARG_KEYS = (
     "file_path",
+    "filePath",
     "notebook_path",
     "command",
     # Before "path": a search names what it looks for, not where it looks.
@@ -1014,6 +1015,167 @@ def _reviewer_codex(
     return AgentResult(rc, out, quota_text=quota_text)
 
 
+def _opencode_model_args(ref: AgentRef, settings: Settings) -> list[str]:
+    args: list[str] = []
+    model = agent_model(ref, settings)
+    if model:
+        args += ["-m", model]
+    args += agent_args(ref, settings)
+    return args
+
+
+@dataclass
+class OpenCodeEvent:
+    """What one opencode --format json line contributes."""
+
+    echo: list[str] = field(default_factory=list)
+    session_id: str = ""
+    cost: float | None = None
+    quota: str = ""
+
+
+def _opencode_session_id(payload: dict[str, object]) -> str:
+    value = payload.get("sessionID")
+    return value if isinstance(value, str) else ""
+
+
+def _opencode_part(payload: dict[str, object]) -> dict[str, object]:
+    part = payload.get("part")
+    return part if isinstance(part, dict) else {}
+
+
+def _opencode_tool_summary(part: dict[str, object]) -> str:
+    name = part.get("tool")
+    label = name if isinstance(name, str) and name else "tool"
+    state = part.get("state")
+    payload = state.get("input") if isinstance(state, dict) else None
+    detail = ""
+    if isinstance(payload, dict):
+        for key in _TOOL_ARG_KEYS:
+            value = payload.get(key)
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                detail = str(value).split("\n", 1)[0].strip()
+                if detail:
+                    break
+                detail = ""
+    if not detail:
+        title = part.get("state")
+        if isinstance(title, dict):
+            raw_title = title.get("title")
+            if isinstance(raw_title, str):
+                detail = raw_title.split("\n", 1)[0].strip()
+    if len(detail) > _TOOL_ARG_LIMIT:
+        detail = detail[:_TOOL_ARG_LIMIT] + "..."
+    return f" . {label} {detail}".rstrip()
+
+
+def _opencode_error_message(payload: dict[str, object]) -> str:
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return error
+    if not isinstance(error, dict):
+        return ""
+    data = error.get("data")
+    if isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, str) and message.strip():
+            return message
+    message = error.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+    return json.dumps(error, ensure_ascii=False)
+
+
+def render_opencode_event(line: str) -> OpenCodeEvent:
+    """Render one opencode NDJSON line from `opencode run --format json`."""
+    text = line.rstrip("\r\n")
+    if not text.strip():
+        return OpenCodeEvent()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return OpenCodeEvent(echo=[text])
+    if not isinstance(payload, dict):
+        return OpenCodeEvent(echo=[text])
+    session_id = _opencode_session_id(payload)
+    event_type = payload.get("type")
+    if event_type == "text":
+        body = _opencode_part(payload).get("text")
+        if not isinstance(body, str):
+            return OpenCodeEvent(session_id=session_id)
+        return OpenCodeEvent(
+            echo=[part for part in body.split("\n") if part.strip()],
+            session_id=session_id,
+        )
+    if event_type == "tool_use":
+        return OpenCodeEvent(
+            echo=[_opencode_tool_summary(_opencode_part(payload))],
+            session_id=session_id,
+        )
+    if event_type == "step_finish":
+        cost = _opencode_part(payload).get("cost")
+        if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+            return OpenCodeEvent(session_id=session_id)
+        return OpenCodeEvent(session_id=session_id, cost=float(cost))
+    if event_type == "error":
+        message = _opencode_error_message(payload)
+        return OpenCodeEvent(
+            echo=[message] if message else [],
+            session_id=session_id,
+            quota=message,
+        )
+    return OpenCodeEvent(session_id=session_id)
+
+
+def _format_opencode_cost(amounts: list[float]) -> str:
+    if not amounts:
+        return ""
+    total = sum(amounts)
+    if total == 0:
+        return ""
+    return format(total, ".10f").rstrip("0").rstrip(".")
+
+
+def _run_opencode_json(
+    argv: list[str], io: AgentIO, ref: AgentRef
+) -> tuple[int, str, str, str, str]:
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    rendered: list[str] = []
+    quota: list[str] = []
+    costs: list[float] = []
+    session_id = ""
+    assert proc.stdout is not None
+    io.raw_out.parent.mkdir(parents=True, exist_ok=True)
+    io.agent_out.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        io.raw_out.open("w", encoding="utf-8") as raw_file,
+        io.agent_out.open("w", encoding="utf-8") as rendered_file,
+    ):
+        for raw_line in proc.stdout:
+            raw_file.write(raw_line)
+            event = render_opencode_event(raw_line)
+            if event.session_id:
+                session_id = event.session_id
+            if event.cost is not None:
+                costs.append(event.cost)
+            if event.quota:
+                quota.append(event.quota)
+            for text in event.echo:
+                rendered.append(text)
+                rendered_file.write(text + "\n")
+                _echo_agent(io, ref, text)
+    rc = proc.wait()
+    return rc, "\n".join(rendered), session_id, "\n".join(quota), _format_opencode_cost(costs)
+
+
 def _agy_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     args: list[str] = []
     model = agent_model(ref, settings)
@@ -1111,6 +1273,57 @@ def _reviewer_agy(
     return AgentResult(rc, out, quota_text=out)
 
 
+def _worker_opencode(
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
+) -> AgentResult:
+    argv = [
+        _resolve_argv0("opencode"),
+        "run",
+        "--format",
+        "json",
+        "--auto",
+        *_opencode_model_args(ref, settings),
+    ]
+    if session.worker_session:
+        argv += ["--session", session.worker_session]
+    argv.append(prompt)
+    rc, out, session_id, quota_text, cost = _run_opencode_json(argv, io, ref)
+    if session_id:
+        session.worker_session = session_id
+    elif not session.worker_session:
+        io.echo(
+            "(warning: opencode did not report a session ID; the next worker "
+            "call will start a fresh session)"
+        )
+    session.last_cost = cost
+    return AgentResult(rc, out, quota_text=quota_text)
+
+
+def _reviewer_opencode(
+    ref: AgentRef,
+    prompt: str,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
+) -> AgentResult:
+    argv = [
+        _resolve_argv0("opencode"),
+        "run",
+        "--format",
+        "json",
+        "--auto",
+        *_opencode_model_args(ref, settings),
+        prompt,
+    ]
+    rc, out, _, quota_text, cost = _run_opencode_json(argv, io, ref)
+    session.last_cost = cost
+    return AgentResult(rc, out, quota_text=quota_text)
+
+
 def _run_generic(
     ref: AgentRef, prompt: str, settings: Settings, io: AgentIO
 ) -> AgentResult:
@@ -1140,6 +1353,8 @@ def run_worker(
         return _worker_codex(ref, prompt, settings, session, io)
     if ref.name == "agy":
         return _worker_agy(ref, prompt, settings, session, io)
+    if ref.name == "opencode":
+        return _worker_opencode(ref, prompt, settings, session, io)
     return _run_generic(ref, prompt, settings, io)
 
 
@@ -1157,6 +1372,8 @@ def run_reviewer(
         return _reviewer_codex(ref, prompt, settings, session, io)
     if ref.name == "agy":
         return _reviewer_agy(ref, prompt, settings, session, io)
+    if ref.name == "opencode":
+        return _reviewer_opencode(ref, prompt, settings, session, io)
     return _run_generic(ref, prompt, settings, io)
 
 

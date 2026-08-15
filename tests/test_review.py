@@ -56,9 +56,13 @@ def test_compose_review_prompt_verdict_instruction(tmp_path):
     custom = compose_review_prompt(
         AgentRef("B", "custom-agent"), "scope", PROMPTS, tmp_path / "aac/.run"
     )
+    opencode = compose_review_prompt(
+        AgentRef("B", "opencode"), "scope", PROMPTS, tmp_path / "aac/.run"
+    )
     assert "Finally write the verdict" not in claude
     assert "Finally write the verdict" in codex
     assert "Finally write the verdict" in custom
+    assert "Finally write the verdict" in opencode
     assert "scope" in claude
 
 
