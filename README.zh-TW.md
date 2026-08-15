@@ -8,7 +8,7 @@
 
 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
 
-其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI**、**Antigravity CLI** 或自訂 wrapper,透過各家的 headless(非互動)模式驅動。Stage 5 還可使用獨立的實作 slot I。
+其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI**、**Antigravity CLI**、**OpenCode**(使用者已登入的任何模型)或自訂 wrapper,透過各家的 headless(非互動)模式驅動。Stage 5 還可使用獨立的實作 slot I。
 
 ## 流程
 
@@ -17,7 +17,7 @@
   - `A` 是工作者
   - `B` 是對抗式審查者
 
-建議兩個 slot 用不同廠牌的模型(盲點不同)。每個 slot 可以是 `claude`、`codex`、`agy` 或自訂 wrapper。
+建議兩個 slot 用不同廠牌的模型(盲點不同)。每個 slot 可以是 `claude`、`codex`、`agy`、`opencode` 或自訂 wrapper。`opencode` 是多模型 runtime:換 `MODEL_*` 不必再為每家模型加 adapter。兩個 slot 都用 OpenCode 時仍是同一套工具,若要不同 runtime 請搭配 `claude` 或 `codex`。
 
 實作步驟可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
 
@@ -87,7 +87,7 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 - Python 3.12 以上
 - [Astral uv](https://docs.astral.sh/uv/)
 - `git`
-- 會用到的 AI CLI 已安裝並登入:`claude`(Claude Code)、`codex`(Codex CLI)、`agy`(Antigravity CLI,選用)
+- 會用到的 AI CLI 已安裝並登入:`claude`(Claude Code)、`codex`(Codex CLI)、`agy`(Antigravity CLI,選用)、`opencode`(OpenCode,選用;要用多模型時)
 - 透過 `AGENT_A`、`AGENT_B` 或 `IMPL_AGENT` 設定的自訂 command / wrapper 可在 `PATH` 中找到
 - **在目標專案的 git repo 根目錄執行**(workflow 會檢查)。不需要 Bash 或 `jq`
 
@@ -141,6 +141,11 @@ AGENT_A=codex AGENT_B=claude aac request.md
 
 # 同一個內建 CLI 放在兩個 slot,各自使用不同模型
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
+  aac request.md
+
+# OpenCode 當多模型 runtime;MODEL_* 原樣傳成 provider/model
+AGENT_A=opencode MODEL_A=google/gemini-2.5-pro \
+AGENT_B=claude   MODEL_B=opus \
   aac request.md
 
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
@@ -321,13 +326,13 @@ spec human gate 會顯示理由並詢問
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` 或自訂命令 |
+| `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` \| `opencode` 或自訂命令 |
 | `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
 | `IMPL_AGENT` | 選定 owner 的 command | Stage-5 逐任務實作迴圈使用的 command。內建 command 可與 A/B 同名;自訂實作 wrapper 必須與兩者都不同名 |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
 | `IMPL_MODEL` | 繼承或 CLI 預設 | 內建實作 slot 的模型。未設定時,只有 command 與 owner 相同才繼承 owner 模型;自訂實作 agent 會忽略此值,請改用 `IMPL_ARGS` |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | (空) | 各內建 agent command 共用的額外參數,依 POSIX shell quoting 解析。session 控制旗標由 workflow 保留,見下節 |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` / `OPENCODE_ARGS` | (空) | 各內建 agent command 共用的額外參數,依 POSIX shell quoting 解析。session 控制旗標由 workflow 保留,見下節。OpenCode 的 `--variant` / `--agent` 放這裡,模型仍用 `MODEL_*` |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依 POSIX shell quoting 解析後加在 prompt-file instruction 前 |
 | `IMPL_ARGS` | (空) | 實作 slot 的額外參數,依 POSIX shell quoting 解析。內建實作 agent 會接在該 command 的共用 args 後;自訂實作 wrapper 的模型旗標也放這裡 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
@@ -350,7 +355,7 @@ spec human gate 會顯示理由並詢問
 | `COLOR` | `auto` | 為 workflow 自身的狀態訊息上色。`auto` 通常讓重導向或非終端機輸出保持無色碼;`NO_COLOR` 停用上色,`FORCE_COLOR` 可在 `auto` 模式強制 ANSI 色碼,包括重導向輸出,而 `TERM=dumb` 會停用未強制的上色。`always` 可讓重導向輸出包含 ANSI 色碼,`never` 停用。封存的 run log 即使強制上色也永遠不含色碼。 |
 | `COLOR_THEME` | `dark` | 狀態訊息主題:`dark` 或 `light`。 |
 | `COLOR_<CATEGORY>` | 主題預設 | 逐類別覆寫顏色,類別為 `STAGE`、`PROGRESS`、`ERROR`、`WARNING`、`CHECKPOINT`、`SUCCESS`、`AGENT`。接受顏色名(`red`、`bright-cyan`、`bold-bright-red`)或原始 SGR 參數(`1;91`),例如 `COLOR_ERROR=bold-bright-red`。 |
-| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,三個內建 agent 通用。claude 回報的精確重置時刻優先(+2 分緩衝);其次才解析訊息(claude 的 `resets HH:MMam` +2 分緩衝;codex 的 `try again in 90s`、`try again at Jul 14th, 2026 7:23 PM` 或只有時刻的 `try again at 12:50 AM` +30 秒緩衝),都沒有才指數退避;`0` = 直接失敗 |
+| `RETRY_ON_LIMIT` | `1` | 撞用量限額/429 時自動等待重試,內建 agent 通用。claude 回報的精確重置時刻優先(+2 分緩衝);其次才解析訊息(claude 的 `resets HH:MMam` +2 分緩衝;codex 的 `try again in 90s`、`try again at Jul 14th, 2026 7:23 PM` 或只有時刻的 `try again at 12:50 AM` +30 秒緩衝),都沒有才指數退避;`0` = 直接失敗 |
 | `RETRY_MAX` | `6` | 每次 agent 呼叫的限額重試上限 |
 | `RETRY_BASE_WAIT` | `300` | 指數退避的初始等待秒數(每次 ×2) |
 | `RETRY_MAX_WAIT` | `3600` | 指數退避的單次等待上限(秒) |
@@ -474,7 +479,7 @@ your-project/
 `init_live_state` 會在啟動時清掉暫時性的檔案,續跑時則保留後續 stage 依賴的
 持久控制檔。
 
-Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、`engine`、模型與模型參數。`engine` 是為了相容既有 archive schema 而保留的穩定欄位,記錄該次呼叫實際解析出的 agent command/runtime。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前只有 claude agent 會回報(`total_cost_usd`)。
+Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifact 會有對應 `.meta.json`,記錄生成時間、角色、`engine`、模型與模型參數。`engine` 是為了相容既有 archive schema 而保留的穩定欄位,記錄該次呼叫實際解析出的 agent command/runtime。`metrics.csv` 的前 7 欄維持 `run_id,stage,role,engine,round,duration_s,cost_usd`,尾端追加 model/model_args/generated_at;費用目前 claude(`total_cost_usd`)與 opencode(加總 `step_finish` 的 `cost`)會回報。
 
 ## Agent CLI 差異與限制
 
@@ -482,20 +487,20 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 以及 `RESUME_RUN` 對 agent context 的影響，請見
 [`docs/agent-session-lifecycle.zh-TW.md`](docs/agent-session-lifecycle.zh-TW.md)。
 
-| | claude | codex | agy |
-|---|---|---|---|
-| 非互動執行 | `claude -p --output-format stream-json` | `codex exec` | `agy --print` |
-| session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) |
-| id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` |
-| 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) |
-| 費用回報 | 有(metrics.csv) | 無 | 無 |
-| 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 |
+| | claude | codex | agy | opencode |
+|---|---|---|---|---|
+| 非互動執行 | `claude -p --output-format stream-json` | `codex exec` | `agy --print` | `opencode run --format json --auto` |
+| session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) | `--session <id>`(精準) |
+| id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` | JSONL `sessionID` |
+| 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) | `--auto`(使用者的 deny 規則仍生效) |
+| 費用回報 | 有(metrics.csv) | 無 | 無 | 有(加總 `step_finish.cost`) |
+| 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 | 訊息,加上每個工具呼叫一行摘要 |
 
-- Claude、Codex、Agy 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
+- Claude、Codex、Agy、OpenCode 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。OpenCode 的 `MODEL_*` 是 `provider/model`,AAC 不維護模型清單。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
 - 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
-- workflow 絕不退回 Codex `--last` 或 Agy `--continue`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude 與 Codex 的原始 JSONL、Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
-- 三家 agent 執行時都會即時串流輸出,長步驟不會變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude 與 Codex 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。Codex 把 shell 呼叫回報成完整的解譯器命令列,因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉,只顯示你真正在意的那段指令。
-- 內建 agent 的 session、輸出、sandbox 與 log 旗標由 workflow 管理。`CLAUDE_ARGS`(以及 I 解析成 Claude 時的 `IMPL_ARGS`)不得包含 `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`,也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約。`CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 與 Agy 的 `IMPL_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`。
+- workflow 絕不退回 Codex `--last`、Agy `--continue` 或 OpenCode `-c`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude、Codex、OpenCode 的原始 JSONL 與 Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
+- 內建 agent 執行時都會即時串流輸出,長步驟不會變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude、Codex 與 OpenCode 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。Codex 把 shell 呼叫回報成完整的解譯器命令列,因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉,只顯示你真正在意的那段指令。
+- 內建 agent 的 session、輸出、sandbox 與 log 旗標由 workflow 管理。`CLAUDE_ARGS`(以及 I 解析成 Claude 時的 `IMPL_ARGS`)不得包含 `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`,也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約。`CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` 不得包含 `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`,也不得透過 `-c` / `--config` 覆寫 `sandbox_mode`;`AGY_ARGS` 與 Agy 的 `IMPL_ARGS` 不得包含 `--log-file`、`--continue`、`--conversation`;`OPENCODE_ARGS` 與 OpenCode 的 `IMPL_ARGS` 不得包含 `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--interactive` / `-i`、`--prompt`、`--dir`。
 - 內建 args 也不得用 `--model`、`-m` 或 Codex 的 `-c model=` / `--config model=` 指定模型;必須使用 `MODEL_A`、`MODEL_B` 或 `IMPL_MODEL`,確保實際呼叫與 archive metadata 一致。`-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析。Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 - 所有內建與自訂 agent 的額外參數在各平台都採 POSIX shell quoting;含空白的值必須引用。Windows 反斜線路徑必須引用或改用 `/`,未引用的反斜線會套用 POSIX escape 語意。
 - Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
@@ -555,7 +560,7 @@ uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + co
 - **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty,`HUMAN_GATE_PLAN=1` 也是(這個在啟動時就會擋下,不會白燒 AI 額度);在 CI 等無人環境設 `HUMAN_GATE=0`(並讓 `HUMAN_GATE_PLAN` 維持 `0`),並用 `NOTIFY_CMD` 接手把關。
 - **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
 - **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
-- **撞到訂閱用量限額**(`You've hit your session limit`、`You've hit your usage limit`、429):預設會自動等待重試,三個 agent 通用。**判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出** —— claude 看結構化回應裡回報的狀態碼(它自己就足以定案),codex 看 `error` 與 `turn.failed` 事件加上 CLI 寫在 JSON 之外的文字;agy 沒有結構化通道,仍然掃整包輸出。因此測試套件剛好印出「rate limit」字樣不會害整個 run 去睡覺。等待時間方面,claude 的串流會回報精確的重置時刻,有就直接用;否則靠訊息解析(支援 `resets 10:50am`、`try again in 90s`、`try again at Jul 14th, 2026 7:23 PM`、只有時刻的 `try again at 12:50 AM` 四種格式,即使被換行折斷也能解析),都沒有才指數退避;等待會發 `NOTIFY_CMD` 通知並記錄在 log。
+- **撞到訂閱用量限額**(`You've hit your session limit`、`You've hit your usage limit`、429):預設會自動等待重試,內建 agent 通用。**判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出** —— claude 看結構化回應裡回報的狀態碼(它自己就足以定案),codex 看 `error` 與 `turn.failed` 事件加上 CLI 寫在 JSON 之外的文字;opencode 看 `--format json` 的 `error` 事件;agy 沒有結構化通道,仍然掃整包輸出。因此測試套件剛好印出「rate limit」字樣不會害整個 run 去睡覺。等待時間方面,claude 的串流會回報精確的重置時刻,有就直接用;否則靠訊息解析(支援 `resets 10:50am`、`try again in 90s`、`try again at Jul 14th, 2026 7:23 PM`、只有時刻的 `try again at 12:50 AM` 四種格式,即使被換行折斷也能解析),都沒有才指數退避;等待會發 `NOTIFY_CMD` 通知並記錄在 log。
   **若重置時刻比 `RETRY_MAX_RESET_WAIT`(預設 6 小時)還遠**——例如 codex 週配額要等好幾天——則立即放棄並印出重置時刻,不做徒勞的空等;配額回來後重跑即可。`RETRY_ON_LIMIT=0` 可完全關閉重試。非限額的 agent 失敗不會重試,原始輸出攤印在 log 結尾供診斷。
 
 ## 延伸方向

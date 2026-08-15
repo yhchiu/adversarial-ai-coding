@@ -21,7 +21,8 @@ Every run drives two agent slots:
   - `B` is the adversarial reviewer
 
 Use different AI brands for the two slots — their blind spots differ. Each slot can be `claude` (Claude Code), `codex` (Codex CLI), `agy`
-(Antigravity CLI), or a custom wrapper command. 
+(Antigravity CLI), `opencode` (OpenCode, any model the user has already
+authenticated), or a custom wrapper command. 
 
 The implementation step can optionally use a third slot `I` (see
 [Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
@@ -113,6 +114,7 @@ mechanics, gate commands, and per-stage notes — see
   - `claude`
   - `codex`
   - `agy` is optional
+  - `opencode` is optional; use it when you want one runtime and many models
 - Any custom agent or wrapper commands you configure through `AGENT_A`,
   `AGENT_B`, or `IMPL_AGENT`, available on `PATH`.
 - Run the workflow from the root of the target Git repository. Bash and `jq`
@@ -184,6 +186,18 @@ Use the same built-in CLI in both slots with different slot-specific models:
 
 ```bash
 AGENT_A=codex AGENT_B=codex MODEL_A=gpt-5.4 MODEL_B=gpt-5.5-codex \
+  aac request.md
+```
+
+Use OpenCode as a multi-model runtime. AAC does not keep a model catalog;
+`MODEL_*` is passed through as `provider/model`. Authenticate with
+`opencode auth` or a custom provider in your OpenCode config. Pair OpenCode
+with a different CLI when you want different runtimes, not only different
+weights:
+
+```bash
+AGENT_A=opencode MODEL_A=google/gemini-2.5-pro \
+AGENT_B=claude   MODEL_B=opus \
   aac request.md
 ```
 
@@ -385,7 +399,8 @@ An explicit `PHASES=0` in the environment disables the suggestion entirely.
 
 ## Custom Agent Commands
 
-If `AGENT_A`, `AGENT_B`, or `IMPL_AGENT` is not `claude`, `codex`, or `agy`,
+If `AGENT_A`, `AGENT_B`, or `IMPL_AGENT` is not `claude`, `codex`, `agy`, or
+`opencode`,
 the workflow treats it as a custom agent command. The command is run with the
 slot-specific args followed by a short prompt-file instruction as the final
 argument:
@@ -451,13 +466,13 @@ Add `--json` output to the CLI.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, or a custom command. |
+| `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, `opencode`, or a custom command. |
 | `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
 | `IMPL_AGENT` | selected owner command | Command for the stage-5 per-task implementation loop. Built-ins may match A or B; a custom implementation wrapper must differ from both. |
 | `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
 | `IMPL_MODEL` | inherited or CLI default | Model override for a built-in implementation slot. When omitted, inherits the owner's model only if the implementation and owner commands match; custom implementation agents ignore it and use `IMPL_ARGS`. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and parsed with POSIX shell quoting. Session-control flags documented below are reserved. |
+| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` / `OPENCODE_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and parsed with POSIX shell quoting. Session-control flags documented below are reserved. For OpenCode, put `--variant` or `--agent` here; models stay on `MODEL_*`. |
 | `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, parsed with POSIX shell quoting and appended before the prompt-file instruction argument. |
 | `IMPL_ARGS` | empty | Extra implementation-slot arguments, parsed with POSIX shell quoting. For a built-in, these follow its command-wide args; for a custom implementation wrapper, include its model flag here. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
@@ -650,15 +665,19 @@ For the exact fresh-versus-resumed session behavior of every default, Phased
 ATDD, and Dual Spec stage, including `RESUME_RUN`, see
 [`docs/agent-session-lifecycle.md`](docs/agent-session-lifecycle.md).
 
-| | Claude | Codex | Agy |
-|---|---|---|---|
-| Non-interactive call | `claude -p --output-format stream-json` | `codex exec --json` | `agy --print` |
-| Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` |
-| ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record |
-| Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` |
-| Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output |
+| | Claude | Codex | Agy | OpenCode |
+|---|---|---|---|---|
+| Non-interactive call | `claude -p --output-format stream-json` | `codex exec --json` | `agy --print` | `opencode run --format json --auto` |
+| Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` | `--session <id>` |
+| ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record | JSONL `sessionID` |
+| Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` | `--auto` (user deny rules still apply) |
+| Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output | Messages and a one-line summary per tool call |
 
-Claude, Codex, and Agy may each be used in A, B, and I. Worker calls resume only
+Claude, Codex, Agy, and OpenCode may each be used in A, B, and I. OpenCode
+is the BYO-model runtime: `MODEL_A=google/gemini-2.5-pro` and
+`MODEL_B=ollama/qwen3.6` do not need new AAC adapters. Two OpenCode slots
+still share one runtime; pair OpenCode with Claude or Codex when you want
+different tool stacks. Worker calls resume only
 by their captured ID, while every reviewer call starts fresh. There is one
 active worker session, not one saved session per slot. Calls with the same full
 agent ref can resume within a loop; any handoff to a different agent ref, such
@@ -672,22 +691,21 @@ old owner session is not restored either. Stage boundaries also clear the
 active session. Workflow prompts point to complete archived prompt files, so
 these handoffs do not depend on retained chat context.
 
-The workflow never falls back to Codex `--last` or Agy `--continue`: if a fresh
-call does not yield an ID, it warns and starts fresh again next time; if an
-established session later omits the ID, the known ID is retained. Claude and
-Codex JSONL and Agy logs are archived as per-attempt `.cli.raw` artifacts for
-diagnosis.
+The workflow never falls back to Codex `--last`, Agy `--continue`, or OpenCode
+`-c`: if a fresh call does not yield an ID, it warns and starts fresh again
+next time; if an established session later omits the ID, the known ID is
+retained. Claude, Codex, and OpenCode JSONL and Agy logs are archived as
+per-attempt `.cli.raw` artifacts for diagnosis.
 
-All three agents stream their output while they work, so a long step is never a
+All built-in agents stream their output while they work, so a long step is never a
 silent wait. Every streamed line is prefixed with its slot and command, as in
 `[A claude] `, and printed in the `AGENT` color category. The prefix is what
 keeps an agent's own `### heading` from being read as a workflow checkpoint, and
 it is added at print time only: archived artifacts and the run log never contain
-it. Claude and Codex also report each tool call as one line naming the tool and
-the file, command, or pattern it acts on; the rest of the tool input is dropped,
-so a large write still costs one short line. Codex reports a shell call as the
-full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is
-stripped and only the command you care about is shown.
+it. Claude, Codex, and OpenCode also report each tool call as one line naming the
+tool and the file, command, or pattern it acts on; the rest of the tool input is
+dropped, so a large write still costs one short line. Codex reports a shell call
+as the full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is stripped and only the command you care about is shown.
 
 Built-in session, output, sandbox, and log flags belong to the workflow.
 `CLAUDE_ARGS` (and `IMPL_ARGS` when I resolves to Claude) must not contain
@@ -698,7 +716,10 @@ output contract through `--output-format`, `--verbose`, or `--json-schema`.
 `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`,
 `--ephemeral`, or a `sandbox_mode` override through `-c` / `--config`.
 `AGY_ARGS` and Agy-targeted `IMPL_ARGS` must not contain `--log-file`,
-`--continue`, or `--conversation`. Built-in argument variables also cannot set
+`--continue`, or `--conversation`. `OPENCODE_ARGS` and OpenCode-targeted
+`IMPL_ARGS` must not contain `--format`, `--session` / `-s`, `--continue` /
+`-c`, `--fork`, `--attach`, `--auto`, `--share`, `--interactive` / `-i`,
+`--prompt`, or `--dir`. Built-in argument variables also cannot set
 a model with `--model`, `-m`, or Codex `-c model=` / `--config model=`; use
 `MODEL_A`, `MODEL_B`, or `IMPL_MODEL` so actual calls and archived metadata
 agree. Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are
@@ -752,7 +773,7 @@ the intended trusted state.
   terminals because the workflow requires a human owner decision.
 - Identical custom agent commands cannot be used as both worker and reviewer.
   Use distinct wrapper command names when both slots share the same underlying
-  custom CLI. Identical built-in Claude, Codex, and Agy slots are supported.
+  custom CLI. Identical built-in Claude, Codex, Agy, and OpenCode slots are supported.
 
 ## Testing This Repository
 
@@ -822,7 +843,8 @@ agent. Detection reads only the agent's own error channel, never the output of a
 command the agent ran, so a test suite that happens to print the words "rate
 limit" cannot send the run to sleep. For Claude that channel is the structured
 response, and its reported status decides on its own; for Codex it is the `error`
-and `turn.failed` events plus anything the CLI writes outside JSON. Agy has no
+and `turn.failed` events plus anything the CLI writes outside JSON. OpenCode
+uses `error` events from `--format json`. Agy has no
 structured channel, so its whole output is still scanned.
 
 When the agent states when the quota returns, the workflow waits exactly that long
@@ -850,4 +872,5 @@ after the quota returns. Set `RETRY_ON_LIMIT=0` to fail immediately on any limit
 - [Claude Code headless mode](https://code.claude.com/docs/en/headless)
 - [Codex CLI non-interactive mode](https://developers.openai.com/codex/noninteractive)
 - [Codex CLI reference](https://developers.openai.com/codex/cli/reference)
+- [OpenCode CLI](https://opencode.ai/docs/cli/)
 - [GitHub Spec Kit](https://github.com/github/spec-kit)

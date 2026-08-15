@@ -11,6 +11,7 @@ implementation slot, `I`. Any slot can resolve to:
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
 - `agy` for Antigravity CLI
+- `opencode` for OpenCode (any model the user has already authenticated)
 - A custom agent CLI or wrapper command
 
 Using different agent commands for worker and reviewer is recommended because their

@@ -62,10 +62,12 @@ The automatic lifecycle rules apply to the built-in agents:
 | Claude | `claude -p ...` | `claude -p ... --resume <session-id>` | Always fresh; no `--resume` |
 | Codex | `codex exec --json ...` | `codex exec resume --json ... <thread-id> <prompt>` | Always fresh; plain `codex exec` |
 | Agy | `agy --print ...` | `agy --print ... --conversation <conversation-id>` | Always fresh; no `--conversation` |
+| OpenCode | `opencode run --format json --auto ...` | `opencode run --format json --auto ... --session <session-id>` | Always fresh; no `--session` |
 
 If a fresh worker call does not report an ID, the next worker call is fresh
 again. If an established worker call omits an ID, the last known ID is retained.
-The workflow never guesses by using Codex `--last` or Agy `--continue`.
+The workflow never guesses by using Codex `--last`, Agy `--continue`, or
+OpenCode `-c` / `--continue`.
 
 Custom agent commands do not receive automatic session management. From the
 workflow's perspective every custom call is independent. A custom wrapper may

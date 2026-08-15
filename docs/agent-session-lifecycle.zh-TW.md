@@ -57,10 +57,11 @@ worker 全新或續接
 | Claude | `claude -p ...` | `claude -p ... --resume <session-id>` | 永遠全新，不傳 `--resume` |
 | Codex | `codex exec --json ...` | `codex exec resume --json ... <thread-id> <prompt>` | 永遠全新，使用一般 `codex exec` |
 | Agy | `agy --print ...` | `agy --print ... --conversation <conversation-id>` | 永遠全新，不傳 `--conversation` |
+| OpenCode | `opencode run --format json --auto ...` | `opencode run --format json --auto ... --session <session-id>` | 永遠全新，不傳 `--session` |
 
 若全新 worker 呼叫沒有回報 ID，下一次 worker 呼叫仍然全新。若已建立的
 worker session 某次沒有再回報 ID，則保留最後一個已知 ID。Workflow 絕不以
-Codex `--last` 或 Agy `--continue` 猜測要接哪個對話。
+Codex `--last`、Agy `--continue` 或 OpenCode `-c` / `--continue` 猜測要接哪個對話。
 
 自訂 agent command 沒有自動 session 管理。從 workflow 角度看，每次自訂
 command 呼叫都互相獨立。Wrapper 可以自行實作 continuity，但該行為不在本文

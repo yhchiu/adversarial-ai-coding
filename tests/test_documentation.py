@@ -29,11 +29,11 @@ def _clause_about(row: str, topic: str) -> str:
 
 
 def _adapter_cells(text: str, label: str) -> list[str]:
-    """The Claude, Codex and Agy cells of one adapter-comparison row.
+    """The Claude, Codex, Agy and OpenCode cells of one adapter-comparison row.
 
     Reading the row is what keeps assertions about "both Claude and Codex
     do X" from being written as a count over the whole file, where an
-    unrelated third mention elsewhere would break them.
+    unrelated extra mention elsewhere would break them.
     """
     for line in text.splitlines():
         if line.startswith(f"| {label} |"):
@@ -127,14 +127,16 @@ def test_agent_streaming_is_documented_bilingually():
     # Codex reports tool calls too, and its shell wrapper is stripped. Read
     # the two adapter cells rather than counting the phrase over the whole
     # file: documenting a third streaming adapter must not fail this.
-    claude, codex, agy = _adapter_cells(english, "Live output")
+    claude, codex, agy, opencode = _adapter_cells(english, "Live output")
     assert "one-line summary per tool call" in claude
     assert "one-line summary per tool call" in codex
     assert "Raw merged output" in agy
-    claude, codex, agy = _adapter_cells(chinese, "即時輸出")
+    assert "one-line summary per tool call" in opencode
+    claude, codex, agy, opencode = _adapter_cells(chinese, "即時輸出")
     assert "每個工具呼叫一行摘要" in claude
     assert "每個工具呼叫一行摘要" in codex
     assert "原始合併輸出" in agy
+    assert "每個工具呼叫一行摘要" in opencode
     assert "`powershell -Command` or `bash -c` wrapper" in english
     assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
 
