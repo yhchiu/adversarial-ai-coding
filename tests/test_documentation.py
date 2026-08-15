@@ -138,6 +138,25 @@ def test_opencode_permission_and_reserved_args_are_documented_bilingually():
         assert "`--prompt`" not in readme
 
 
+def test_reasoning_level_is_documented_bilingually():
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    claude, codex, agy, opencode = _adapter_cells(english, "Reasoning level")
+    assert "--effort=low" in claude
+    assert "model_reasoning_effort=low" in codex
+    assert "--effort=low" in agy
+    assert "--variant low" in opencode
+    claude, codex, agy, opencode = _adapter_cells(chinese, "推理深度")
+    assert "--effort=low" in claude
+    assert "model_reasoning_effort=low" in codex
+    assert "--effort=low" in agy
+    assert "--variant low" in opencode
+    for readme in (english, chinese):
+        assert "CLAUDE_ARGS='--effort=high'" in readme
+        assert "OPENCODE_ARGS='--variant low'" in readme
+        assert "AGY_ARGS='--effort=low'" in readme
+
+
 def test_agent_streaming_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "claude -p --output-format stream-json" in readme

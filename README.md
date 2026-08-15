@@ -671,6 +671,7 @@ ATDD, and Dual Spec stage, including `RESUME_RUN`, see
 | Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` | `--session <id>` |
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record | JSONL `sessionID` |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` | `--auto` (user deny rules still apply) |
+| Reasoning level | `CLAUDE_ARGS='--effort=low'` | `CODEX_ARGS='-c model_reasoning_effort=low'` | `AGY_ARGS='--effort=low'` | `OPENCODE_ARGS='--variant low'` |
 | Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output | Messages and a one-line summary per tool call (at completion) |
 
 Claude, Codex, Agy, and OpenCode may each be used in A, B, and I. OpenCode
@@ -737,6 +738,38 @@ All built-in and custom agent argument variables use POSIX shell quoting on
 every platform. Quote values to preserve embedded spaces. On Windows, quote
 paths containing backslashes or write them with `/`; unquoted backslashes have
 their POSIX escape meaning.
+
+### Reasoning level
+
+AAC has no single `REASONING` variable. Each built-in CLI has its own flag;
+put it in that command's `*_ARGS` (or `IMPL_ARGS` when slot I uses that
+command). `MODEL_*` still selects the model. Accepted values are owned by
+the CLI and can change; `claude --help`, `codex exec --help`, `agy --help`,
+and `opencode run --help` are authoritative.
+
+| Agent | Variable | Flag | Values verified on this project's CLIs |
+|---|---|---|---|
+| Claude | `CLAUDE_ARGS` | `--effort=low` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Codex | `CODEX_ARGS` | `-c model_reasoning_effort=low` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (model-dependent). `-c model=` is reserved; this key is not. |
+| Agy | `AGY_ARGS` | `--effort=low` | `low`, `medium`, `high` |
+| OpenCode | `OPENCODE_ARGS` | `--variant low` | Provider-specific. OpenCode's help cites `high`, `max`, `minimal`. |
+
+The same flag on slot I uses `IMPL_ARGS` after the command-wide `*_ARGS`:
+
+```bash
+CLAUDE_ARGS='--effort=high' \
+CODEX_ARGS='-c model_reasoning_effort=medium' \
+AGENT_A=claude AGENT_B=codex \
+IMPL_AGENT=codex IMPL_ARGS='-c model_reasoning_effort="low"' \
+  aac request.md
+```
+
+```bash
+AGENT_A=opencode MODEL_A=xai/grok-4.6 \
+OPENCODE_ARGS='--variant low' \
+AGENT_B=agy AGY_ARGS='--effort=low' \
+  aac request.md
+```
 
 ## Protected Acceptance Tests
 

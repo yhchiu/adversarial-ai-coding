@@ -493,6 +493,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) | `--session <id>`(精準) |
 | id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` | JSONL `sessionID` |
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) | `--auto`(使用者的 deny 規則仍生效) |
+| 推理深度 | `CLAUDE_ARGS='--effort=low'` | `CODEX_ARGS='-c model_reasoning_effort=low'` | `AGY_ARGS='--effort=low'` | `OPENCODE_ARGS='--variant low'` |
 | 費用回報 | 有(metrics.csv) | 無 | 無 | 有(加總 `step_finish.cost`) |
 | 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 | 訊息,加上每個工具呼叫一行摘要(工具結束時) |
 
@@ -508,6 +509,34 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 - `codex exec resume` 沒有 `--sandbox` 旗標,workflow 改用 `-c 'sandbox_mode="workspace-write"'`。
 - agy 的 `--print-timeout` 預設僅 5 分鐘,workflow 已調高(工作 60 分、審查 30 分)。
 - 各 CLI 旗標以本機 `--help` 為準(本 workflow 依 2026-07 版本撰寫)。
+
+### 推理深度
+
+AAC 沒有統一的 `REASONING` 變數。每家內建 CLI 用自己的旗標,放進該 command 的 `*_ARGS`(I slot 則放 `IMPL_ARGS`)。模型仍用 `MODEL_*`。可接受的值由各 CLI 決定,升版可能改;以本機 `claude --help`、`codex exec --help`、`agy --help`、`opencode run --help` 為準。
+
+| Agent | 變數 | 旗標 | 本專案對過的值 |
+|---|---|---|---|
+| Claude | `CLAUDE_ARGS` | `--effort=low` | `low`、`medium`、`high`、`xhigh`、`max` |
+| Codex | `CODEX_ARGS` | `-c model_reasoning_effort=low` | `none`、`minimal`、`low`、`medium`、`high`、`xhigh`(依模型)。`-c model=` 保留給 `MODEL_*`;這個 key 可以設。 |
+| Agy | `AGY_ARGS` | `--effort=low` | `low`、`medium`、`high` |
+| OpenCode | `OPENCODE_ARGS` | `--variant low` | 依 provider 而異。OpenCode `--help` 舉例 `high`、`max`、`minimal`。 |
+
+I slot 的同一支旗標放 `IMPL_ARGS`,接在該 command 的共用 `*_ARGS` 後面:
+
+```bash
+CLAUDE_ARGS='--effort=high' \
+CODEX_ARGS='-c model_reasoning_effort=medium' \
+AGENT_A=claude AGENT_B=codex \
+IMPL_AGENT=codex IMPL_ARGS='-c model_reasoning_effort="low"' \
+  aac request.md
+```
+
+```bash
+AGENT_A=opencode MODEL_A=xai/grok-4.6 \
+OPENCODE_ARGS='--variant low' \
+AGENT_B=agy AGY_ARGS='--effort=low' \
+  aac request.md
+```
 
 ## 受保護測試的逃生口
 
