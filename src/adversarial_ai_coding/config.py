@@ -90,6 +90,7 @@ class Settings:
     claude_args: str
     codex_args: str
     agy_args: str
+    opencode_args: str
     agent_a_args: str
     agent_b_args: str
     max_rounds: int
@@ -143,6 +144,7 @@ class Settings:
             claude_args=persisted("CLAUDE_ARGS", ""),
             codex_args=persisted("CODEX_ARGS", ""),
             agy_args=persisted("AGY_ARGS", ""),
+            opencode_args=persisted("OPENCODE_ARGS", ""),
             agent_a_args=persisted("AGENT_A_ARGS", ""),
             agent_b_args=persisted("AGENT_B_ARGS", ""),
             max_rounds=_to_int("MAX_ROUNDS", persisted("MAX_ROUNDS", "3")),

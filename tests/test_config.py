@@ -62,6 +62,21 @@ def test_custom_agent_args():
     assert s.agent_a_args == "--model custom --flag"
 
 
+def test_opencode_args_default_empty_and_read_environment():
+    assert make().opencode_args == ""
+    assert make({"OPENCODE_ARGS": "--variant high"}).opencode_args == "--variant high"
+
+
+def test_opencode_args_resume_from_snapshot_and_env_wins():
+    snap = {"OPENCODE_ARGS": "--agent build"}
+    assert make({}, snapshot=snap).opencode_args == "--agent build"
+    assert (
+        make({"OPENCODE_ARGS": "--thinking"}, snapshot=snap).opencode_args
+        == "--thinking"
+    )
+    assert make({"OPENCODE_ARGS": ""}, snapshot=snap).opencode_args == "--agent build"
+
+
 def test_impl_settings_read_environment_values():
     s = make(
         {

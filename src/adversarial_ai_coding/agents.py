@@ -21,7 +21,7 @@ from typing import Callable
 
 from .config import Settings, SettingsError
 
-BUILTIN_AGENTS = ("claude", "codex", "agy")
+BUILTIN_AGENTS = ("claude", "codex", "agy", "opencode")
 
 # Exact schema string from adversarial-ai-coding.sh:1224.
 VERDICT_SCHEMA = (
@@ -105,6 +105,8 @@ def _arg_sources(ref: AgentRef, settings: Settings) -> list[tuple[str, str]]:
         sources.append(("CODEX_ARGS", settings.codex_args))
     elif ref.name == "agy":
         sources.append(("AGY_ARGS", settings.agy_args))
+    elif ref.name == "opencode":
+        sources.append(("OPENCODE_ARGS", settings.opencode_args))
     elif ref.slot == "A":
         sources.append(("AGENT_A_ARGS", generic_agent_args(ref, settings)))
     elif ref.slot == "B":
@@ -284,12 +286,38 @@ def _validate_builtin_arg_tokens(
                 f"{variable} cannot contain session-control argument:{token}"
             )
 
+        if adapter == "opencode" and (
+            token in {"-c", "-s", "-i"}
+            or any(
+                _matches_option(token, option)
+                for option in {
+                    "--format",
+                    "--session",
+                    "--continue",
+                    "--fork",
+                    "--attach",
+                    "--auto",
+                    "--share",
+                    "--interactive",
+                    "--prompt",
+                    "--dir",
+                }
+            )
+            or _matches_short_option(token, "-s")
+            or _matches_short_option(token, "-c")
+            or _matches_short_option(token, "-i")
+        ):
+            raise SettingsError(
+                f"{variable} cannot contain workflow-owned argument:{token}"
+            )
+
 
 def _validate_reserved_args(settings: Settings) -> None:
     for variable, adapter, raw in (
         ("CLAUDE_ARGS", "claude", settings.claude_args),
         ("CODEX_ARGS", "codex", settings.codex_args),
         ("AGY_ARGS", "agy", settings.agy_args),
+        ("OPENCODE_ARGS", "opencode", settings.opencode_args),
     ):
         _validate_builtin_arg_tokens(variable, adapter, _split_cli_args(variable, raw))
 

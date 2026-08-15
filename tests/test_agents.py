@@ -58,6 +58,7 @@ def test_is_builtin_agent():
     assert is_builtin_agent("claude")
     assert is_builtin_agent("codex")
     assert is_builtin_agent("agy")
+    assert is_builtin_agent("opencode")
     assert not is_builtin_agent("custom-agent")
 
 
@@ -355,6 +356,7 @@ def test_validate_agents_both_claude_is_allowed():
         ("CLAUDE_ARGS", {}),
         ("CODEX_ARGS", {}),
         ("AGY_ARGS", {"AGENT_A": "agy"}),
+        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
         ("AGENT_A_ARGS", {"AGENT_A": "custom-a"}),
         ("AGENT_B_ARGS", {"AGENT_B": "custom-b"}),
         ("IMPL_ARGS", {}),
@@ -376,6 +378,7 @@ def test_validate_agents_rejects_unclosed_quotes(key, agent_env):
             '--config developer_instructions="mention --sandbox safely"',
         ),
         ("AGY_ARGS", '--append-system-prompt "mention --continue safely"'),
+        ("OPENCODE_ARGS", '--title "mention --session safely"'),
     ],
 )
 def test_validate_agents_ignores_reserved_words_inside_quoted_values(key, value):
@@ -422,6 +425,7 @@ def test_validate_agents_rejects_claude_workflow_owned_args(value):
         ("CLAUDE_ARGS", {}),
         ("CODEX_ARGS", {}),
         ("AGY_ARGS", {"AGENT_A": "agy"}),
+        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
 @pytest.mark.parametrize("value", ["--model pro", "--model=pro", "-m pro", "-m=pro"])
@@ -524,6 +528,7 @@ def test_validate_agents_rejects_extended_codex_workflow_owned_args(value):
         ("CLAUDE_ARGS", {}),
         ("CODEX_ARGS", {}),
         ("AGY_ARGS", {"AGENT_A": "agy"}),
+        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
 def test_validate_agents_rejects_attached_builtin_model_args(
@@ -608,11 +613,54 @@ def test_validate_agents_rejects_agy_workflow_owned_args(value):
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        "--format json",
+        "--format=json",
+        "--session ses_abc",
+        "--session=ses_abc",
+        "-s ses_abc",
+        "-s=ses_abc",
+        "-sese_abc",
+        "--continue",
+        "--continue=true",
+        "-c",
+        "--fork",
+        "--attach http://localhost:4096",
+        "--attach=http://localhost:4096",
+        "--auto",
+        "--share",
+        "--interactive",
+        "-i",
+        "--prompt hi",
+        "--dir /tmp",
+    ],
+)
+def test_validate_agents_rejects_opencode_workflow_owned_args(value):
+    s = make({"AGENT_A": "opencode", "OPENCODE_ARGS": value})
+
+    with pytest.raises(SettingsError, match="OPENCODE_ARGS"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_allows_opencode_variant_and_quoted_session_mention():
+    s = make(
+        {
+            "AGENT_A": "opencode",
+            "OPENCODE_ARGS": '--variant high --agent build --thinking --title "mention --session safely"',
+        }
+    )
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
     ("key", "agent_env", "value"),
     [
         ("CLAUDE_ARGS", {}, "--json"),
         ("CODEX_ARGS", {}, "--continue"),
         ("AGY_ARGS", {"AGENT_A": "agy"}, "--sandbox workspace-write"),
+        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}, "--json"),
     ],
 )
 def test_validate_agents_allows_flags_reserved_by_other_builtin_adapters(
@@ -646,6 +694,9 @@ def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
         ("codex", "-c sandbox_mode=workspace-write"),
         ("agy", "--conversation=conversation-id"),
         ("agy", "--log-file output.log"),
+        ("opencode", "--session=ses_abc"),
+        ("opencode", "--auto"),
+        ("opencode", "--format=json"),
     ],
 )
 def test_validate_agents_applies_explicit_impl_adapter_reserved_rules(
@@ -657,7 +708,7 @@ def test_validate_agents_applies_explicit_impl_adapter_reserved_rules(
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
-@pytest.mark.parametrize("adapter", ["claude", "codex", "agy"])
+@pytest.mark.parametrize("adapter", ["claude", "codex", "agy", "opencode"])
 @pytest.mark.parametrize("value", ["--model impl", "-m=impl"])
 def test_validate_agents_rejects_impl_model_flags_for_builtin_adapters(
     adapter, value
@@ -679,6 +730,7 @@ def test_validate_agents_rejects_impl_model_flags_for_builtin_adapters(
         ("claude", "--sandbox=workspace-write"),
         ("codex", "--continue"),
         ("agy", "--json"),
+        ("opencode", "--json"),
     ],
 )
 def test_validate_agents_does_not_union_impl_adapter_reserved_rules(

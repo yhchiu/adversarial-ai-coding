@@ -125,6 +125,35 @@ def test_impl_settings_are_snapshot_keys_but_not_immutable():
     assert {"IMPL_AGENT", "IMPL_MODEL", "IMPL_ARGS"}.isdisjoint(IMMUTABLE_KEYS)
 
 
+def test_opencode_args_is_a_snapshot_key_and_round_trips(tmp_path):
+    assert "opencode_args" in SNAPSHOT_KEYS
+    s = make_settings({"OPENCODE_ARGS": "--variant high --thinking"})
+    values = snapshot_values(
+        s,
+        branch="b",
+        gate_cmd="",
+        build_gate_cmd="",
+        phase_gate_cmd="",
+        task_arg="",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+    assert values["opencode_args"] == "--variant high --thinking"
+    write_snapshot(tmp_path / "st", values)
+    snap = load_snapshot(tmp_path / "st")
+    assert snap["OPENCODE_ARGS"] == "--variant high --thinking"
+    resumed = Settings.from_env({}, run_id="20260711-000000", snapshot=snap)
+    assert resumed.opencode_args == "--variant high --thinking"
+
+
+def test_old_snapshot_without_opencode_args_still_loads(tmp_path):
+    write_raw(tmp_path / "st", json.dumps({"schema": 1, "agent_a": "claude"}))
+    snap = load_snapshot(tmp_path / "st")
+    assert "OPENCODE_ARGS" not in snap
+    resumed = Settings.from_env({}, run_id="20260711-000000", snapshot=snap)
+    assert resumed.opencode_args == ""
+
+
 def test_snapshot_values_includes_impl_settings():
     s = make_settings(
         {
