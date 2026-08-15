@@ -226,6 +226,7 @@ def test_aac_lang_is_documented_bilingually():
         assert "zh-CN" in row
         assert "ja-JP" in row
         assert "ko-KR" in row
+        assert "pt-BR" in row
         assert "scripts/aac" in row
         assert "scripts/aac.cmd" in row
         assert "LANG" in row

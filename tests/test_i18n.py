@@ -9,6 +9,7 @@ from adversarial_ai_coding.i18n import (
     emit_exception,
     is_ja_tag,
     is_ko_tag,
+    is_pt_tag,
     is_zh_cn_tag,
     is_zh_tw_tag,
     resolve_lang,
@@ -48,6 +49,8 @@ def test_resolve_lang_accepts_japanese_and_korean_aliases():
         assert resolve_lang({"AAC_LANG": raw}) == "ja-JP", raw
     for raw in ("ko", "ko-KR", "ko_KR", "ko-kr"):
         assert resolve_lang({"AAC_LANG": raw}) == "ko-KR", raw
+    for raw in ("pt", "pt-BR", "pt_BR", "pt-br", "pt-PT"):
+        assert resolve_lang({"AAC_LANG": raw}) == "pt-BR", raw
 
 
 def test_is_zh_tw_tag_strips_codeset_and_rejects_simplified():
@@ -61,6 +64,8 @@ def test_is_zh_tw_tag_strips_codeset_and_rejects_simplified():
     assert not is_zh_cn_tag("zh_TW.UTF-8")
     assert is_ja_tag("ja_JP.UTF-8")
     assert is_ko_tag("ko_KR.UTF-8")
+    assert is_pt_tag("pt_BR.UTF-8")
+    assert is_pt_tag("pt-PT")
     assert not is_ja_tag("en_US")
 
 
@@ -157,7 +162,13 @@ def test_catalog_file_is_json_object():
     root = (
         Path(__file__).parents[1] / "src" / "adversarial_ai_coding" / "locales"
     )
-    for name in ("zh_TW.json", "zh_CN.json", "ja_JP.json", "ko_KR.json"):
+    for name in (
+        "zh_TW.json",
+        "zh_CN.json",
+        "ja_JP.json",
+        "ko_KR.json",
+        "pt_BR.json",
+    ):
         assert (root / name).is_file()
 
 
@@ -166,6 +177,7 @@ def test_new_locales_translate_progress_and_keep_jargon():
         "zh-CN": ("执行中", "已创建"),
         "ja-JP": ("実行中", "作成しました"),
         "ko-KR": ("실행 중", "만들었습니다"),
+        "pt-BR": ("em execução", "worktree criado"),
     }
     for lang, (running, created) in cases.items():
         worker = translate(

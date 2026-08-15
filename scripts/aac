@@ -20,6 +20,9 @@ if [ -z "${AAC_LANG:-}" ]; then
     ko*)
       AAC_LANG=ko-KR
       ;;
+    pt*)
+      AAC_LANG=pt-BR
+      ;;
   esac
   if [ -n "${AAC_LANG:-}" ]; then
     export AAC_LANG

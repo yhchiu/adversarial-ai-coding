@@ -183,7 +183,11 @@ def test_posix_launcher_infers_ja_and_ko(tmp_path):
     )
     fake_uv.chmod(0o755)
 
-    for lang, expected in (("ja_JP.UTF-8", "ja-JP"), ("ko_KR.UTF-8", "ko-KR")):
+    for lang, expected in (
+        ("ja_JP.UTF-8", "ja-JP"),
+        ("ko_KR.UTF-8", "ko-KR"),
+        ("pt_BR.UTF-8", "pt-BR"),
+    ):
         env = _launcher_env(tmp_path, capture, fake_bin)
         env["LANG"] = lang
         env.pop("LC_ALL", None)

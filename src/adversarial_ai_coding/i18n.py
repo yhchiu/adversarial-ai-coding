@@ -1,7 +1,7 @@
 """Presentation-layer locale for human-facing CLI surface strings.
 
 The package itself only honours AAC_LANG (unset or unknown → English).
-Shipped catalogs: zh-TW, zh-CN, ja-JP, ko-KR. scripts/aac and aac.cmd
+Shipped catalogs: zh-TW, zh-CN, ja-JP, ko-KR, pt-BR. scripts/aac and aac.cmd
 may set AAC_LANG from the OS locale when it is unset. Run logs,
 exceptions, and artifacts stay on the English template.
 """
@@ -50,6 +50,13 @@ def is_ko_tag(tag: str) -> bool:
     return folded == "ko" or folded.startswith("ko-")
 
 
+def is_pt_tag(tag: str) -> bool:
+    """Brazilian Portuguese catalog; pt and pt-PT share it."""
+
+    folded = _fold_tag(tag)
+    return folded == "pt" or folded.startswith("pt-")
+
+
 def resolve_lang(env: Mapping[str, str]) -> str:
     raw = (env.get("AAC_LANG") or "").strip()
     if not raw:
@@ -62,6 +69,8 @@ def resolve_lang(env: Mapping[str, str]) -> str:
         return "ja-JP"
     if is_ko_tag(raw):
         return "ko-KR"
+    if is_pt_tag(raw):
+        return "pt-BR"
     return "en"
 
 
@@ -69,7 +78,7 @@ def _catalog_path(lang: str) -> Path:
     return LOCALES_DIR / f"{lang.replace('-', '_')}.json"
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def _load_catalog(lang: str) -> dict[str, str]:
     if lang == "en":
         return {}

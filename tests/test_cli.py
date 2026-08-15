@@ -82,6 +82,7 @@ def test_no_args_usage_follows_aac_lang(capsys):
         ("zh-CN", "若参数是文件"),
         ("ja-JP", "引数がファイルなら"),
         ("ko-KR", "인자가 파일이면"),
+        ("pt-BR", "Se o argumento for um arquivo"),
     ],
 )
 def test_no_args_usage_follows_new_locales(capsys, lang, needle):
