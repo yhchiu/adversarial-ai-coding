@@ -234,6 +234,27 @@ markers against the current template and prints a note when it is missing or
 out of date, so rules added by a newer version do not go unnoticed. Your own
 text around the block is left alone and is not treated as drift.
 
+## Writing a Good Request
+
+The result depends heavily on how clear the request is. Prefer a request file
+with a goal, testable acceptance criteria, and explicit non-goals.
+
+```markdown
+## Goal
+
+Add `--json` output to the CLI.
+
+## Acceptance Criteria
+
+- `mytool list --json` prints a valid JSON array.
+- Behavior without `--json` is unchanged.
+
+## Out of Scope
+
+- Do not change the existing text output format.
+- Do not add `--yaml`.
+```
+
 ## Strong Model Plans, Cheap Model Implements
 
 Spec writing, planning, acceptance tests, and adversarial review benefit most
@@ -440,27 +461,6 @@ exec my-agent --session aac-reviewer "$@"
 
 Wrappers are also the right place for CLIs that need stdin, prompt files,
 quoting-sensitive arguments, or other stateful setup.
-
-## Writing a Good Request
-
-The result depends heavily on how clear the request is. Prefer a request file
-with a goal, testable acceptance criteria, and explicit non-goals.
-
-```markdown
-## Goal
-
-Add `--json` output to the CLI.
-
-## Acceptance Criteria
-
-- `mytool list --json` prints a valid JSON array.
-- Behavior without `--json` is unchanged.
-
-## Out of Scope
-
-- Do not change the existing text output format.
-- Do not add `--yaml`.
-```
 
 ## Configuration
 
