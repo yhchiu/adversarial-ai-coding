@@ -2,7 +2,10 @@
 
 This is the detailed companion to the
 [How It Works](../README.md#how-it-works) overview in the README: the complete
-pipeline diagram, the review-loop mechanics, and per-stage notes.
+pipeline diagram, the review-loop mechanics, and per-stage notes. The normative
+reference for every file that crosses an agent boundary — verdicts, reviews,
+specs, plans, protected tests, and run state — is
+[artifact-contract.md](artifact-contract.md).
 
 The workflow drives two owner/reviewer slots through a staged pipeline: `A` is
 the worker agent and `B` is the reviewer agent. Stage 5 can also use a separate
@@ -120,5 +123,6 @@ Stage notes:
 Review verdicts are graded. `verdict.json` is
 `{approved, blockers[], suggestions[]}`: only blockers make the loop repeat,
 while suggestions accumulate in `aac/.run/suggestions.md` and are handled in
-stage 7. This keeps a reviewer from blocking on nitpicks or approving just to
+stage 7. Contract C1 in [artifact-contract.md](artifact-contract.md) is the
+authoritative schema and fail-closed rules. This keeps a reviewer from blocking on nitpicks or approving just to
 be polite.

@@ -1,6 +1,6 @@
 # 流程 — 逐 stage 完整說明
 
-本文件是 [README 流程總覽](../README.zh-TW.md#流程)的完整版:完整流程圖、審查迴圈機制與各 stage 細節。
+本文件是 [README 流程總覽](../README.zh-TW.md#流程)的完整版:完整流程圖、審查迴圈機制與各 stage 細節。跨越 agent 邊界的每個檔案(verdict、review、spec、plan、受保護測試與 run state)的規範參考見 [artifact-contract.zh-TW.md](artifact-contract.zh-TW.md)。
 
 流程圖中標 ⟳ 的步驟都會執行同一個審查迴圈,見第二張圖。
 
@@ -57,4 +57,4 @@ flowchart LR
 7. **最終 review 與修正**:A 逐條處理累積的 `aac/.run/suggestions.md` 與自我 review 發現,B 做最終驗收。
 8. **收尾**:印出 `git push` / `gh pr create` 指令與執行統計;`OPEN_PR=1` 才自動執行。
 
-分級裁決(只有 blocker 擋關、suggestions 累積後評估)的機制與理由見 README 的[核心設計](../README.zh-TW.md#核心設計為什麼這樣做)。
+分級裁決(只有 blocker 擋關、suggestions 累積後評估)的機制與理由見 README 的[核心設計](../README.zh-TW.md#核心設計為什麼這樣做);schema 與 fail-closed 規則的權威版本是 [artifact-contract.zh-TW.md](artifact-contract.zh-TW.md) 的契約 C1。
