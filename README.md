@@ -711,24 +711,25 @@ OpenCode reports one only once the call has finished, marking it `(failed)` when
 it did, so a slow tool call is silent until it returns. Codex reports a shell call
 as the full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is stripped and only the command you care about is shown.
 
-Built-in session, output, sandbox, and log flags belong to the workflow.
-`CLAUDE_ARGS` (and `IMPL_ARGS` when I resolves to Claude) must not contain
-`-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`,
-`--no-session-persistence`, or `--from-pr`, and must not override the structured
-output contract through `--output-format`, `--verbose`, or `--json-schema`.
-`CODEX_ARGS` and Codex-targeted `IMPL_ARGS` must not contain `--json`, `resume`,
-`--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`,
-`--ephemeral`, or a `sandbox_mode` override through `-c` / `--config`.
-`AGY_ARGS` and Agy-targeted `IMPL_ARGS` must not contain `--log-file`,
-`--continue`, or `--conversation`. `OPENCODE_ARGS` and OpenCode-targeted
-`IMPL_ARGS` must not contain `--format`, `--session` / `-s`, `--continue` /
-`-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, or `--dir`.
-Built-in argument variables also cannot set
-a model with `--model`, `-m`, or Codex `-c model=` / `--config model=`; use
-`MODEL_A`, `MODEL_B`, or `IMPL_MODEL` so actual calls and archived metadata
-agree. Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are
-parsed by the same reserved-option rules. Custom argument variables are passed
-through instead, so custom model and session flags may be supplied there.
+Session, output, sandbox, and log flags belong to the workflow. Reserved
+flags per built-in command:
+
+| Argument variable | Reserved flags |
+|---|---|
+| `CLAUDE_ARGS`, Claude-targeted `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema` |
+| `CODEX_ARGS`, Codex-targeted `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
+| `AGY_ARGS`, Agy-targeted `IMPL_ARGS` | `--log-file`, `--continue`, `--conversation` |
+| `OPENCODE_ARGS`, OpenCode-targeted `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
+
+For every built-in argument variable:
+
+- A model may not be set through `--model`, `-m`, or Codex
+  `-c model=` / `--config model=`. Use `MODEL_A`, `MODEL_B`, or `IMPL_MODEL`
+  so actual calls and archived metadata agree.
+- Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are parsed
+  by the same reserved-option rules.
+- Custom argument variables are passed through instead, so custom model and
+  session flags may be supplied there.
 
 Agy conversation IDs depend on its current log wording; an incompatible Agy
 upgrade degrades safely to a warning and fresh sessions rather than resuming an
