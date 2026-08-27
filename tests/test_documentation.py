@@ -228,9 +228,9 @@ def test_active_docs_teach_only_slot_specific_argument_variables():
         text = _read(name)
         for removed in ("CLAUDE_ARGS", "CODEX_ARGS", "AGY_ARGS", "OPENCODE_ARGS"):
             assert removed not in text, f"{name} still documents {removed}"
-        assert "AGENT_A_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
-        assert "AGENT_B_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
-        assert "IMPL_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
+        assert "AGENT_A_ARGS" in text
+        assert "AGENT_B_ARGS" in text
+        assert "IMPL_ARGS" in text
 
 
 def test_reasoning_level_is_documented_bilingually():

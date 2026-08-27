@@ -328,27 +328,31 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
 
 
 @pytest.mark.parametrize(
-    ("ref", "env", "expected"),
+    ("ref", "env", "expected_tokens", "expected_raw"),
     [
         (
             AgentRef("A", "claude"),
             {"AGENT_A_ARGS": '--append-system-prompt "claude words"'},
-            [("AGENT_A_ARGS", '--append-system-prompt "claude words"')],
+            ["--append-system-prompt", "claude words"],
+            '--append-system-prompt "claude words"',
         ),
         (
             AgentRef("B", "codex"),
             {"AGENT_B_ARGS": "-c model_reasoning_effort=low"},
-            [("AGENT_B_ARGS", "-c model_reasoning_effort=low")],
+            ["-c", "model_reasoning_effort=low"],
+            "-c model_reasoning_effort=low",
         ),
         (
             AgentRef("A", "agy"),
             {"AGENT_A_ARGS": '--append-system-prompt "agy words"'},
-            [("AGENT_A_ARGS", '--append-system-prompt "agy words"')],
+            ["--append-system-prompt", "agy words"],
+            '--append-system-prompt "agy words"',
         ),
         (
             AgentRef("A", "opencode"),
             {"AGENT_A_ARGS": "--variant high"},
-            [("AGENT_A_ARGS", "--variant high")],
+            ["--variant", "high"],
+            "--variant high",
         ),
         (
             AgentRef("A", "worker-wrapper"),
@@ -356,7 +360,8 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
                 "AGENT_A": "worker-wrapper",
                 "AGENT_A_ARGS": '--profile "worker words"',
             },
-            [("AGENT_A_ARGS", '--profile "worker words"')],
+            ["--profile", "worker words"],
+            '--profile "worker words"',
         ),
         (
             AgentRef("B", "review-wrapper"),
@@ -364,7 +369,8 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
                 "AGENT_B": "review-wrapper",
                 "AGENT_B_ARGS": '--profile "review words"',
             },
-            [("AGENT_B_ARGS", '--profile "review words"')],
+            ["--profile", "review words"],
+            '--profile "review words"',
         ),
         (
             AgentRef("I", "claude", base_slot="A"),
@@ -372,7 +378,8 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
                 "AGENT_A_ARGS": '--slot "owner words"',
                 "IMPL_ARGS": '--permission-mode "impl mode"',
             },
-            [("IMPL_ARGS", '--permission-mode "impl mode"')],
+            ["--permission-mode", "impl mode"],
+            '--permission-mode "impl mode"',
         ),
         (
             AgentRef("I", "impl-wrapper"),
@@ -380,13 +387,19 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
                 "IMPL_AGENT": "impl-wrapper",
                 "IMPL_ARGS": '--profile "impl words"',
             },
-            [("IMPL_ARGS", '--profile "impl words"')],
+            ["--profile", "impl words"],
+            '--profile "impl words"',
         ),
-        (AgentRef("A", "claude"), {}, []),
+        (AgentRef("A", "claude"), {}, [], ""),
     ],
 )
-def test_arg_sources_select_non_empty_adapter_args(ref, env, expected):
-    assert agents._arg_sources(ref, make(env)) == expected
+def test_slot_args_resolve_only_the_ref_slot(
+    ref, env, expected_tokens, expected_raw
+):
+    settings = make(env)
+
+    assert agents.agent_args(ref, settings) == expected_tokens
+    assert agents.resolve_model_args(ref, settings) == expected_raw
 
 
 def test_shared_sources_keep_runtime_and_metadata_order(monkeypatch):

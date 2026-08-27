@@ -84,10 +84,11 @@ command 呼叫都互相獨立。Wrapper 可以自行實作 continuity，但該�
 ### `write-code` 內的 O 與 I 交接
 
 若未設定 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS`，implementation ref 就是
-O。因此 `write-code` 內所有 worker 呼叫使用同一 ref，可以續接同一個對話。
+O。因此 `write-code` 內所有 worker 呼叫使用同一 ref，包含 O 的 slot 參數
+（`AGENT_A_ARGS` 或 `AGENT_B_ARGS`），可以續接同一個對話。
 
 只要設定任一 `IMPL_*`，即使 I 與 O 使用相同 CLI command，也會建立不同的
-I ref。I 以全新 session 進入逐任務實作迴圈，並在所有 task 間續接。完整品質
+I ref。這個獨立 I slot 只使用 `IMPL_ARGS`。I 以全新 session 進入逐任務實作迴圈，並在所有 task 間續接。完整品質
 關卡由 workflow 自己執行，只有需要修正時才呼叫 O；branch review 也只有出現
 blocker 時才呼叫 O。第一次 O 呼叫會切換 active worker ref、丟棄 I 的 ID，並
 讓 O 從全新 session 開始；同一 stage 中後續的 O 修正則續接這個新 session。

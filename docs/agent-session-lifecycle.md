@@ -91,11 +91,12 @@ The following table uses O=A and R=B unless Dual Spec selected different roles.
 ### The O-to-I handoff inside `write-code`
 
 With no `IMPL_AGENT`, `IMPL_MODEL`, or `IMPL_ARGS`, the implementation ref is O.
-All worker calls in `write-code` therefore share the same ref and can resume the
-same conversation.
+All worker calls in `write-code` therefore share the same ref, including O's
+slot arguments (`AGENT_A_ARGS` or `AGENT_B_ARGS`), and can resume the same
+conversation.
 
 Setting any `IMPL_*` option creates a distinct I ref, even if I uses the same CLI
-command as O. I starts fresh and resumes throughout the per-task implementation
+command as O. That independent I slot uses only `IMPL_ARGS`. I starts fresh and resumes throughout the per-task implementation
 loop. The complete quality gate runs deterministically and calls O only when a
 repair is needed. The branch review likewise calls O only when a blocker needs
 repair. The first such O call changes the active worker ref, discards I's ID,
