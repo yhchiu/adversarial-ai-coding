@@ -6,6 +6,7 @@ fix `now` instead, which makes the same cases deterministic.
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,9 @@ CODEX_QUOTA_CLOCK = (
     "visit https://chatgpt.com/codex/settings/usage to purchase more credits or "
     "try again at 12:50 AM.\n"
 )
+GROK_BUILD_LIMIT_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "grok_build_usage_balance_exhausted.txt"
+)
 
 NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())  # local 09:00
 
@@ -62,6 +66,16 @@ NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())  # local 09:00
 )
 def test_rate_limit_samples_detected(sample):
     assert is_rate_limited(sample)
+
+
+def test_grok_build_usage_balance_exhausted_is_detected_for_future_adapter_use():
+    """Replay the redacted Grok Build CLI error captured on 2026-08-27."""
+    sample = GROK_BUILD_LIMIT_FIXTURE.read_text(encoding="utf-8")
+
+    assert "status 402 Payment Required" in sample
+    assert "Grok Build usage balance exhausted" in sample
+    assert is_rate_limited(sample)
+    assert parse_reset_wait(sample, NOW) is None
 
 
 def test_ordinary_error_is_not_misclassified():

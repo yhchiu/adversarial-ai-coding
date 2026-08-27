@@ -28,6 +28,7 @@ _RATE_LIMIT = re.compile(
     r'"api_error_status": *429'
     r"|(?:hit|reached) your (?:session|usage|weekly|rate) limit"
     r"|personal-team-blocked:spending-limit"
+    r"|grok build usage balance exhausted"
     r"|rate.?limit"
     r"|too many requests"
     r"|status.?429",
