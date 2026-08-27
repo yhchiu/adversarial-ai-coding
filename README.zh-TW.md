@@ -4,7 +4,7 @@
 
 `adversarial-ai-coding` 是一個 AI Agent 開發軟體的流程編排器。
 
-# 多重 AI 對抗式程式開發工作流
+## 多重 AI 對抗式程式開發工作流
 
 自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
 
@@ -148,6 +148,11 @@ AGENT_A=opencode MODEL_A=google/gemini-2.5-pro \
 AGENT_B=claude   MODEL_B=opus \
   aac request.md
 
+# 使用自訂 agent 或 wrapper command
+AGENT_A=gemini AGENT_A_ARGS='--model gemini-2.5-pro --yolo' \
+AGENT_B=my-review-wrapper AGENT_B_ARGS='--strict' \
+  aac request.md
+
 # 啟用雙 spec 模式(需要互動終端與 HUMAN_GATE=1)
 DUAL_SPEC=1 aac request.md
 
@@ -203,8 +208,6 @@ IMPL_ARGS='-c model_reasoning_effort="low"' \
 ```
 
 三個 `IMPL_*` 都為空時,實作 slot 解析成選定的 owner,完全沿用既有行為。`IMPL_MODEL` 為空時,只有實作 command 與 owner command 相同,才繼承 owner slot 的 `MODEL_A` 或 `MODEL_B`;若換了 command 卻沒有設定 `IMPL_MODEL`,就使用該 CLI 自己的預設模型,絕不把一個 CLI 的模型名稱帶到另一個 CLI。
-
-內建 command 可在 A、B、I 間同名,因為 workflow 只會用精準捕捉的 session ID 續接。不同 custom slot 不得共用 command 名稱,workflow 無法判斷 wrapper 是否暗中沿用 session。自訂實作 wrapper 必須同時與 A、B 不同名。若選定的 owner 是 custom agent,只要要設定任何 `IMPL_*` 客製化,就必須明確設定另一個 `IMPL_AGENT` wrapper;三個值全空時仍直接使用 owner,不會建立不同角色。
 
 ## 雙 spec 模式
 
@@ -321,6 +324,46 @@ spec human gate 會顯示理由並詢問
 並以不可分割的方式重寫 run snapshot,因此後續每次 resume 仍會讀到一致
 的設定。使用 `HUMAN_GATE=0` 時只會記錄建議,絕不自動啟用。若環境中明確
 設定 `PHASES=0`,則完全停用這項建議。
+
+## 自訂 Agent 指令
+
+若 `AGENT_A`、`AGENT_B` 或 `IMPL_AGENT` 不是 `claude`、`codex`、`agy`
+或 `opencode`,workflow 會將它視為自訂 agent command。Workflow 會先加上
+該 slot 專用的 args,再把簡短的 prompt 檔案指示當作最後一個參數執行:
+
+```bash
+$AGENT_A $AGENT_A_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
+$AGENT_B $AGENT_B_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
+$IMPL_AGENT $IMPL_ARGS "Read the full workflow prompt from this repository file and follow it exactly: aac/.run/archive/<RUN_ID>/NNN-*-prompt.md"
+```
+
+自訂 command 必須具備 agentic 能力:它必須讀取指定的 prompt 檔案、依需要檢查
+與編輯 repository,並在執行失敗時以非零狀態碼結束。自訂 reviewer 必須寫入
+`aac/.run/review.md` 與 `aac/.run/verdict.json`;workflow 不會解析 stdout 中的
+JSON verdict。自訂 agent 不會自動續接 session,workflow 也不會把 `MODEL_A`、
+`MODEL_B` 或 `IMPL_MODEL` 轉換成它們的模型旗標。請把模型旗標放進
+`AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
+
+內建 command 可在 A、B、I 間同名,因為 workflow 只會續接精準捕捉的 session
+ID。不同的自訂 slot 不得共用 command 名稱,因為 workflow 無法判斷 wrapper
+是否暗中沿用 session。自訂實作 wrapper 因此必須同時與 A、B 不同名。若選定
+的 owner 是自訂 agent,設定任何 `IMPL_*` 客製化時都必須明確指定另一個
+`IMPL_AGENT` wrapper;三個 `IMPL_*` 值全空時仍會使用 owner 本身,不會建立
+不同的 slot。
+
+若自訂 CLI 需要延續 session,請在 wrapper script 中自行處理。例如讓 worker
+與 reviewer 使用不同的 profile、session ID 或 cache 目錄:
+
+```bash
+# my-agent-worker
+exec my-agent --session aac-worker "$@"
+
+# my-agent-reviewer
+exec my-agent --session aac-reviewer "$@"
+```
+
+需要 stdin、prompt 檔案、對 quoting 敏感的參數或其他 stateful 設定的 CLI,
+也適合透過 wrapper 處理。
 
 ## 環境變數
 
@@ -489,8 +532,8 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 | | claude | codex | agy | opencode |
 |---|---|---|---|---|
-| 非互動執行 | `claude -p --output-format stream-json` | `codex exec` | `agy --print` | `opencode run --format json --auto` |
-| session 續接 | `--resume <id>`(精準) | `resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) | `--session <id>`(精準) |
+| 非互動執行 | `claude -p --output-format stream-json` | `codex exec --json` | `agy --print` | `opencode run --format json --auto` |
+| session 續接 | `--resume <id>`(精準) | `exec resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) | `--session <id>`(精準) |
 | id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` | JSONL `sessionID` |
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) | `--auto`(使用者的 deny 規則仍生效) |
 | 推理深度 | `CLAUDE_ARGS='--effort=low'` | `CODEX_ARGS='-c model_reasoning_effort=low'` | `AGY_ARGS='--effort=low'` | `OPENCODE_ARGS='--variant low'` |
@@ -498,7 +541,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 | 訊息,加上每個工具呼叫一行摘要(工具結束時) |
 
 - Claude、Codex、Agy、OpenCode 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。OpenCode 的 `MODEL_*` 是 `provider/model`,AAC 不維護模型清單。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
-- 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
+- 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Stage 邊界同樣會清除 active session。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
 - workflow 絕不退回 Codex `--last`、Agy `--continue` 或 OpenCode `-c`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude、Codex、OpenCode 的原始 JSONL 與 Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
 - 內建 agent 執行時都會即時串流輸出,長步驟很少變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude、Codex 與 OpenCode 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。Claude 與 Codex 在工具呼叫「開始」時就印,因此跑十分鐘的指令執行中就看得到;OpenCode 只在呼叫「結束」時才印(失敗會標 `(failed)`),所以慢的工具呼叫在回來之前是安靜的。Codex 把 shell 呼叫回報成完整的解譯器命令列,因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉,只顯示你真正在意的那段指令。
 - 各內建指令的保留旗標(session、輸出、sandbox 與 log 控制由 workflow 管理)整理於下方表格;所有內建參數變數的共同規則也一併列在表後。
@@ -560,12 +603,16 @@ AGENT_B=agy AGY_ARGS='--effort=low' \
 
 ## 安全性注意事項
 
+- 確定性關卡由 workflow 執行,不採信 AI 自己回報的測試結果。
 - **agy agent 使用 `--dangerously-skip-permissions`**(該 CLI 無細粒度白名單),只建議搭配 `USE_WORKTREE=1` 或容器使用。
 - **opencode agent 使用 `--auto`**:只要你沒有在 OpenCode 設定裡明確 deny 的權限一律自動核准。deny 規則是唯一的過濾器,請先寫好,或比照 agy 搭配 `USE_WORKTREE=1` 或容器使用。
 - claude / codex 都以最小權限運作;真正的完整隔離是容器(devcontainer),branch/worktree 只隔離 git 狀態,不隔離檔案系統與網路。
 - 兩個 AI 互審**很燒 token**:`MAX_ROUNDS`、分級裁決、`commit_if_dirty`(無變更就跳過 commit 呼叫)都是止損機制。中止時已通過的 stage 均已 commit,可從斷點人工接手。
 - 雙 spec 模式會多花第二份候選、互審與比較表的 AI 呼叫;只有在規格決策值得額外成本時再開。
 - `DUAL_SPEC=1` 會拒絕 `HUMAN_GATE=0` 與無互動終端,因為此流程必須由人選定最終 spec owner。
+- A 與 B 不能使用相同的自訂 agent command。若兩個 slot 共用同一個底層
+  自訂 CLI,請使用不同的 wrapper command 名稱。內建的 Claude、Codex、Agy
+  與 OpenCode 則支援 A/B 使用相同 command。
 
 ## 自訂 stage
 
@@ -614,6 +661,8 @@ uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + co
 - [Run Claude Code programmatically(官方 headless 文件)](https://code.claude.com/docs/en/headless)
 - [Codex CLI Non-interactive mode(官方)](https://developers.openai.com/codex/noninteractive)
 - [Codex CLI reference(官方)](https://developers.openai.com/codex/cli/reference)
+- [OpenCode CLI](https://opencode.ai/docs/cli/)
+- [GitHub Spec Kit](https://github.com/github/spec-kit)
 - [Beyond Autocomplete: Best Agentic Coding Workflow in 2026(Kilo)](https://kilo.ai/articles/beyond-autocomplete)
 - [How to evaluate AI agents, avoid reward hacking, and build better specs(Arize)](https://arize.com/blog/how-to-evaluate-ai-agents-and-build-better-specs)
 - [Spec-Driven Development: A Spec-First Approach to AI-Native Engineering(Microsoft)](https://developer.microsoft.com/blog/spec-driven-development-ai-native-engineering)

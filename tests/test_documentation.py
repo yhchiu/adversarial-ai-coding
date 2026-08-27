@@ -305,6 +305,57 @@ def test_cli_help_and_version_flags_are_documented_bilingually():
         assert "aac --version" in readme
 
 
+def test_readme_feature_sections_are_documented_bilingually():
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    section_pairs = (
+        ("Multi-Agent Adversarial Coding Workflow", "多重 AI 對抗式程式開發工作流"),
+        ("How It Works", "流程"),
+        ("Core Design (Why It Works)", "核心設計(為什麼這樣做)"),
+        ("Requirements", "前置需求"),
+        ("Quick Start", "快速開始"),
+        ("Writing a Good Request", "需求怎麼寫"),
+        ("Strong Model Plans, Cheap Model Implements", "強模型規劃、便宜模型實作"),
+        ("Dual Spec Mode", "雙 spec 模式"),
+        ("Importing an External Spec or Plan", "匯入外部 Spec 或 Plan"),
+        ("Phased ATDD Mode", "分階段 ATDD 模式(Phased ATDD)"),
+        ("Custom Agent Commands", "自訂 Agent 指令"),
+        ("Configuration", "環境變數"),
+        ("Resuming an Interrupted Run", "中斷後續跑"),
+        ("Artifacts", "產物與目錄結構"),
+        ("Agent CLI Session Behavior", "Agent CLI 差異與限制"),
+        ("Protected Acceptance Tests", "受保護測試的逃生口"),
+        ("Safety Notes", "安全性注意事項"),
+        ("Custom Stages", "自訂 stage"),
+        ("Testing This Repository", "測試"),
+        ("Troubleshooting", "疑難排解"),
+        ("Future Directions", "延伸方向"),
+        ("Related Reading", "參考資料"),
+    )
+
+    for english_heading, chinese_heading in section_pairs:
+        assert f"## {english_heading}\n" in english
+        assert f"## {chinese_heading}\n" in chinese
+
+    assert "### Manual E2E" in english
+    assert "### 手動 E2E" in chinese
+
+
+def test_custom_agent_commands_are_documented_bilingually():
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        for detail in (
+            "AGENT_A=gemini",
+            "$AGENT_A $AGENT_A_ARGS",
+            "$AGENT_B $AGENT_B_ARGS",
+            "$IMPL_AGENT $IMPL_ARGS",
+            "aac/.run/review.md",
+            "aac/.run/verdict.json",
+            "exec my-agent --session aac-worker",
+            "exec my-agent --session aac-reviewer",
+        ):
+            assert detail in readme
+
+
 def test_cross_platform_launchers_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "adversarial-ai-coding/scripts" in readme

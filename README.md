@@ -105,6 +105,40 @@ For the stage-by-stage walkthrough — the full pipeline diagram, review-loop
 mechanics, gate commands, and per-stage notes — see
 [`docs/how-it-works.md`](docs/how-it-works.md).
 
+## Core Design (Why It Works)
+
+- **Deterministic gates are not delegated to AI.** An AI may take shortcuts
+  (reward hacking) to make tests pass, so the workflow runs build, vet, and
+  test commands itself and sends failures back to the worker. An agent's own
+  report that tests passed is informational only.
+- **Adversarial test integrity.** The reviewer writes acceptance tests from the
+  spec and the owner reviews them. Once protection is armed, no worker call —
+  including implementation slot I and later owner repairs — may change those
+  test files. The workflow checks `git diff` after every worker action, catches
+  both committed and uncommitted tampering, and aborts on repeated violations.
+  Objections to a test may only be recorded in the spec's Assumptions and Open
+  Questions section.
+- **Human checkpoints sit at the highest-leverage points.** After the spec
+  passes adversarial review and before expensive implementation begins, the
+  workflow pauses for human approval; the human may edit the spec before
+  continuing. The endpoint is a PR waiting for a human merge, not a silent
+  completion.
+- **Graded verdicts.** `verdict.json` is
+  `{approved, blockers[], suggestions[]}`. Only blockers stop progress;
+  suggestions accumulate in `aac/.run/suggestions.md` and are evaluated one by
+  one during the final stage. This keeps minor findings from blocking the run
+  without encouraging the reviewer to overlook them.
+- **Small batches.** Each checkbox task gets its own commit, making review and
+  rollback straightforward.
+- **Artifacts live in files.** A and B communicate through files under
+  `aac/docs/` and through Git diffs, rather than passing long content through
+  stdout. This is a natural fit for spec-driven development.
+- **The same worker ref resumes within a loop; every reviewer round gets fresh
+  context.** A worker retains context while revising under the same ref, and a
+  ref change discards the session according to the rules below. A fresh
+  reviewer is not anchored by its previous conclusion, which is another reason
+  to pair different AI brands with different blind spots.
+
 ## Requirements
 
 - Python 3.12 or newer
@@ -815,6 +849,13 @@ the intended trusted state.
   Use distinct wrapper command names when both slots share the same underlying
   custom CLI. Identical built-in Claude, Codex, Agy, and OpenCode slots are supported.
 
+## Custom Stages
+
+The stage flow is defined in `workflow.run_workflow()` and composed from Python
+building blocks such as `begin_stage`, `work`, `review_loop`, `gate_loop`,
+`commit_work`, and `commit_if_dirty`. Follow the existing stage patterns when
+adding or removing a stage.
+
 ## Testing This Repository
 
 Run the fast suite while you work. This is the default selection and finishes
@@ -835,12 +876,25 @@ uv run pytest -q -m "not e2e"
 Neither of those calls any AI agent. Both run across all cores, because
 `-n auto` is on by default.
 
-Run the full E2E only when changing core workflow behavior. It calls real AI
-agents and consumes quota:
+### Manual E2E (calls real AI agents and consumes subscription quota)
 
 ```bash
-uv run pytest -m e2e -s
+uv run pytest -m e2e -s  # full six-stage flow; about 20–40 minutes and $2–5 in equivalent quota
 ```
+
+The runner creates a fixture Git repository in a temporary directory: a small
+Go project plus an ASCII request distilled from five real trial runs. It uses
+this checkout's Python package and `resources/` directly, so there is no copied
+fixture to drift. After the run, it verifies all six stages completed, the spec
+contains an Assumptions section, every plan checkbox is checked, protected tests
+were not changed, tasks produced small commits, the final gate passes when run
+by the test driver itself, and the metrics summary exists. The workspace path is
+preserved for inspection on both success and failure. `E2E_DIR` can override
+its location, and the normal agent and model environment variables override the
+defaults.
+
+**Use this as a manual regression after core workflow changes and before a
+release. Never add it to CI or a unit-test entry point.**
 
 ## Troubleshooting
 
@@ -849,6 +903,18 @@ paths, complete `TOOLS` values, adapter-specific permission fixes, gate failures
 Windows encoding problems, and quota behavior. A
 [Traditional Chinese version](docs/troubleshooting.zh-TW.md) is also available.
 
+## Future Directions
+
+- **Deeper agent integration.** The
+  [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) for
+  Python and TypeScript is the programmatic interface to `claude -p`, with
+  native structured output, session objects, and tool-approval callbacks.
+- **Spec templates.** The first two stages can use SDD artifacts from
+  [GitHub Spec Kit](https://github.com/github/spec-kit).
+- **Unattended CI.** Combine `HUMAN_GATE=0 OPEN_PR=1` with `NOTIFY_CMD`, then
+  move human oversight to the PR. Claude Code and Codex both provide official
+  CI integrations.
+
 ## Related Reading
 
 - [Claude Code headless mode](https://code.claude.com/docs/en/headless)
@@ -856,3 +922,6 @@ Windows encoding problems, and quota behavior. A
 - [Codex CLI reference](https://developers.openai.com/codex/cli/reference)
 - [OpenCode CLI](https://opencode.ai/docs/cli/)
 - [GitHub Spec Kit](https://github.com/github/spec-kit)
+- [Beyond Autocomplete: Best Agentic Coding Workflow in 2026 (Kilo)](https://kilo.ai/articles/beyond-autocomplete)
+- [How to evaluate AI agents, avoid reward hacking, and build better specs (Arize)](https://arize.com/blog/how-to-evaluate-ai-agents-and-build-better-specs)
+- [Spec-Driven Development: A Spec-First Approach to AI-Native Engineering (Microsoft)](https://developer.microsoft.com/blog/spec-driven-development-ai-native-engineering)
