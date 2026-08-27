@@ -364,7 +364,7 @@ spec human gate 會顯示理由並詢問
 | `AGENTS_TEMPLATE` | workflow checkout 內的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | workflow checkout 內的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `aac/docs/<時間戳>` | 規格與計畫的存放目錄 |
-| `TOOLS` | git/go test/go build/go vet | Claude Code 的 `--allowedTools` 白名單。**注意 `Bash(go *)` 含 `go run`(任意程式碼執行),別圖方便放寬**。審查者同受白名單限制,被擋的指令會空轉燒 token(E2E 實測):依專案補上常用唯讀指令(如 `Bash(gofmt *)`),並靠 AGENTS.md 的規則引導 agent 改用內建檔案工具 |
+| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | 完整 Claude Code `--allowedTools` 值;設定後會取代預設值。可直接複製的 Go、npm、Cargo 與 Python 範例見[疑難排解指南](docs/troubleshooting.zh-TW.md) |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
 
@@ -599,13 +599,9 @@ uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + co
 
 ## 疑難排解
 
-- **`(B 未產出 verdict.json,視為未通過)`**:審查者 agent 失敗或沒照規範寫檔,看 `aac/.run/archive/<RUN_ID>/logs/001-run.log`;連續發生會被 `MAX_ROUNDS` 擋下並通知。
-- **卡在權限詢問**:headless 下沒人能按「允許」。Claude Code 需要的指令加進 `TOOLS`;codex 確認 sandbox 模式;agy 確認旗標。
-- **`沒有互動終端可供核准`**:`HUMAN_GATE=1` 需要 tty,`HUMAN_GATE_PLAN=1` 也是(這個在啟動時就會擋下,不會白燒 AI 額度);在 CI 等無人環境設 `HUMAN_GATE=0`(並讓 `HUMAN_GATE_PLAN` 維持 `0`),並用 `NOTIFY_CMD` 接手把關。
-- **品質關卡在逐任務階段一直紅**:驗收測試在所有任務完成前本來就允許紅燈,逐任務只跑 `BUILD_GATE_CMD`(編譯);若連編譯關卡都過不了才會進修正迴圈。
-- **審查者報告檔案「損壞」但檔案其實正常**:Windows(特別是中文語系)上 codex 讀檔可能把 UTF-8 內容用系統碼頁(CP950)解碼成亂碼,產生假性 corruption blocker。對策:規格、計畫與測試資料盡量用 ASCII,非 ASCII 字元寫成 Unicode escape(Go 中即反斜線接 `u4e0a`,代表 U+4E0A「上」)——AGENTS.md 範本已內建此規則。
-- **撞到訂閱用量限額**(`You've hit your session limit`、`You've hit your usage limit`、429):預設會自動等待重試,內建 agent 通用。**判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出** —— claude 看結構化回應裡回報的狀態碼(它自己就足以定案),codex 看 `error` 與 `turn.failed` 事件加上 CLI 寫在 JSON 之外的文字;opencode 看 `--format json` 的 `error` 事件加上 CLI 寫在 JSON 之外的文字,並把 provider 回報的 HTTP status 一起帶進訊息(opencode 原樣轉傳各家 provider 的措辭,不是每一家的 429 都會寫「rate limit」);agy 沒有結構化通道,仍然掃整包輸出。因此測試套件剛好印出「rate limit」字樣不會害整個 run 去睡覺。等待時間方面,claude 的串流會回報精確的重置時刻,有就直接用;否則靠訊息解析(支援 `resets 10:50am`、`try again in 90s`、`try again at Jul 14th, 2026 7:23 PM`、只有時刻的 `try again at 12:50 AM` 四種格式,即使被換行折斷也能解析),都沒有才指數退避;等待會發 `NOTIFY_CMD` 通知並記錄在 log。xAI/OpenCode 的 `personal-team-blocked:spending-limit` 與 Grok Build 的 `usage balance exhausted` 明確需要帳號端處理,會直接以 exit code 75 中止,不等待也不重送。
-  **若重置時刻比 `RETRY_MAX_RESET_WAIT`(預設 6 小時)還遠**——例如 codex 週配額要等好幾天——則立即放棄並印出重置時刻,不做徒勞的空等;配額回來後重跑即可。`RETRY_ON_LIMIT=0` 可完全關閉重試。非限額的 agent 失敗不會重試,原始輸出攤印在 log 結尾供診斷。
+請見獨立的[疑難排解指南](docs/troubleshooting.zh-TW.md),其中列出具體診斷路徑、
+完整 `TOOLS` 值、各 adapter 的權限修正、品質關卡、Windows 編碼與 quota 行為。
+另有[英文版](docs/troubleshooting.md)。
 
 ## 延伸方向
 

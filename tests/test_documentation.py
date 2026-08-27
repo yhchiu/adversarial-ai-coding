@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+from adversarial_ai_coding.config import DEFAULT_TOOLS
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -88,10 +90,53 @@ def test_artifact_layout_is_documented_bilingually():
 def test_run_log_location_is_documented_bilingually():
     # The old text pointed at .workflow/logs/, which never existed: the log
     # lives inside each run's archive directory.
-    assert "aac/.run/archive/<RUN_ID>/" in _read("README.md")
-    assert "aac/.run/archive/<RUN_ID>/logs/001-run.log" in _read("README.zh-TW.md")
-    for readme in (_read("README.md"), _read("README.zh-TW.md")):
-        assert "logs/001-run.log" in readme
+    for guide in (
+        _read("docs/troubleshooting.md"),
+        _read("docs/troubleshooting.zh-TW.md"),
+    ):
+        assert "aac/.run/archive/<RUN_ID>/logs/001-run.log" in guide
+
+
+def test_troubleshooting_guides_are_linked_and_actionable_bilingually():
+    documents = {
+        "README.md": "docs/troubleshooting.md",
+        "README.zh-TW.md": "docs/troubleshooting.zh-TW.md",
+    }
+    default_tools = DEFAULT_TOOLS
+
+    for readme_name, guide_name in documents.items():
+        readme = _read(readme_name)
+        assert guide_name in readme
+        assert default_tools in _settings_row(readme, "TOOLS")
+
+        guide = _read(guide_name)
+        assert default_tools in guide
+        for detail in (
+            "Bash(gofmt *)",
+            "Bash(npm test)",
+            "Bash(cargo build)",
+            "Bash(uv run pytest *)",
+            "workspace-write",
+            "--dangerously-skip-permissions",
+            "--auto",
+            "BUILD_GATE_CMD",
+            "GATE_CMD",
+            "RESUME_RUN",
+        ):
+            assert detail in guide
+
+    assert "Setting `TOOLS` replaces that entire value" in _read(
+        "docs/troubleshooting.md"
+    )
+    assert "設定 `TOOLS` 會取代整個值" in _read(
+        "docs/troubleshooting.zh-TW.md"
+    )
+    assert "The rule added in that example is `Bash(gofmt *)`" in _read(
+        "docs/troubleshooting.md"
+    )
+    assert "上例實際新增的是 `Bash(gofmt *)`" in _read(
+        "docs/troubleshooting.zh-TW.md"
+    )
 
 
 def test_codex_reserved_aliases_are_documented_bilingually():
@@ -103,18 +148,18 @@ def test_codex_reserved_aliases_are_documented_bilingually():
 
 
 def test_quota_detection_channel_is_documented_bilingually():
-    english = _read("README.md")
-    chinese = _read("README.zh-TW.md")
-    assert "Detection reads only the agent's own error channel" in english
-    assert "Agy has no" in english and "whole output is still scanned" in english
-    assert "| Reported reset time | Claude |" in english
-    assert "判斷只讀 agent 自己的錯誤通道,絕不讀 agent 執行過的指令輸出" in chinese
-    assert "agy 沒有結構化通道,仍然掃整包輸出" in chinese
-    assert "claude 的串流會回報精確的重置時刻" in chinese
+    english = _read("docs/troubleshooting.md")
+    chinese = _read("docs/troubleshooting.zh-TW.md")
+    assert "AAC reads only an agent's own error channel" in english
+    assert "Agy has no" in english and "complete output is scanned" in english
+    assert "| Reported reset epoch | Claude |" in english
+    assert "AAC 只讀 agent 自己的錯誤通道做 quota 判斷" in chinese
+    assert "Agy 沒有結構化 event 邊界,所以仍掃完整輸出" in chinese
+    assert "| 回報的 reset epoch | Claude |" in chinese
     # OpenCode relays each provider's own wording, so what makes a 429
     # detectable is the status it reports, not the words in the message.
-    assert "HTTP status the provider" in english
-    assert "HTTP status 一起帶進訊息" in chinese
+    assert "retaining the provider's" in english and "HTTP status" in english
+    assert "保留 provider HTTP status" in chinese
 
 
 def test_opencode_permission_and_reserved_args_are_documented_bilingually():

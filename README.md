@@ -504,7 +504,7 @@ quoting-sensitive arguments, or other stateful setup.
 | `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `aac/docs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
-| `TOOLS` | git/go build/test/vet allowlist | Claude Code `--allowedTools` value. |
+| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | Complete Claude Code `--allowedTools` value. Setting it replaces the default; see the [Troubleshooting Guide](docs/troubleshooting.md) for copyable Go, npm, Cargo, and Python examples. |
 
 On Windows, if you want Go race tests in the gate, use:
 
@@ -844,74 +844,10 @@ uv run pytest -m e2e -s
 
 ## Troubleshooting
 
-### Reviewer did not write `verdict.json`
-
-The reviewer failed or did not follow the rules. For custom reviewers, verify
-that the command can write `aac/.run/review.md` and `aac/.run/verdict.json`.
-Check the run archive under `aac/.run/archive/<RUN_ID>/`, whose
-`logs/001-run.log` holds the whole run.
-
-### The run is stuck on a permission prompt
-
-Headless mode cannot answer permission prompts. For Claude Code, add required
-commands to `TOOLS`. For Codex, check sandbox settings. For Antigravity, check
-its permission flags and isolation.
-
-### No interactive terminal is available for approval
-
-`HUMAN_GATE=1` requires a TTY, and so does `HUMAN_GATE_PLAN=1` (which is
-checked at startup, before any AI call). In unattended environments, set
-`HUMAN_GATE=0` (and leave `HUMAN_GATE_PLAN` at `0`) and use `NOTIFY_CMD` or PR
-review for human control.
-
-### The per-task quality gate keeps failing
-
-During task implementation, full acceptance tests may still be red. When
-configured, the workflow uses `BUILD_GATE_CMD` for per-task checks and `GATE_CMD`
-after all tasks finish.
-
-### Reviewer reports corrupted files on Windows
-
-Some AI tools may misdecode non-ASCII UTF-8 content on Windows. Keep generated
-specs, plans, and test data ASCII when possible. Represent non-ASCII source
-test data with Unicode escapes, as described in `resources/AGENTS.template.md`.
-
-### Rate limit or quota errors
-
-By default, the workflow waits and retries on rate-limit or quota errors, for every
-agent. Detection reads only the agent's own error channel, never the output of a
-command the agent ran, so a test suite that happens to print the words "rate
-limit" cannot send the run to sleep. For Claude that channel is the structured
-response, and its reported status decides on its own; for Codex it is the `error`
-and `turn.failed` events plus anything the CLI writes outside JSON. OpenCode uses
-`error` events from `--format json`, plus anything it writes outside JSON, and
-keeps the HTTP status the provider reported next to its message, because OpenCode
-passes provider wording through and only some providers say "rate limit" on a
-429. Agy has no structured channel, so its whole output is still scanned.
-
-When the agent states when the quota returns, the workflow waits exactly that long
-instead of guessing. Claude reports an exact reset time in its stream, which is
-used directly; otherwise four message shapes are understood:
-
-| Message | Agent | Wait |
-| --- | --- | --- |
-| Reported reset time | Claude | Until that moment, plus 2 minutes |
-| `resets 10:50am` | Claude | Until that clock time, plus 2 minutes |
-| `try again in 90s` | Codex | That duration, plus 30 seconds |
-| `try again at Jul 14th, 2026 7:23 PM` | Codex | Until that timestamp, plus 30 seconds |
-| `try again at 12:50 AM` | Codex | Until that clock time, plus 30 seconds |
-
-Balance-exhausted errors that require account action are not transient: xAI's
-OpenCode `personal-team-blocked:spending-limit` response and Grok Build's
-`usage balance exhausted` response abort immediately with exit code 75 instead
-of sleeping or resending the request. Other unparseable limits fall back to
-exponential backoff (`RETRY_BASE_WAIT` doubling up to `RETRY_MAX_WAIT`), for at
-most `RETRY_MAX` retries.
-
-A weekly quota can reset days away. Sleeping through it would waste hours and
-still fail, so when a parsed reset time exceeds `RETRY_MAX_RESET_WAIT` the run
-aborts immediately, reports the reset timestamp, and fires `NOTIFY_CMD`. Rerun
-after the quota returns. Set `RETRY_ON_LIMIT=0` to fail immediately on any limit.
+See the [Troubleshooting Guide](docs/troubleshooting.md) for concrete diagnostic
+paths, complete `TOOLS` values, adapter-specific permission fixes, gate failures,
+Windows encoding problems, and quota behavior. A
+[Traditional Chinese version](docs/troubleshooting.zh-TW.md) is also available.
 
 ## Related Reading
 
