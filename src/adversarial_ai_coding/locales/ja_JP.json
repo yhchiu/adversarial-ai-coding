@@ -32,6 +32,7 @@
   "Missing required command:{name}": "必要な command が見つかりません:{name}",
   "A and B cannot both use custom agent command {command}. Use separate wrapper command names for worker and reviewer.": "A と B が同じカスタム agent command {command} を使うことはできません。worker と reviewer には別の wrapper command 名を使ってください。",
   "Implementation slot cannot reuse custom agent command {name}. Set IMPL_AGENT to a different wrapper command.": "実装 slot はカスタム agent command {name} を再利用できません。IMPL_AGENT には別の wrapper command を設定してください。",
+  "Removed adapter-wide argument variable(s): {names}. Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead.": "削除された adapter-wide 引数変数：{names}。AGENT_A_ARGS、AGENT_B_ARGS、または IMPL_ARGS を使ってください。",
   "(workflow prompt template not found:{path}; keep resources/prompts with the script or set PROMPTS_DIR)": "(workflow prompt template が見つかりません:{path}。resources/prompts を script と同じ場所に置くか、PROMPTS_DIR を設定してください)",
   "(AGENTS.md template not found:{template_path}; keep resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)": "(AGENTS.md template が見つかりません:{template_path}。resources/AGENTS.template.md を script と同じ場所に置くか、AGENTS_TEMPLATE を設定してください)",
   "IMPORT_SPEC and DUAL_SPEC=1 are incompatible: dual candidate specs and an imported spec contradict each other. Disable one.": "IMPORT_SPEC と DUAL_SPEC=1 は両立しません。dual candidate spec と取り込み spec が矛盾します。どちらかを無効にしてください。",

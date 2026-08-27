@@ -32,6 +32,7 @@
   "Missing required command:{name}": "缺少必要的 command:{name}",
   "A and B cannot both use custom agent command {command}. Use separate wrapper command names for worker and reviewer.": "A 與 B 不能使用同一個自訂 agent command {command}。worker 與 reviewer 請用不同的 wrapper command 名稱。",
   "Implementation slot cannot reuse custom agent command {name}. Set IMPL_AGENT to a different wrapper command.": "實作 slot 不能重用自訂 agent command {name}。請把 IMPL_AGENT 設成另一個 wrapper command。",
+  "Removed adapter-wide argument variable(s): {names}. Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead.": "已移除的 adapter-wide 參數變數：{names}。請改用 AGENT_A_ARGS、AGENT_B_ARGS 或 IMPL_ARGS。",
   "(workflow prompt template not found:{path}; keep resources/prompts with the script or set PROMPTS_DIR)": "(找不到 workflow prompt template:{path}；請把 resources/prompts 與 script 放在一起，或設定 PROMPTS_DIR)",
   "(AGENTS.md template not found:{template_path}; keep resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)": "(找不到 AGENTS.md template:{template_path}；請把 resources/AGENTS.template.md 與 script 放在一起，或設定 AGENTS_TEMPLATE)",
   "IMPORT_SPEC and DUAL_SPEC=1 are incompatible: dual candidate specs and an imported spec contradict each other. Disable one.": "IMPORT_SPEC 與 DUAL_SPEC=1 不相容：dual candidate spec 與匯入的 spec 互相衝突。請關掉其中一個。",

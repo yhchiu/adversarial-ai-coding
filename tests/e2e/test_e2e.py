@@ -23,10 +23,10 @@ E2E_DEFAULTS = {
     "HUMAN_GATE": "0",
     "AGENT_A": "claude",
     "MODEL_A": "sonnet",
-    "CLAUDE_ARGS": "--effort=low",
+    "AGENT_A_ARGS": "--effort=low",
     "AGENT_B": "codex",
     "MODEL_B": "gpt-5.5",
-    "CODEX_ARGS": "-c model_reasoning_effort=low",
+    "AGENT_B_ARGS": "-c model_reasoning_effort=low",
 }
 
 needs_go = pytest.mark.skipif(

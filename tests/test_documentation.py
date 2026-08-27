@@ -214,6 +214,25 @@ def test_opencode_permission_and_reserved_args_are_documented_bilingually():
         assert "`--prompt`" not in readme
 
 
+def test_active_docs_teach_only_slot_specific_argument_variables():
+    documents = (
+        "README.md",
+        "README.zh-TW.md",
+        "docs/troubleshooting.md",
+        "docs/troubleshooting.zh-TW.md",
+        "docs/agent-session-lifecycle.md",
+        "docs/agent-session-lifecycle.zh-TW.md",
+        "docs/python-port-parity.md",
+    )
+    for name in documents:
+        text = _read(name)
+        for removed in ("CLAUDE_ARGS", "CODEX_ARGS", "AGY_ARGS", "OPENCODE_ARGS"):
+            assert removed not in text, f"{name} still documents {removed}"
+        assert "AGENT_A_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
+        assert "AGENT_B_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
+        assert "IMPL_ARGS" in text or name.startswith("docs/agent-session-lifecycle")
+
+
 def test_reasoning_level_is_documented_bilingually():
     english = _read("README.md")
     chinese = _read("README.zh-TW.md")
@@ -228,9 +247,9 @@ def test_reasoning_level_is_documented_bilingually():
     assert "--effort=low" in agy
     assert "--variant low" in opencode
     for readme in (english, chinese):
-        assert "CLAUDE_ARGS='--effort=high'" in readme
-        assert "OPENCODE_ARGS='--variant low'" in readme
-        assert "AGY_ARGS='--effort=low'" in readme
+        assert "AGENT_A_ARGS='--effort=high'" in readme
+        assert "AGENT_A_ARGS='--variant low'" in readme
+        assert "AGENT_B_ARGS='--effort=low'" in readme
 
 
 def test_agent_streaming_is_documented_bilingually():

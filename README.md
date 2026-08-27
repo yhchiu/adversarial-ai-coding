@@ -506,9 +506,8 @@ quoting-sensitive arguments, or other stateful setup.
 | `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
 | `IMPL_MODEL` | inherited or CLI default | Model override for a built-in implementation slot. When omitted, inherits the owner's model only if the implementation and owner commands match; custom implementation agents ignore it and use `IMPL_ARGS`. |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` / `OPENCODE_ARGS` | empty | Extra CLI arguments for built-in commands, shared by command name and parsed with POSIX shell quoting. Session-control flags documented below are reserved. For OpenCode, put `--variant` or `--agent` here; models stay on `MODEL_*`. |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for custom agent commands, parsed with POSIX shell quoting and appended before the prompt-file instruction argument. |
-| `IMPL_ARGS` | empty | Extra implementation-slot arguments, parsed with POSIX shell quoting. For a built-in, these follow its command-wide args; for a custom implementation wrapper, include its model flag here. |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | empty | Extra CLI arguments for the A and B slots, parsed with POSIX shell quoting and appended before the prompt-file instruction argument. Built-in slots are checked with that slot's adapter rules; custom slots are pass-through after quoting. For OpenCode, put `--variant` or `--agent` here; models stay on `MODEL_*`. |
+| `IMPL_ARGS` | empty | Extra implementation-slot arguments, parsed with POSIX shell quoting. An independent I slot uses only this value. Custom implementation wrappers should include their model flag here. |
 | `MAX_ROUNDS` | `3` | Maximum review or quality-gate repair rounds per stage. |
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
@@ -571,13 +570,13 @@ use case is swapping an agent whose quota ran out:
 AGENT_B=agy RESUME_RUN=last aac
 ```
 
-The persisted `IMPL_AGENT`, `IMPL_MODEL`, and `IMPL_ARGS` values follow the
-same non-empty override rule. A non-empty value on the resume command replaces
-the snapshot for that attempt, but an empty environment value cannot clear a
-saved value. To clear one, edit the corresponding lowercase key in
-`aac/.run/state/<run-id>/settings.json`, keep it as valid schema-1 JSON, and
-then resume. For example, set `"impl_model": ""` to return to the inheritance
-rule.
+The persisted `AGENT_A_ARGS`, `AGENT_B_ARGS`, `IMPL_AGENT`, `IMPL_MODEL`, and
+`IMPL_ARGS` values follow the same non-empty override rule. A non-empty value
+on the resume command replaces the snapshot for that attempt, but an empty
+environment value cannot clear a saved value. To clear one, edit the
+corresponding lowercase key in `aac/.run/state/<run-id>/settings.json`, keep
+it as valid schema-2 JSON, and then resume. For example, set `"impl_model": ""`
+to return to the inheritance rule.
 
 `SPEC_DIR`, `DUAL_SPEC`, `AUTO_BRANCH`, and `USE_WORKTREE` are immutable
 across resume: they decide the stage graph and artifact locations, so a
@@ -660,7 +659,7 @@ your-project/
         |-- last-agent-cli.raw           # most recent raw CLI transcript
         |-- latest-run.txt               # path of the newest archive directory
         |-- state/<RUN_ID>/              # resume state
-        |   |-- settings.json            # settings snapshot (schema 1)
+        |   |-- settings.json            # settings snapshot (schema 2)
         |   |-- ledger.json              # append-only stage ledger
         |   |-- task.txt                 # resolved request snapshot
         |   |-- phases.json              # PHASES=1 phase graph
@@ -705,7 +704,7 @@ ATDD, and Dual Spec stage, including `RESUME_RUN`, see
 | Worker resume | `--resume <id>` | `exec resume ... <thread-id>` | `--conversation <conversation-id>` | `--session <id>` |
 | ID source | Structured response | `thread.started` JSONL event | Per-attempt `--log-file` record | JSONL `sessionID` |
 | Permission mode | `acceptEdits` + `TOOLS` | `--sandbox workspace-write` | `--dangerously-skip-permissions` | `--auto` (user deny rules still apply) |
-| Reasoning level | `CLAUDE_ARGS='--effort=low'` | `CODEX_ARGS='-c model_reasoning_effort=low'` | `AGY_ARGS='--effort=low'` | `OPENCODE_ARGS='--variant low'` |
+| Reasoning level | `AGENT_A_ARGS='--effort=low'` | `AGENT_B_ARGS='-c model_reasoning_effort=low'` | `AGENT_A_ARGS='--effort=low'` | `AGENT_A_ARGS='--variant low'` |
 | Live output | Messages and a one-line summary per tool call | Messages and a one-line summary per tool call | Raw merged output | Messages and a one-line summary per tool call (at completion) |
 
 Claude, Codex, Agy, and OpenCode may each be used in A, B, and I. OpenCode
@@ -750,10 +749,10 @@ flags per built-in command:
 
 | Argument variable | Reserved flags |
 |---|---|
-| `CLAUDE_ARGS`, Claude-targeted `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema` |
-| `CODEX_ARGS`, Codex-targeted `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
-| `AGY_ARGS`, Agy-targeted `IMPL_ARGS` | `--log-file`, `--continue`, `--conversation` |
-| `OPENCODE_ARGS`, OpenCode-targeted `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
+| Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema` |
+| Codex-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
+| Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--log-file`, `--continue`, `--conversation` |
+| OpenCode-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
 
 For every built-in argument variable:
 
@@ -777,32 +776,31 @@ their POSIX escape meaning.
 ### Reasoning level
 
 AAC has no single `REASONING` variable. Each built-in CLI has its own flag;
-put it in that command's `*_ARGS` (or `IMPL_ARGS` when slot I uses that
-command). `MODEL_*` still selects the model. Accepted values are owned by
-the CLI and can change; `claude --help`, `codex exec --help`, `agy --help`,
-and `opencode run --help` are authoritative.
+put it in that slot's `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS`.
+`MODEL_*` still selects the model. Accepted values are owned by the CLI and
+can change; `claude --help`, `codex exec --help`, `agy --help`, and
+`opencode run --help` are authoritative.
 
 | Agent | Variable | Flag | Values verified on this project's CLIs |
 |---|---|---|---|
-| Claude | `CLAUDE_ARGS` | `--effort=low` | `low`, `medium`, `high`, `xhigh`, `max` |
-| Codex | `CODEX_ARGS` | `-c model_reasoning_effort=low` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (model-dependent). `-c model=` is reserved; this key is not. |
-| Agy | `AGY_ARGS` | `--effort=low` | `low`, `medium`, `high` |
-| OpenCode | `OPENCODE_ARGS` | `--variant low` | Provider-specific. OpenCode's help cites `high`, `max`, `minimal`. |
+| Claude | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--effort=low` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Codex | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `-c model_reasoning_effort=low` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (model-dependent). `-c model=` is reserved; this key is not. |
+| Agy | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--effort=low` | `low`, `medium`, `high` |
+| OpenCode | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--variant low` | Provider-specific. OpenCode's help cites `high`, `max`, `minimal`. |
 
-The same flag on slot I uses `IMPL_ARGS` after the command-wide `*_ARGS`:
+The same flag on slot I uses only `IMPL_ARGS`:
 
 ```bash
-CLAUDE_ARGS='--effort=high' \
-CODEX_ARGS='-c model_reasoning_effort=medium' \
-AGENT_A=claude AGENT_B=codex \
+AGENT_A=claude AGENT_A_ARGS='--effort=high' \
+AGENT_B=codex AGENT_B_ARGS='-c model_reasoning_effort=medium' \
 IMPL_AGENT=codex IMPL_ARGS='-c model_reasoning_effort="low"' \
   aac request.md
 ```
 
 ```bash
 AGENT_A=opencode MODEL_A=xai/grok-4.6 \
-OPENCODE_ARGS='--variant low' \
-AGENT_B=agy AGY_ARGS='--effort=low' \
+AGENT_A_ARGS='--variant low' \
+AGENT_B=agy AGENT_B_ARGS='--effort=low' \
   aac request.md
 ```
 

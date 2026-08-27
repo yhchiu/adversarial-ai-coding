@@ -32,6 +32,7 @@
   "Missing required command:{name}": "command obrigatório ausente:{name}",
   "A and B cannot both use custom agent command {command}. Use separate wrapper command names for worker and reviewer.": "A e B não podem usar o mesmo agent command customizado {command}. Use nomes de wrapper command diferentes para worker e reviewer.",
   "Implementation slot cannot reuse custom agent command {name}. Set IMPL_AGENT to a different wrapper command.": "O slot de implementação não pode reutilizar o agent command customizado {name}. Defina IMPL_AGENT para outro wrapper command.",
+  "Removed adapter-wide argument variable(s): {names}. Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead.": "Variável(is) de argumentos adapter-wide removida(s): {names}. Use AGENT_A_ARGS, AGENT_B_ARGS ou IMPL_ARGS.",
   "(workflow prompt template not found:{path}; keep resources/prompts with the script or set PROMPTS_DIR)": "(workflow prompt template não encontrado:{path}; mantenha resources/prompts junto do script ou defina PROMPTS_DIR)",
   "(AGENTS.md template not found:{template_path}; keep resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)": "(AGENTS.md template não encontrado:{template_path}; mantenha resources/AGENTS.template.md junto do script ou defina AGENTS_TEMPLATE)",
   "IMPORT_SPEC and DUAL_SPEC=1 are incompatible: dual candidate specs and an imported spec contradict each other. Disable one.": "IMPORT_SPEC e DUAL_SPEC=1 são incompatíveis: dual candidate specs e um spec importado se contradizem. Desative um deles.",

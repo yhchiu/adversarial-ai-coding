@@ -213,51 +213,42 @@ def test_custom_agent_args_use_slot_when_names_match():
         (
             {
                 "AGENT_A": "claude",
-                "CLAUDE_ARGS": '--adapter "wide words"',
                 "AGENT_A_ARGS": '--slot "a words"',
             },
             AgentRef("A", "claude"),
-            ["--adapter", "wide words", "--slot", "a words"],
-            '--adapter "wide words" --slot "a words"',
+            ["--slot", "a words"],
+            '--slot "a words"',
         ),
         (
             {
                 "AGENT_B": "codex",
-                "CODEX_ARGS": "-c model_reasoning_effort=low",
                 "AGENT_B_ARGS": "-c model_reasoning_effort=high",
             },
             AgentRef("B", "codex"),
-            [
-                "-c",
-                "model_reasoning_effort=low",
-                "-c",
-                "model_reasoning_effort=high",
-            ],
-            "-c model_reasoning_effort=low -c model_reasoning_effort=high",
+            ["-c", "model_reasoning_effort=high"],
+            "-c model_reasoning_effort=high",
         ),
         (
             {
                 "AGENT_A": "agy",
-                "AGY_ARGS": '--adapter "wide words"',
                 "AGENT_A_ARGS": '--slot "a words"',
             },
             AgentRef("A", "agy"),
-            ["--adapter", "wide words", "--slot", "a words"],
-            '--adapter "wide words" --slot "a words"',
+            ["--slot", "a words"],
+            '--slot "a words"',
         ),
         (
             {
                 "AGENT_B": "opencode",
-                "OPENCODE_ARGS": "--variant low",
                 "AGENT_B_ARGS": '--title "slot words"',
             },
             AgentRef("B", "opencode"),
-            ["--variant", "low", "--title", "slot words"],
-            '--variant low --title "slot words"',
+            ["--title", "slot words"],
+            '--title "slot words"',
         ),
     ],
 )
-def test_builtin_slot_args_follow_adapter_wide_args(
+def test_builtin_slot_args_resolve_for_each_adapter(
     env, ref, expected_tokens, expected_raw
 ):
     settings = make(env)
@@ -271,7 +262,6 @@ def test_same_builtin_cli_keeps_a_and_b_slot_args_isolated():
         {
             "AGENT_A": "codex",
             "AGENT_B": "codex",
-            "CODEX_ARGS": "-c model_reasoning_effort=medium",
             "AGENT_A_ARGS": "-c model_reasoning_effort=low",
             "AGENT_B_ARGS": "-c model_reasoning_effort=high",
         }
@@ -281,13 +271,9 @@ def test_same_builtin_cli_keeps_a_and_b_slot_args_isolated():
 
     assert agents.agent_args(ref_a, settings) == [
         "-c",
-        "model_reasoning_effort=medium",
-        "-c",
         "model_reasoning_effort=low",
     ]
     assert agents.agent_args(ref_b, settings) == [
-        "-c",
-        "model_reasoning_effort=medium",
         "-c",
         "model_reasoning_effort=high",
     ]
@@ -299,7 +285,6 @@ def test_independent_impl_slot_uses_only_impl_args():
     settings = make(
         {
             "AGENT_A": "claude",
-            "CLAUDE_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "owner words"',
             "IMPL_ARGS": '--slot "impl words"',
         }
@@ -310,19 +295,13 @@ def test_independent_impl_slot_uses_only_impl_args():
     assert implementation.slot == "I"
     assert agents.agent_args(implementation, settings) == ["--slot", "impl words"]
     assert agents.resolve_model_args(implementation, settings) == '--slot "impl words"'
-    assert agents.agent_args(owner, settings) == [
-        "--adapter",
-        "wide words",
-        "--slot",
-        "owner words",
-    ]
+    assert agents.agent_args(owner, settings) == ["--slot", "owner words"]
 
 
 def test_impl_model_only_does_not_inherit_owner_or_adapter_args():
     settings = make(
         {
             "AGENT_A": "codex",
-            "CODEX_ARGS": "-c model_reasoning_effort=high",
             "AGENT_A_ARGS": "-c model_reasoning_effort=low",
             "IMPL_MODEL": "gpt-impl",
         }
@@ -339,19 +318,13 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
     settings = make(
         {
             "AGENT_A": "claude",
-            "CLAUDE_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "owner words"',
         }
     )
     owner = AgentRef("A", "claude")
 
     assert agents.impl_ref(owner, settings) is owner
-    assert agents.agent_args(owner, settings) == [
-        "--adapter",
-        "wide words",
-        "--slot",
-        "owner words",
-    ]
+    assert agents.agent_args(owner, settings) == ["--slot", "owner words"]
 
 
 @pytest.mark.parametrize(
@@ -359,23 +332,23 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
     [
         (
             AgentRef("A", "claude"),
-            {"CLAUDE_ARGS": '--append-system-prompt "claude words"'},
-            [("CLAUDE_ARGS", '--append-system-prompt "claude words"')],
+            {"AGENT_A_ARGS": '--append-system-prompt "claude words"'},
+            [("AGENT_A_ARGS", '--append-system-prompt "claude words"')],
         ),
         (
             AgentRef("B", "codex"),
-            {"CODEX_ARGS": "-c model_reasoning_effort=low"},
-            [("CODEX_ARGS", "-c model_reasoning_effort=low")],
+            {"AGENT_B_ARGS": "-c model_reasoning_effort=low"},
+            [("AGENT_B_ARGS", "-c model_reasoning_effort=low")],
         ),
         (
             AgentRef("A", "agy"),
-            {"AGY_ARGS": '--append-system-prompt "agy words"'},
-            [("AGY_ARGS", '--append-system-prompt "agy words"')],
+            {"AGENT_A_ARGS": '--append-system-prompt "agy words"'},
+            [("AGENT_A_ARGS", '--append-system-prompt "agy words"')],
         ),
         (
             AgentRef("A", "opencode"),
-            {"OPENCODE_ARGS": "--variant high"},
-            [("OPENCODE_ARGS", "--variant high")],
+            {"AGENT_A_ARGS": "--variant high"},
+            [("AGENT_A_ARGS", "--variant high")],
         ),
         (
             AgentRef("A", "worker-wrapper"),
@@ -396,7 +369,6 @@ def test_empty_impl_settings_keep_owner_slot_arguments():
         (
             AgentRef("I", "claude", base_slot="A"),
             {
-                "CLAUDE_ARGS": '--append-system-prompt "base words"',
                 "AGENT_A_ARGS": '--slot "owner words"',
                 "IMPL_ARGS": '--permission-mode "impl mode"',
             },
@@ -419,7 +391,7 @@ def test_arg_sources_select_non_empty_adapter_args(ref, env, expected):
 
 def test_shared_sources_keep_runtime_and_metadata_order(monkeypatch):
     sources = [
-        ("CLAUDE_ARGS", '--first "two words"'),
+        ("AGENT_A_ARGS", '--first "two words"'),
         ("AGENT_A_ARGS", "--second final"),
     ]
     monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
@@ -439,7 +411,7 @@ def test_shared_sources_keep_runtime_and_metadata_order(monkeypatch):
 
 def test_agent_args_attributes_quoting_error_to_each_source(monkeypatch):
     sources = [
-        ("CLAUDE_ARGS", "--first valid"),
+        ("AGENT_A_ARGS", "--first valid"),
         ("AGENT_A_ARGS", '--second "unterminated'),
     ]
     monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
@@ -461,7 +433,7 @@ def test_agent_model_custom_agent_ignores_model_a():
 
 def test_resolve_model_args_builtin_uses_cli_args():
     s = make({"AGENT_A": "claude", "AGENT_B": "codex",
-              "CLAUDE_ARGS": "--fast", "CODEX_ARGS": "-c model_reasoning_effort=low"})
+              "AGENT_A_ARGS": "--fast", "AGENT_B_ARGS": "-c model_reasoning_effort=low"})
     assert resolve_model_args("claude", s) == "--fast"
     assert resolve_model_args("codex", s) == "-c model_reasoning_effort=low"
 
@@ -504,10 +476,10 @@ def test_validate_agents_both_claude_is_allowed():
 @pytest.mark.parametrize(
     ("key", "agent_env"),
     [
-        ("CLAUDE_ARGS", {}),
-        ("CODEX_ARGS", {}),
-        ("AGY_ARGS", {"AGENT_A": "agy"}),
-        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
+        ("AGENT_A_ARGS", {}),
+        ("AGENT_B_ARGS", {}),
+        ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
+        ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),
         ("AGENT_A_ARGS", {"AGENT_A": "custom-a"}),
         ("AGENT_B_ARGS", {"AGENT_B": "custom-b"}),
         ("IMPL_ARGS", {}),
@@ -525,11 +497,11 @@ def test_validate_agents_rejects_unclosed_quotes(key, agent_env):
     ("key", "value"),
     [
         (
-            "CODEX_ARGS",
+            "AGENT_B_ARGS",
             '--config developer_instructions="mention --sandbox safely"',
         ),
-        ("AGY_ARGS", '--append-system-prompt "mention --continue safely"'),
-        ("OPENCODE_ARGS", '--title "mention --session safely"'),
+        ("AGENT_A_ARGS", '--append-system-prompt "mention --continue safely"'),
+        ("AGENT_A_ARGS", '--title "mention --session safely"'),
     ],
 )
 def test_validate_agents_ignores_reserved_words_inside_quoted_values(key, value):
@@ -564,19 +536,19 @@ def test_validate_agents_ignores_reserved_words_inside_quoted_values(key, value)
     ],
 )
 def test_validate_agents_rejects_claude_workflow_owned_args(value):
-    s = make({"CLAUDE_ARGS": value})
+    s = make({"AGENT_A_ARGS": value})
 
-    with pytest.raises(SettingsError, match="CLAUDE_ARGS.*workflow-owned"):
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS.*workflow-owned"):
         validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
 @pytest.mark.parametrize(
     ("key", "agent_env"),
     [
-        ("CLAUDE_ARGS", {}),
-        ("CODEX_ARGS", {}),
-        ("AGY_ARGS", {"AGENT_A": "agy"}),
-        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
+        ("AGENT_A_ARGS", {}),
+        ("AGENT_B_ARGS", {}),
+        ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
+        ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
 @pytest.mark.parametrize("value", ["--model pro", "--model=pro", "-m pro", "-m=pro"])
@@ -602,13 +574,13 @@ def test_validate_agents_rejects_builtin_model_args(key, agent_env, value):
     ],
 )
 def test_validate_agents_rejects_codex_model_config(value):
-    s = make({"CODEX_ARGS": value})
+    s = make({"AGENT_B_ARGS": value})
 
     with pytest.raises(SettingsError) as exc_info:
         validate_agents(s, which=lambda name: "C:/fake/" + name)
 
     assert str(exc_info.value) == (
-        "CODEX_ARGS cannot set the model; "
+        "AGENT_B_ARGS cannot set the model; "
         "use MODEL_A / MODEL_B / IMPL_MODEL instead"
     )
 
@@ -623,7 +595,7 @@ def test_validate_agents_rejects_codex_model_config(value):
     ],
 )
 def test_validate_agents_allows_non_model_codex_config(value):
-    s = make({"CODEX_ARGS": value})
+    s = make({"AGENT_B_ARGS": value})
 
     validate_agents(s, which=lambda name: "C:/fake/" + name)
 
@@ -643,7 +615,7 @@ def test_validate_agents_allows_non_model_codex_config(value):
     ],
 )
 def test_validate_agents_rejects_codex_workflow_owned_args(value):
-    s = make({"CODEX_ARGS": value})
+    s = make({"AGENT_B_ARGS": value})
 
     with pytest.raises(SettingsError):
         validate_agents(s, which=lambda name: "C:/fake/" + name)
@@ -666,9 +638,9 @@ def test_validate_agents_rejects_codex_workflow_owned_args(value):
     ],
 )
 def test_validate_agents_rejects_extended_codex_workflow_owned_args(value):
-    settings = make({"CODEX_ARGS": value})
+    settings = make({"AGENT_B_ARGS": value})
 
-    with pytest.raises(SettingsError, match="CODEX_ARGS"):
+    with pytest.raises(SettingsError, match="AGENT_B_ARGS"):
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
@@ -676,10 +648,10 @@ def test_validate_agents_rejects_extended_codex_workflow_owned_args(value):
 @pytest.mark.parametrize(
     ("key", "agent_env"),
     [
-        ("CLAUDE_ARGS", {}),
-        ("CODEX_ARGS", {}),
-        ("AGY_ARGS", {"AGENT_A": "agy"}),
-        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}),
+        ("AGENT_A_ARGS", {}),
+        ("AGENT_B_ARGS", {}),
+        ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
+        ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
 def test_validate_agents_rejects_attached_builtin_model_args(
@@ -723,7 +695,7 @@ def test_validate_agents_rejects_extended_codex_impl_args(value):
     ],
 )
 def test_validate_agents_allows_spaced_or_attached_reasoning_config(value):
-    settings = make({"CODEX_ARGS": value})
+    settings = make({"AGENT_B_ARGS": value})
 
     validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
@@ -757,7 +729,7 @@ def test_validate_agents_keeps_custom_impl_args_unmodified():
     ],
 )
 def test_validate_agents_rejects_agy_workflow_owned_args(value):
-    s = make({"AGENT_A": "agy", "AGY_ARGS": value})
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
 
     with pytest.raises(SettingsError):
         validate_agents(s, which=lambda name: "C:/fake/" + name)
@@ -788,9 +760,9 @@ def test_validate_agents_rejects_agy_workflow_owned_args(value):
     ],
 )
 def test_validate_agents_rejects_opencode_workflow_owned_args(value):
-    s = make({"AGENT_A": "opencode", "OPENCODE_ARGS": value})
+    s = make({"AGENT_A": "opencode", "AGENT_A_ARGS": value})
 
-    with pytest.raises(SettingsError, match="OPENCODE_ARGS"):
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS"):
         validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
@@ -800,7 +772,7 @@ def test_validate_agents_allows_opencode_variant_and_quoted_session_mention():
     s = make(
         {
             "AGENT_A": "opencode",
-            "OPENCODE_ARGS": '--variant high --agent build --thinking --file notes.md --title "mention --session safely"',
+            "AGENT_A_ARGS": '--variant high --agent build --thinking --file notes.md --title "mention --session safely"',
         }
     )
 
@@ -810,10 +782,10 @@ def test_validate_agents_allows_opencode_variant_and_quoted_session_mention():
 @pytest.mark.parametrize(
     ("key", "agent_env", "value"),
     [
-        ("CLAUDE_ARGS", {}, "--json"),
-        ("CODEX_ARGS", {}, "--continue"),
-        ("AGY_ARGS", {"AGENT_A": "agy"}, "--sandbox workspace-write"),
-        ("OPENCODE_ARGS", {"AGENT_A": "opencode"}, "--json"),
+        ("AGENT_A_ARGS", {}, "--json"),
+        ("AGENT_B_ARGS", {}, "--continue"),
+        ("AGENT_A_ARGS", {"AGENT_A": "agy"}, "--sandbox workspace-write"),
+        ("AGENT_A_ARGS", {"AGENT_A": "opencode"}, "--json"),
     ],
 )
 def test_validate_agents_allows_flags_reserved_by_other_builtin_adapters(
@@ -1214,7 +1186,6 @@ def test_claude_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp
         {
             "AGENT_A": "claude",
             "AGENT_B": "claude",
-            "CLAUDE_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "a words"',
             "AGENT_B_ARGS": '--slot "b words"',
         }
@@ -1229,8 +1200,8 @@ def test_claude_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp
     agents.run_worker(AgentRef("B", "claude"), "b-resume", settings, session_b, io)
 
     a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
-    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
-    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    a_tokens = ["--slot", "a words"]
+    b_tokens = ["--slot", "b words"]
     for argv in (a_fresh, a_resume):
         _assert_tokens_in_order(argv, a_tokens)
         assert "b words" not in argv
@@ -1257,7 +1228,6 @@ def test_codex_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_
         {
             "AGENT_A": "codex",
             "AGENT_B": "codex",
-            "CODEX_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "a words"',
             "AGENT_B_ARGS": '--slot "b words"',
         }
@@ -1272,8 +1242,8 @@ def test_codex_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_
     agents.run_worker(AgentRef("B", "codex"), "b-resume", settings, session_b, io)
 
     a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
-    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
-    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    a_tokens = ["--slot", "a words"]
+    b_tokens = ["--slot", "b words"]
     for argv in (a_fresh, a_resume):
         _assert_tokens_in_order(argv, a_tokens)
         assert "b words" not in argv
@@ -1307,7 +1277,6 @@ def test_agy_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_pa
         {
             "AGENT_A": "agy",
             "AGENT_B": "agy",
-            "AGY_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "a words"',
             "AGENT_B_ARGS": '--slot "b words"',
         }
@@ -1322,8 +1291,8 @@ def test_agy_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_pa
     agents.run_worker(AgentRef("B", "agy"), "b-resume", settings, session_b, io)
 
     a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
-    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
-    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    a_tokens = ["--slot", "a words"]
+    b_tokens = ["--slot", "b words"]
     for argv in (a_fresh, a_resume):
         _assert_tokens_in_order(argv, a_tokens)
         assert "b words" not in argv
@@ -1350,7 +1319,6 @@ def test_opencode_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, t
         {
             "AGENT_A": "opencode",
             "AGENT_B": "opencode",
-            "OPENCODE_ARGS": '--adapter "wide words"',
             "AGENT_A_ARGS": '--slot "a words"',
             "AGENT_B_ARGS": '--slot "b words"',
         }
@@ -1365,8 +1333,8 @@ def test_opencode_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, t
     agents.run_worker(AgentRef("B", "opencode"), "b-resume", settings, session_b, io)
 
     a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
-    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
-    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    a_tokens = ["--slot", "a words"]
+    b_tokens = ["--slot", "b words"]
     for argv in (a_fresh, a_resume):
         _assert_tokens_in_order(argv, a_tokens)
         assert "b words" not in argv
@@ -1395,7 +1363,6 @@ def test_claude_implementation_worker_orders_fresh_and_resume_argv(
         {
             "AGENT_A": "claude",
             "MODEL_A": "owner-model",
-            "CLAUDE_ARGS": '--base-claude "base words"',
             "AGENT_A_ARGS": '--owner-claude "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-claude "impl words"',
@@ -1437,7 +1404,6 @@ def test_codex_implementation_worker_orders_fresh_and_resume_argv(
         {
             "AGENT_A": "codex",
             "MODEL_A": "owner-model",
-            "CODEX_ARGS": '--base-codex "base words"',
             "AGENT_A_ARGS": '--owner-codex "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-codex "impl words"',
@@ -1498,7 +1464,6 @@ def test_agy_implementation_worker_orders_fresh_and_resume_argv(
         {
             "AGENT_A": "agy",
             "MODEL_A": "owner-model",
-            "AGY_ARGS": '--base-agy "base words"',
             "AGENT_A_ARGS": '--owner-agy "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-agy "impl words"',
@@ -1540,7 +1505,6 @@ def test_opencode_implementation_worker_orders_fresh_and_resume_argv(
         {
             "AGENT_A": "opencode",
             "MODEL_A": "owner-model",
-            "OPENCODE_ARGS": '--variant high --title "base words"',
             "AGENT_A_ARGS": '--title "owner words"',
             "IMPL_MODEL": "xai/grok-4.6",
             "IMPL_ARGS": '--agent build --title "impl words"',
@@ -2215,7 +2179,7 @@ def test_claude_worker_resumes_session_and_builds_argv(monkeypatch, tmp_path):
     s = Settings.from_env(
         {
             "MODEL_A": "haiku",
-            "CLAUDE_ARGS": '--append-system-prompt "two words"',
+            "AGENT_A_ARGS": '--append-system-prompt "two words"',
             "TOOLS": "Bash(git *)",
         },
         run_id="r",
@@ -2379,7 +2343,7 @@ def test_codex_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
         {
             "MODEL_B": "gpt-5.5",
             "AGENT_B": "codex",
-            "CODEX_ARGS": (
+            "AGENT_B_ARGS": (
                 "-c model_reasoning_effort=low "
                 "--config 'developer_instructions=\"two words\"'"
             ),
@@ -2421,7 +2385,7 @@ def test_agy_worker_conversation_flag(monkeypatch, tmp_path):
         {
             "AGENT_A": "agy",
             "AGENT_B": "codex",
-            "AGY_ARGS": '--append-system-prompt "two words"',
+            "AGENT_A_ARGS": '--append-system-prompt "two words"',
         },
         run_id="r",
     )
@@ -2900,7 +2864,7 @@ def test_opencode_worker_fresh_then_resume_argv(monkeypatch, tmp_path):
         {
             "AGENT_A": "opencode",
             "MODEL_A": "google/gemini-2.5-pro",
-            "OPENCODE_ARGS": "--variant high",
+            "AGENT_A_ARGS": "--variant high",
         }
     )
     io, _ = make_io(tmp_path)

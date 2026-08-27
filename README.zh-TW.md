@@ -375,9 +375,8 @@ exec my-agent --session aac-reviewer "$@"
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
 | `IMPL_MODEL` | 繼承或 CLI 預設 | 內建實作 slot 的模型。未設定時,只有 command 與 owner 相同才繼承 owner 模型;自訂實作 agent 會忽略此值,請改用 `IMPL_ARGS` |
-| `CLAUDE_ARGS` / `CODEX_ARGS` / `AGY_ARGS` / `OPENCODE_ARGS` | (空) | 各內建 agent command 共用的額外參數,依 POSIX shell quoting 解析。session 控制旗標由 workflow 保留,見下節。OpenCode 的 `--variant` / `--agent` 放這裡,模型仍用 `MODEL_*` |
-| `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | 自訂 agent command 的額外參數,依 POSIX shell quoting 解析後加在 prompt-file instruction 前 |
-| `IMPL_ARGS` | (空) | 實作 slot 的額外參數,依 POSIX shell quoting 解析。內建實作 agent 會接在該 command 的共用 args 後;自訂實作 wrapper 的模型旗標也放這裡 |
+| `AGENT_A_ARGS` / `AGENT_B_ARGS` | (空) | A、B slot 的額外參數,依 POSIX shell quoting 解析後加在 prompt-file instruction 前。內建 slot 依該 slot 的 adapter 規則檢查;自訂 slot 通過 quoting 後原樣傳入。OpenCode 的 `--variant` / `--agent` 放這裡,模型仍用 `MODEL_*` |
+| `IMPL_ARGS` | (空) | 實作 slot 的額外參數,依 POSIX shell quoting 解析。獨立 I slot 只使用這個值。自訂實作 wrapper 的模型旗標也放這裡 |
 | `MAX_ROUNDS` | `3` | 每個 stage 的審查/關卡最多輪數,超過即通知並中止 |
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
@@ -427,7 +426,7 @@ RESUME_RUN=20260710-153012 aac
 AGENT_B=agy RESUME_RUN=last aac
 ```
 
-持久化的 `IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `aac/.run/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-1 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
+持久化的 `AGENT_A_ARGS`、`AGENT_B_ARGS`、`IMPL_AGENT`、`IMPL_MODEL`、`IMPL_ARGS` 也採非空值覆寫規則:續跑指令提供非空值,即可在該 attempt 取代 snapshot;空字串不能清除已儲存的值。要清除時,請直接編輯 `aac/.run/state/<run-id>/settings.json` 內對應的小寫 key,維持合法的 schema-2 JSON,再執行續跑。例如把 `"impl_model"` 設成 `""`,即可回到模型繼承規則。
 
 `SPEC_DIR`、`DUAL_SPEC`、`AUTO_BRANCH`、`USE_WORKTREE` 跨續跑不可變:它們決定 stage 圖與產物位置,衝突的覆寫會被拒絕。`NOTIFY_CMD` 刻意不持久化,每次 attempt 重新提供。
 
@@ -500,7 +499,7 @@ your-project/
         ├── last-agent-cli.raw       # 最近一次 CLI 原始輸出
         ├── latest-run.txt           # 指向最近一次 run archive 目錄
         ├── state/<RUN_ID>/          # 續跑狀態(RESUME_RUN 用)
-        │   ├── settings.json        # 設定快照(schema 1)
+        │   ├── settings.json        # 設定快照(schema 2)
         │   ├── ledger.json          # 只增不改的 stage 台帳
         │   ├── task.txt             # 解析後的 request 快照
         │   ├── phases.json          # PHASES=1 的階段圖
@@ -536,7 +535,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | session 續接 | `--resume <id>`(精準) | `exec resume ... <thread-id>`(精準) | `--conversation <conversation-id>`(精準) | `--session <id>`(精準) |
 | id 來源 | 結構化回應 | `thread.started` JSONL event | 每 attempt 的 `--log-file` | JSONL `sessionID` |
 | 權限控制 | `acceptEdits` + `TOOLS` 白名單 | `--sandbox workspace-write` | `--dangerously-skip-permissions`(見安全性) | `--auto`(使用者的 deny 規則仍生效) |
-| 推理深度 | `CLAUDE_ARGS='--effort=low'` | `CODEX_ARGS='-c model_reasoning_effort=low'` | `AGY_ARGS='--effort=low'` | `OPENCODE_ARGS='--variant low'` |
+| 推理深度 | `AGENT_A_ARGS='--effort=low'` | `AGENT_B_ARGS='-c model_reasoning_effort=low'` | `AGENT_A_ARGS='--effort=low'` | `AGENT_A_ARGS='--variant low'` |
 | 費用回報 | 有(metrics.csv) | 無 | 無 | 有(加總 `step_finish.cost`) |
 | 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 | 訊息,加上每個工具呼叫一行摘要(工具結束時) |
 
@@ -556,10 +555,10 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 | 參數變數 | 不得包含 |
 |---|---|
-| `CLAUDE_ARGS` 與 Claude 的 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約 |
-| `CODEX_ARGS` 與 Codex 的 `IMPL_ARGS` | `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`;也不得透過 `-c` / `--config` 覆寫 `sandbox_mode` |
-| `AGY_ARGS` 與 Agy 的 `IMPL_ARGS` | `--log-file`、`--continue`、`--conversation` |
-| `OPENCODE_ARGS` 與 OpenCode 的 `IMPL_ARGS` | `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--command`(會用既存 command 取代 workflow 的 prompt)、`--dir` |
+| Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約 |
+| Codex 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`;也不得透過 `-c` / `--config` 覆寫 `sandbox_mode` |
+| Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--log-file`、`--continue`、`--conversation` |
+| OpenCode 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--command`(會用既存 command 取代 workflow 的 prompt)、`--dir` |
 
 所有內建參數變數的共同規則:
 
@@ -569,29 +568,28 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 ### 推理深度
 
-AAC 沒有統一的 `REASONING` 變數。每家內建 CLI 用自己的旗標,放進該 command 的 `*_ARGS`(I slot 則放 `IMPL_ARGS`)。模型仍用 `MODEL_*`。可接受的值由各 CLI 決定,升版可能改;以本機 `claude --help`、`codex exec --help`、`agy --help`、`opencode run --help` 為準。
+AAC 沒有統一的 `REASONING` 變數。每家內建 CLI 用自己的旗標,放進該 slot 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。模型仍用 `MODEL_*`。可接受的值由各 CLI 決定,升版可能改;以本機 `claude --help`、`codex exec --help`、`agy --help`、`opencode run --help` 為準。
 
 | Agent | 變數 | 旗標 | 本專案對過的值 |
 |---|---|---|---|
-| Claude | `CLAUDE_ARGS` | `--effort=low` | `low`、`medium`、`high`、`xhigh`、`max` |
-| Codex | `CODEX_ARGS` | `-c model_reasoning_effort=low` | `none`、`minimal`、`low`、`medium`、`high`、`xhigh`(依模型)。`-c model=` 保留給 `MODEL_*`;這個 key 可以設。 |
-| Agy | `AGY_ARGS` | `--effort=low` | `low`、`medium`、`high` |
-| OpenCode | `OPENCODE_ARGS` | `--variant low` | 依 provider 而異。OpenCode `--help` 舉例 `high`、`max`、`minimal`。 |
+| Claude | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--effort=low` | `low`、`medium`、`high`、`xhigh`、`max` |
+| Codex | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `-c model_reasoning_effort=low` | `none`、`minimal`、`low`、`medium`、`high`、`xhigh`(依模型)。`-c model=` 保留給 `MODEL_*`;這個 key 可以設。 |
+| Agy | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--effort=low` | `low`、`medium`、`high` |
+| OpenCode | `AGENT_A_ARGS` / `AGENT_B_ARGS` / `IMPL_ARGS` | `--variant low` | 依 provider 而異。OpenCode `--help` 舉例 `high`、`max`、`minimal`。 |
 
-I slot 的同一支旗標放 `IMPL_ARGS`,接在該 command 的共用 `*_ARGS` 後面:
+I slot 的同一支旗標只放 `IMPL_ARGS`:
 
 ```bash
-CLAUDE_ARGS='--effort=high' \
-CODEX_ARGS='-c model_reasoning_effort=medium' \
-AGENT_A=claude AGENT_B=codex \
+AGENT_A=claude AGENT_A_ARGS='--effort=high' \
+AGENT_B=codex AGENT_B_ARGS='-c model_reasoning_effort=medium' \
 IMPL_AGENT=codex IMPL_ARGS='-c model_reasoning_effort="low"' \
   aac request.md
 ```
 
 ```bash
 AGENT_A=opencode MODEL_A=xai/grok-4.6 \
-OPENCODE_ARGS='--variant low' \
-AGENT_B=agy AGY_ARGS='--effort=low' \
+AGENT_A_ARGS='--variant low' \
+AGENT_B=agy AGENT_B_ARGS='--effort=low' \
   aac request.md
 ```
 

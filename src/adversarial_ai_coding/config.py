@@ -25,6 +25,8 @@ def render_template(
     return template.format(**fields)
 
 DEFAULT_TOOLS = "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
+# Rejected configuration names. They are not settings fields.
+REMOVED_ADAPTER_ARG_VARS = ("CLAUDE_ARGS", "CODEX_ARGS", "AGY_ARGS", "OPENCODE_ARGS")
 
 # The one top-level directory this workflow claims in the target repository
 # (docs/adr/0001-single-aac-root-for-run-artifacts.md). ARTIFACT_ROOT is
@@ -70,6 +72,20 @@ def _to_int(name: str, raw: str) -> int:
         ) from None
 
 
+def _reject_removed_adapter_args(
+    env: Mapping[str, str], snapshot: Mapping[str, str]
+) -> None:
+    present = [
+        name for name in REMOVED_ADAPTER_ARG_VARS if name in env or name in snapshot
+    ]
+    if present:
+        raise SettingsError(
+            "Removed adapter-wide argument variable(s): {names}. "
+            "Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead.",
+            names=", ".join(present),
+        )
+
+
 def _to_binary_flag(name: str, raw: str) -> bool:
     if raw not in {"0", "1"}:
         raise SettingsError(
@@ -87,10 +103,6 @@ class Settings:
     impl_args: str
     model_a: str
     model_b: str
-    claude_args: str
-    codex_args: str
-    agy_args: str
-    opencode_args: str
     agent_a_args: str
     agent_b_args: str
     max_rounds: int
@@ -123,6 +135,7 @@ class Settings:
         snapshot: Mapping[str, str] | None = None,
     ) -> "Settings":
         snap = snapshot or {}
+        _reject_removed_adapter_args(env, snap)
 
         def persisted(key: str, default: str) -> str:
             return env.get(key) or snap.get(key) or default
@@ -141,10 +154,6 @@ class Settings:
             impl_args=persisted("IMPL_ARGS", ""),
             model_a=persisted("MODEL_A", ""),
             model_b=persisted("MODEL_B", ""),
-            claude_args=persisted("CLAUDE_ARGS", ""),
-            codex_args=persisted("CODEX_ARGS", ""),
-            agy_args=persisted("AGY_ARGS", ""),
-            opencode_args=persisted("OPENCODE_ARGS", ""),
             agent_a_args=persisted("AGENT_A_ARGS", ""),
             agent_b_args=persisted("AGENT_B_ARGS", ""),
             max_rounds=_to_int("MAX_ROUNDS", persisted("MAX_ROUNDS", "3")),

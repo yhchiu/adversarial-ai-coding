@@ -86,7 +86,7 @@ reviewer。最新 `--allowedTools` 規則語法以
 ### Codex
 
 AAC 管理 Codex sandbox,包含 resume 在內都使用 `workspace-write`。不要在
-`CODEX_ARGS` 或 `IMPL_ARGS` 加入 `--sandbox`、`-s`、`--yolo` 或
+`AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` 加入 `--sandbox`、`-s`、`--yolo` 或
 `sandbox_mode` override;AAC 會在 preflight 拒絕這些保留參數。
 
 Codex 若無法寫檔,先確認目標在 repo 內,而且目前 OS 使用者有寫入權限。Repo 外

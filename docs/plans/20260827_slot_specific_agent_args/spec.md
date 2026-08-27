@@ -1,6 +1,6 @@
 # Slot-Specific Agent Arguments
 
-Status: Ready for implementation
+Status: Implemented
 
 ## Problem Statement
 

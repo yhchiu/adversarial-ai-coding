@@ -120,7 +120,7 @@ Schema —— 一行:`{"phased": true|false, "reason": "..."}`
 
 | 檔案 | Schema | 內容 |
 |---|---|---|
-| `settings.json` | `{"schema": 1, ...}` | 解析後的設定快照;未知 key 會讓 resume 被拒(`src/adversarial_ai_coding/runstate.py:146`) |
+| `settings.json` | `{"schema": 2, ...}` | 解析後的設定快照;未知 key 會讓 resume 被拒(`src/adversarial_ai_coding/runstate.py:146`) |
 | `ledger.json` | `{"schema": 1, "stages": [...]}` | Append-only 的已完成 stage 清單;resume 跳過這些 |
 | `task.txt` | 文字 | 不可變的請求快照 |
 | `tasks-remaining` / `tasks-remaining-phase-NN` | 文字,一行一任務 | 權威任務佇列;空檔案代表所有任務都已 commit |

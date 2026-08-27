@@ -62,19 +62,58 @@ def test_custom_agent_args():
     assert s.agent_a_args == "--model custom --flag"
 
 
-def test_opencode_args_default_empty_and_read_environment():
-    assert make().opencode_args == ""
-    assert make({"OPENCODE_ARGS": "--variant high"}).opencode_args == "--variant high"
+@pytest.mark.parametrize(
+    "name",
+    ["CLAUDE_ARGS", "CODEX_ARGS", "AGY_ARGS", "OPENCODE_ARGS"],
+)
+def test_from_env_rejects_removed_adapter_args_even_when_empty(name):
+    with pytest.raises(SettingsError) as exc_info:
+        make({name: ""})
+
+    message = str(exc_info.value)
+    assert name in message
+    assert "AGENT_A_ARGS" in message
+    assert "AGENT_B_ARGS" in message
+    assert "IMPL_ARGS" in message
 
 
-def test_opencode_args_resume_from_snapshot_and_env_wins():
-    snap = {"OPENCODE_ARGS": "--agent build"}
-    assert make({}, snapshot=snap).opencode_args == "--agent build"
-    assert (
-        make({"OPENCODE_ARGS": "--thinking"}, snapshot=snap).opencode_args
-        == "--thinking"
+def test_from_env_rejects_removed_adapter_args_in_snapshot_mapping():
+    with pytest.raises(SettingsError) as exc_info:
+        make({}, snapshot={"CODEX_ARGS": ""})
+
+    message = str(exc_info.value)
+    assert "CODEX_ARGS" in message
+    assert "AGENT_A_ARGS" in message
+    assert "AGENT_B_ARGS" in message
+    assert "IMPL_ARGS" in message
+
+
+def test_from_env_lists_every_removed_adapter_arg_in_one_error():
+    with pytest.raises(SettingsError) as exc_info:
+        make({"OPENCODE_ARGS": "--variant high"}, snapshot={"CLAUDE_ARGS": ""})
+
+    message = str(exc_info.value)
+    assert "CLAUDE_ARGS" in message
+    assert "OPENCODE_ARGS" in message
+    assert message.index("CLAUDE_ARGS") < message.index("OPENCODE_ARGS")
+    assert "AGENT_A_ARGS" in message
+    assert "AGENT_B_ARGS" in message
+    assert "IMPL_ARGS" in message
+
+
+def test_empty_slot_argument_environment_values_do_not_clear_snapshot():
+    snapshot = {
+        "AGENT_A_ARGS": "--slot-a",
+        "AGENT_B_ARGS": "--slot-b",
+        "IMPL_ARGS": "--slot-i",
+    }
+    s = make(
+        {"AGENT_A_ARGS": "", "AGENT_B_ARGS": "", "IMPL_ARGS": ""},
+        snapshot=snapshot,
     )
-    assert make({"OPENCODE_ARGS": ""}, snapshot=snap).opencode_args == "--agent build"
+    assert s.agent_a_args == "--slot-a"
+    assert s.agent_b_args == "--slot-b"
+    assert s.impl_args == "--slot-i"
 
 
 def test_impl_settings_read_environment_values():

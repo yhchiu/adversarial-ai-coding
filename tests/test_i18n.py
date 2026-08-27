@@ -130,6 +130,25 @@ def test_emit_accepts_one_arg_sinks():
     assert seen == ["hello Ada"]
 
 
+REMOVED_ADAPTER_ARGS_TEMPLATE = (
+    "Removed adapter-wide argument variable(s): {names}. "
+    "Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead."
+)
+
+
+def test_removed_adapter_args_error_is_translated_in_every_locale():
+    fields = {"names": "CLAUDE_ARGS, CODEX_ARGS"}
+    english = render_template(REMOVED_ADAPTER_ARGS_TEMPLATE, fields)
+    for lang in ("zh-TW", "zh-CN", "ja-JP", "ko-KR", "pt-BR"):
+        text = translate(REMOVED_ADAPTER_ARGS_TEMPLATE, lang, fields)
+        assert "CLAUDE_ARGS" in text
+        assert "CODEX_ARGS" in text
+        assert "AGENT_A_ARGS" in text
+        assert "AGENT_B_ARGS" in text
+        assert "IMPL_ARGS" in text
+        assert text != english
+
+
 def test_emit_exception_uses_template_fields():
     seen = []
     emit_exception(

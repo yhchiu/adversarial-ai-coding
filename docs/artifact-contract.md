@@ -223,7 +223,7 @@ data, never executed; unknown schemas are refused.
 
 | File | Schema | Content |
 |---|---|---|
-| `settings.json` | `{"schema": 1, ...}` | Resolved settings snapshot; unknown keys refuse a resume (`src/adversarial_ai_coding/runstate.py:146`) |
+| `settings.json` | `{"schema": 2, ...}` | Resolved settings snapshot; unknown keys refuse a resume (`src/adversarial_ai_coding/runstate.py:146`) |
 | `ledger.json` | `{"schema": 1, "stages": [...]}` | Append-only completed-stage list; resume skips these |
 | `task.txt` | text | Immutable request snapshot |
 | `tasks-remaining` / `tasks-remaining-phase-NN` | text, one task per line | Authoritative task queue; empty file means every task committed |

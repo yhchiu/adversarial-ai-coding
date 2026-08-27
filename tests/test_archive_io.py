@@ -93,7 +93,7 @@ def test_write_meta_matches_bash_fields(tmp_path):
         (
             {
                 "AGENT_A": "codex",
-                "CODEX_ARGS": (
+                "AGENT_A_ARGS": (
                     "-c model_reasoning_effort=low "
                     "--config 'developer_instructions=\"two words\"'"
                 ),
@@ -117,25 +117,18 @@ def test_write_meta_matches_bash_fields(tmp_path):
         (
             {
                 "AGENT_A": "claude",
-                "CLAUDE_ARGS": '--adapter "wide words"',
                 "AGENT_A_ARGS": '--slot "a words"',
             },
             "A",
-            ["--adapter", "wide words", "--slot", "a words"],
+            ["--slot", "a words"],
         ),
         (
             {
                 "AGENT_B": "codex",
-                "CODEX_ARGS": "-c model_reasoning_effort=low",
                 "AGENT_B_ARGS": "-c model_reasoning_effort=high",
             },
             "B",
-            [
-                "-c",
-                "model_reasoning_effort=low",
-                "-c",
-                "model_reasoning_effort=high",
-            ],
+            ["-c", "model_reasoning_effort=high"],
         ),
     ],
 )
@@ -163,7 +156,6 @@ def test_same_builtin_cli_slot_args_match_runtime_in_all_records(tmp_path):
         {
             "AGENT_A": "codex",
             "AGENT_B": "codex",
-            "CODEX_ARGS": "-c model_reasoning_effort=medium",
             "AGENT_A_ARGS": "-c model_reasoning_effort=low",
             "AGENT_B_ARGS": "-c model_reasoning_effort=high",
         },
@@ -187,13 +179,9 @@ def test_same_builtin_cli_slot_args_match_runtime_in_all_records(tmp_path):
     expected_b = agents.resolve_model_args(ref_b, archive.settings)
     assert agents.agent_args(ref_a, archive.settings) == [
         "-c",
-        "model_reasoning_effort=medium",
-        "-c",
         "model_reasoning_effort=low",
     ]
     assert agents.agent_args(ref_b, archive.settings) == [
-        "-c",
-        "model_reasoning_effort=medium",
         "-c",
         "model_reasoning_effort=high",
     ]
@@ -321,7 +309,7 @@ def test_metric_header_and_rows(tmp_path):
         {
             "AGENT_A": "claude",
             "AGENT_B": "codex",
-            "CODEX_ARGS": '-c model="x,y" --flag "quoted value"',
+            "AGENT_B_ARGS": '-c model="x,y" --flag "quoted value"',
         },
     )
     a.metric("worker", agent_ref("A", a.settings), 1, 12, "0.05", stage="stage1")
@@ -366,7 +354,6 @@ def test_slot_i_archive_evidence_uses_resolved_model_args_and_slot(tmp_path):
             "AGENT_A": "codex",
             "AGENT_B": "claude",
             "MODEL_A": "owner-model",
-            "CODEX_ARGS": "-c model_reasoning_effort=high",
             "AGENT_A_ARGS": "-c model_reasoning_effort=low",
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": "--impl-only",

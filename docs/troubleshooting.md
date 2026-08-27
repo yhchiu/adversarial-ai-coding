@@ -94,8 +94,8 @@ for the current `--allowedTools` rule syntax.
 
 AAC owns Codex's sandbox configuration and launches it with
 `workspace-write`, including resumed sessions. Do not add `--sandbox`, `-s`,
-`--yolo`, or a `sandbox_mode` override to `CODEX_ARGS` or `IMPL_ARGS`; AAC
-rejects those reserved options during preflight.
+`--yolo`, or a `sandbox_mode` override to `AGENT_A_ARGS`, `AGENT_B_ARGS`, or
+`IMPL_ARGS`; AAC rejects those reserved options during preflight.
 
 If Codex cannot write a file, confirm that the target is inside the repository
 and is writable by the current OS user. A path outside the workspace is not a

@@ -39,10 +39,6 @@ SNAPSHOT_KEYS = (
     "agent_b_args",
     "model_a",
     "model_b",
-    "claude_args",
-    "codex_args",
-    "agy_args",
-    "opencode_args",
     "max_rounds",
     "human_gate",
     "human_gate_plan",
@@ -118,10 +114,6 @@ def snapshot_values(
         "agent_b_args": settings.agent_b_args,
         "model_a": settings.model_a,
         "model_b": settings.model_b,
-        "claude_args": settings.claude_args,
-        "codex_args": settings.codex_args,
-        "agy_args": settings.agy_args,
-        "opencode_args": settings.opencode_args,
         "max_rounds": str(settings.max_rounds),
         "human_gate": flag(settings.human_gate),
         "human_gate_plan": flag(settings.human_gate_plan),
@@ -139,7 +131,7 @@ def snapshot_values(
 
 def write_snapshot(state_dir: Path, values: Mapping[str, str]) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"schema": 1, **values}
+    payload = {"schema": 2, **values}
     _atomic_write(state_dir / SNAPSHOT_FILE, json.dumps(payload, indent=2) + "\n")
 
 
@@ -154,10 +146,10 @@ def load_snapshot(state_dir: Path) -> dict[str, str]:
             f"{path}: not valid JSON ({exc}); the state may be truncated. "
             "Refusing to resume."
         ) from None
-    if not isinstance(payload, dict) or payload.get("schema") != 1:
+    if not isinstance(payload, dict) or payload.get("schema") != 2:
         schema = payload.get("schema") if isinstance(payload, dict) else payload
         raise RunStateError(
-            f"{path}: schema must be 1 (got {schema!r}); refusing to resume."
+            f"{path}: schema must be 2 (got {schema!r}); refusing to resume."
         )
     snapshot: dict[str, str] = {}
     for key, value in payload.items():

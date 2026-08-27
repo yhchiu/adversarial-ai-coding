@@ -30,7 +30,7 @@ def test_write_parse_roundtrip_keeps_spaces_and_quotes(tmp_path):
     s = make_settings(
         {
             "SPEC_DIR": "aac/docs/x y",
-            "CODEX_ARGS": '-c model="x,y" --flag "quoted value"',
+            "AGENT_B_ARGS": '-c model="x,y" --flag "quoted value"',
         }
     )
     values = snapshot_values(
@@ -46,7 +46,7 @@ def test_write_parse_roundtrip_keeps_spaces_and_quotes(tmp_path):
     write_snapshot(tmp_path / "st", values)
     snap = load_snapshot(tmp_path / "st")
     assert snap["SPEC_DIR"] == "aac/docs/x y"
-    assert snap["CODEX_ARGS"] == '-c model="x,y" --flag "quoted value"'
+    assert snap["AGENT_B_ARGS"] == '-c model="x,y" --flag "quoted value"'
     assert snap["GATE_CMD"] == "go test ./..."
     assert snap["TASK_SOURCE_PATH"] == "/tmp/task dir/task.md"
 
@@ -71,7 +71,7 @@ def test_newline_values_round_trip(tmp_path):
 
 
 def test_unknown_key_is_rejected(tmp_path):
-    write_raw(tmp_path / "st", json.dumps({"schema": 1, "evil_key": "x"}))
+    write_raw(tmp_path / "st", json.dumps({"schema": 2, "evil_key": "x"}))
     with pytest.raises(RunStateError, match="unknown key"):
         load_snapshot(tmp_path / "st")
 
@@ -83,7 +83,16 @@ def test_missing_schema_rejected(tmp_path):
 
 
 def test_wrong_schema_rejected(tmp_path):
-    write_raw(tmp_path / "st", json.dumps({"schema": 2, "spec_dir": "x"}))
+    write_raw(tmp_path / "st", json.dumps({"schema": 3, "spec_dir": "x"}))
+    with pytest.raises(RunStateError, match="schema"):
+        load_snapshot(tmp_path / "st")
+
+
+def test_schema_1_snapshots_are_rejected_without_migration(tmp_path):
+    write_raw(
+        tmp_path / "st",
+        json.dumps({"schema": 1, "agent_a": "claude", "claude_args": "--effort=low"}),
+    )
     with pytest.raises(RunStateError, match="schema"):
         load_snapshot(tmp_path / "st")
 
@@ -125,9 +134,21 @@ def test_impl_settings_are_snapshot_keys_but_not_immutable():
     assert {"IMPL_AGENT", "IMPL_MODEL", "IMPL_ARGS"}.isdisjoint(IMMUTABLE_KEYS)
 
 
-def test_opencode_args_is_a_snapshot_key_and_round_trips(tmp_path):
-    assert "opencode_args" in SNAPSHOT_KEYS
-    s = make_settings({"OPENCODE_ARGS": "--variant high --thinking"})
+def test_new_snapshots_use_schema_2_and_only_slot_argument_fields(tmp_path):
+    assert {"agent_a_args", "agent_b_args", "impl_args"} <= set(SNAPSHOT_KEYS)
+    assert {
+        "claude_args",
+        "codex_args",
+        "agy_args",
+        "opencode_args",
+    }.isdisjoint(SNAPSHOT_KEYS)
+    s = make_settings(
+        {
+            "AGENT_A_ARGS": "--effort=high",
+            "AGENT_B_ARGS": "-c model_reasoning_effort=low",
+            "IMPL_ARGS": "--variant high",
+        }
+    )
     values = snapshot_values(
         s,
         branch="b",
@@ -138,20 +159,21 @@ def test_opencode_args_is_a_snapshot_key_and_round_trips(tmp_path):
         task_source_kind="literal",
         task_source_path="",
     )
-    assert values["opencode_args"] == "--variant high --thinking"
     write_snapshot(tmp_path / "st", values)
+    payload = json.loads((tmp_path / "st" / "settings.json").read_text(encoding="utf-8"))
+    assert payload["schema"] == 2
+    assert "claude_args" not in payload
+    assert "codex_args" not in payload
+    assert "agy_args" not in payload
+    assert "opencode_args" not in payload
+    assert payload["agent_a_args"] == "--effort=high"
+    assert payload["agent_b_args"] == "-c model_reasoning_effort=low"
+    assert payload["impl_args"] == "--variant high"
     snap = load_snapshot(tmp_path / "st")
-    assert snap["OPENCODE_ARGS"] == "--variant high --thinking"
     resumed = Settings.from_env({}, run_id="20260711-000000", snapshot=snap)
-    assert resumed.opencode_args == "--variant high --thinking"
-
-
-def test_old_snapshot_without_opencode_args_still_loads(tmp_path):
-    write_raw(tmp_path / "st", json.dumps({"schema": 1, "agent_a": "claude"}))
-    snap = load_snapshot(tmp_path / "st")
-    assert "OPENCODE_ARGS" not in snap
-    resumed = Settings.from_env({}, run_id="20260711-000000", snapshot=snap)
-    assert resumed.opencode_args == ""
+    assert resumed.agent_a_args == "--effort=high"
+    assert resumed.agent_b_args == "-c model_reasoning_effort=low"
+    assert resumed.impl_args == "--variant high"
 
 
 def test_snapshot_values_includes_impl_settings():

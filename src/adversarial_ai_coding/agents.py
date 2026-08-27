@@ -99,15 +99,6 @@ def generic_agent_args(ref: AgentRef, settings: Settings) -> str:
 
 def _arg_sources(ref: AgentRef, settings: Settings) -> list[tuple[str, str]]:
     sources: list[tuple[str, str]] = []
-    if ref.slot != "I":
-        if ref.name == "claude":
-            sources.append(("CLAUDE_ARGS", settings.claude_args))
-        elif ref.name == "codex":
-            sources.append(("CODEX_ARGS", settings.codex_args))
-        elif ref.name == "agy":
-            sources.append(("AGY_ARGS", settings.agy_args))
-        elif ref.name == "opencode":
-            sources.append(("OPENCODE_ARGS", settings.opencode_args))
     if ref.slot == "A":
         sources.append(("AGENT_A_ARGS", generic_agent_args(ref, settings)))
     elif ref.slot == "B":
@@ -327,14 +318,6 @@ def _validate_slot_arg_source(variable: str, command: str, raw: str) -> None:
 
 
 def _validate_reserved_args(settings: Settings) -> None:
-    for variable, adapter, raw in (
-        ("CLAUDE_ARGS", "claude", settings.claude_args),
-        ("CODEX_ARGS", "codex", settings.codex_args),
-        ("AGY_ARGS", "agy", settings.agy_args),
-        ("OPENCODE_ARGS", "opencode", settings.opencode_args),
-    ):
-        _validate_builtin_arg_tokens(variable, adapter, _split_cli_args(variable, raw))
-
     _validate_slot_arg_source("AGENT_A_ARGS", settings.agent_a, settings.agent_a_args)
     _validate_slot_arg_source("AGENT_B_ARGS", settings.agent_b, settings.agent_b_args)
     adapters = _startup_impl_adapters(settings)

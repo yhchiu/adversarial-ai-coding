@@ -32,6 +32,7 @@
   "Missing required command:{name}": "필요한 command 가 없습니다:{name}",
   "A and B cannot both use custom agent command {command}. Use separate wrapper command names for worker and reviewer.": "A 와 B 가 같은 커스텀 agent command {command} 를 쓸 수 없습니다. worker 와 reviewer 에는 다른 wrapper command 이름을 쓰세요.",
   "Implementation slot cannot reuse custom agent command {name}. Set IMPL_AGENT to a different wrapper command.": "구현 slot 은 커스텀 agent command {name} 을 재사용할 수 없습니다. IMPL_AGENT 에는 다른 wrapper command 를 설정하세요.",
+  "Removed adapter-wide argument variable(s): {names}. Use AGENT_A_ARGS, AGENT_B_ARGS, or IMPL_ARGS instead.": "제거된 adapter-wide 인자 변수: {names}. AGENT_A_ARGS, AGENT_B_ARGS 또는 IMPL_ARGS를 사용하세요.",
   "(workflow prompt template not found:{path}; keep resources/prompts with the script or set PROMPTS_DIR)": "(workflow prompt template 을 찾지 못했습니다:{path}. resources/prompts 를 script 와 같이 두거나 PROMPTS_DIR 을 설정하세요)",
   "(AGENTS.md template not found:{template_path}; keep resources/AGENTS.template.md with the script or set AGENTS_TEMPLATE)": "(AGENTS.md template 을 찾지 못했습니다:{template_path}. resources/AGENTS.template.md 를 script 와 같이 두거나 AGENTS_TEMPLATE 를 설정하세요)",
   "IMPORT_SPEC and DUAL_SPEC=1 are incompatible: dual candidate specs and an imported spec contradict each other. Disable one.": "IMPORT_SPEC 과 DUAL_SPEC=1 은 함께 쓸 수 없습니다. dual candidate spec 과 가져온 spec 이 충돌합니다. 하나를 끄세요.",

@@ -88,7 +88,8 @@ def test_codex_worker_uses_exact_thread_id_and_slot_model(monkeypatch, tmp_path)
             "AGENT_B": "codex",
             "MODEL_A": "gpt-a",
             "MODEL_B": "gpt-b",
-            "CODEX_ARGS": "-c model_reasoning_effort=high",
+            "AGENT_A_ARGS": "-c model_reasoning_effort=high",
+            "AGENT_B_ARGS": "-c model_reasoning_effort=high",
         }
     )
     io, _ = make_io(tmp_path)
@@ -362,8 +363,8 @@ def test_codex_same_agent_validation_and_reserved_args():
         '--config sandbox_mode="read-only"',
         '--config=sandbox_mode="read-only"',
     ):
-        invalid = settings({"CODEX_ARGS": value})
-        with pytest.raises(SettingsError, match="CODEX_ARGS"):
+        invalid = settings({"AGENT_B_ARGS": value})
+        with pytest.raises(SettingsError, match="AGENT_B_ARGS"):
             agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
 
     for value in (
@@ -371,7 +372,7 @@ def test_codex_same_agent_validation_and_reserved_args():
         "--config model_reasoning_effort=high",
         "--config=model_reasoning_effort=high",
     ):
-        allowed = settings({"CODEX_ARGS": value})
+        allowed = settings({"AGENT_B_ARGS": value})
         agents.validate_agents(allowed, which=lambda name: "C:/fake/" + name)
 
 def test_fake_codex_keeps_worker_thread_separate_from_reviewer(monkeypatch, tmp_path):
@@ -578,8 +579,8 @@ def test_agy_same_agent_validation_and_reserved_args():
         "--conversation value",
         "--conversation=value",
     ):
-        invalid = settings({"AGY_ARGS": value})
-        with pytest.raises(SettingsError, match="AGY_ARGS"):
+        invalid = settings({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+        with pytest.raises(SettingsError, match="AGENT_A_ARGS"):
             agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
 
 
@@ -706,8 +707,8 @@ def test_opencode_same_agent_validation_and_reserved_args():
         "--command review",
         "--dir /tmp",
     ):
-        invalid = settings({"AGENT_A": "opencode", "OPENCODE_ARGS": value})
-        with pytest.raises(SettingsError, match="OPENCODE_ARGS"):
+        invalid = settings({"AGENT_A": "opencode", "AGENT_A_ARGS": value})
+        with pytest.raises(SettingsError, match="AGENT_A_ARGS"):
             agents.validate_agents(invalid, which=lambda name: "C:/fake/" + name)
 
 
