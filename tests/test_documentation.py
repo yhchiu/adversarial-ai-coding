@@ -139,6 +139,37 @@ def test_troubleshooting_guides_are_linked_and_actionable_bilingually():
     )
 
 
+def test_permission_prompt_adapter_table_is_documented_bilingually():
+    guides = {
+        "docs/troubleshooting.md": (
+            "AAC calls agents non-interactively, so nobody can answer a prompt.",
+            "| Adapter | Arguments and settings added by AAC | Effective behavior |",
+        ),
+        "docs/troubleshooting.zh-TW.md": (
+            "AAC 以非互動模式呼叫 agent,沒有人能回答權限 prompt。",
+            "| Adapter | AAC 加入的參數與設定 | 實際行為 |",
+        ),
+    }
+
+    for guide_name, (opening, header) in guides.items():
+        guide = _read(guide_name)
+        assert f"{opening}\n\n{header}" in guide
+        permission_section = guide.split(header, 1)[1].split("### Claude Code", 1)[0]
+        for detail in (
+            "--permission-mode acceptEdits",
+            "--allowedTools <TOOLS>",
+            "--sandbox workspace-write",
+            'sandbox_mode="workspace-write"',
+            "--approve-for-me",
+            "--dangerously-skip-permissions",
+            "--auto",
+            "AGENT_A_ARGS",
+            "AGENT_B_ARGS",
+            "IMPL_ARGS",
+        ):
+            assert detail in permission_section
+
+
 def test_codex_reserved_aliases_are_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "--dangerously-bypass-approvals-and-sandbox" in readme

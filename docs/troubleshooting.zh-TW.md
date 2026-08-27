@@ -33,7 +33,17 @@ AAC 從檔案讀 reviewer 產物,不會解析 stdout 上的 JSON verdict。Revie
 
 ## Run 卡在權限詢問
 
-AAC 以非互動模式呼叫 agent,沒有人能回答權限 prompt。各 adapter 的處理方式不同。
+AAC 以非互動模式呼叫 agent,沒有人能回答權限 prompt。
+
+| Adapter | AAC 加入的參數與設定 | 實際行為 |
+| --- | --- | --- |
+| Claude Code | `--permission-mode acceptEdits --allowedTools <TOOLS>` | `acceptEdits` 會核准檔案編輯與常見 filesystem 命令;`TOOLS` 提供額外預先核准的 tool 規則。 |
+| Codex | 全新 worker 與 reviewer 使用 `--sandbox workspace-write`;續跑 worker 使用 `-c sandbox_mode="workspace-write"`。AAC 不會加入 `--approve-for-me`,也不會覆寫 approval reviewer。 | Codex 強制使用 workspace-write sandbox,approval policy 與 reviewer 則繼承 Codex config 或允許的使用者參數。 |
+| Antigravity (`agy`) | `--dangerously-skip-permissions` | 略過所有 tool 權限詢問;AAC 不會另外加入 sandbox。 |
+| OpenCode | `--auto` | 自動核准使用者 OpenCode config 未明確 deny 的所有權限。 |
+| 自訂 adapter | 無 | Wrapper command 與 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` 負責所有權限及 sandbox 行為。 |
+
+各 adapter 的處理方式不同。
 
 ### Claude Code:把確切命令放進 `TOOLS`
 

@@ -37,8 +37,17 @@ and eventually stop at `MAX_ROUNDS`.
 
 ## The run is stuck on a permission prompt
 
-AAC calls agents non-interactively, so nobody can answer a prompt. The remedy is
-different for each adapter.
+AAC calls agents non-interactively, so nobody can answer a prompt.
+
+| Adapter | Arguments and settings added by AAC | Effective behavior |
+| --- | --- | --- |
+| Claude Code | `--permission-mode acceptEdits --allowedTools <TOOLS>` | File edits and common filesystem commands are approved by `acceptEdits`; `TOOLS` supplies additional pre-approved tool rules. |
+| Codex | Fresh workers and reviewers use `--sandbox workspace-write`; resumed workers use `-c sandbox_mode="workspace-write"`. AAC does not add `--approve-for-me` or otherwise override the approval reviewer. | Codex enforces a workspace-write sandbox and inherits its approval policy and reviewer from Codex configuration or permitted user arguments. |
+| Antigravity (`agy`) | `--dangerously-skip-permissions` | All tool permission prompts are bypassed; AAC does not add a separate sandbox. |
+| OpenCode | `--auto` | Every permission not explicitly denied by the user's OpenCode configuration is approved automatically. |
+| Custom adapter | None | The wrapper command and `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` own all permission and sandbox behavior. |
+
+The remedy is different for each adapter.
 
 ### Claude Code: put the exact command in `TOOLS`
 
