@@ -366,6 +366,8 @@ def test_slot_i_archive_evidence_uses_resolved_model_args_and_slot(tmp_path):
             "AGENT_A": "codex",
             "AGENT_B": "claude",
             "MODEL_A": "owner-model",
+            "CODEX_ARGS": "-c model_reasoning_effort=high",
+            "AGENT_A_ARGS": "-c model_reasoning_effort=low",
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": "--impl-only",
         },

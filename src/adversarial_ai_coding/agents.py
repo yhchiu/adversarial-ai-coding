@@ -99,14 +99,15 @@ def generic_agent_args(ref: AgentRef, settings: Settings) -> str:
 
 def _arg_sources(ref: AgentRef, settings: Settings) -> list[tuple[str, str]]:
     sources: list[tuple[str, str]] = []
-    if ref.name == "claude":
-        sources.append(("CLAUDE_ARGS", settings.claude_args))
-    elif ref.name == "codex":
-        sources.append(("CODEX_ARGS", settings.codex_args))
-    elif ref.name == "agy":
-        sources.append(("AGY_ARGS", settings.agy_args))
-    elif ref.name == "opencode":
-        sources.append(("OPENCODE_ARGS", settings.opencode_args))
+    if ref.slot != "I":
+        if ref.name == "claude":
+            sources.append(("CLAUDE_ARGS", settings.claude_args))
+        elif ref.name == "codex":
+            sources.append(("CODEX_ARGS", settings.codex_args))
+        elif ref.name == "agy":
+            sources.append(("AGY_ARGS", settings.agy_args))
+        elif ref.name == "opencode":
+            sources.append(("OPENCODE_ARGS", settings.opencode_args))
     if ref.slot == "A":
         sources.append(("AGENT_A_ARGS", generic_agent_args(ref, settings)))
     elif ref.slot == "B":
@@ -155,6 +156,15 @@ def _impl_owner_candidates(settings: Settings) -> tuple[str, ...]:
     if settings.dual_spec:
         return settings.agent_a, settings.agent_b
     return (settings.agent_a,)
+
+
+def _startup_impl_adapters(settings: Settings) -> tuple[str, ...]:
+    if settings.impl_agent:
+        return (settings.impl_agent,)
+    candidates = tuple(dict.fromkeys(_impl_owner_candidates(settings)))
+    if len(candidates) == 1:
+        return candidates
+    return ()
 
 
 def _custom_impl_conflict(name: str) -> SettingsError:
@@ -327,12 +337,11 @@ def _validate_reserved_args(settings: Settings) -> None:
 
     _validate_slot_arg_source("AGENT_A_ARGS", settings.agent_a, settings.agent_a_args)
     _validate_slot_arg_source("AGENT_B_ARGS", settings.agent_b, settings.agent_b_args)
-    adapters = (
-        (settings.impl_agent,)
-        if settings.impl_agent
-        else _impl_owner_candidates(settings)
-    )
-    _validate_impl_args(settings, adapters)
+    adapters = _startup_impl_adapters(settings)
+    if adapters:
+        _validate_impl_args(settings, adapters)
+    else:
+        _split_cli_args("IMPL_ARGS", settings.impl_args)
 
 
 def _validate_impl_args(settings: Settings, adapters: tuple[str, ...]) -> None:

@@ -295,6 +295,65 @@ def test_same_builtin_cli_keeps_a_and_b_slot_args_isolated():
     assert "model_reasoning_effort=low" not in agents.agent_args(ref_b, settings)
 
 
+def test_independent_impl_slot_uses_only_impl_args():
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "CLAUDE_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "owner words"',
+            "IMPL_ARGS": '--slot "impl words"',
+        }
+    )
+    owner = AgentRef("A", "claude")
+    implementation = agents.impl_ref(owner, settings)
+
+    assert implementation.slot == "I"
+    assert agents.agent_args(implementation, settings) == ["--slot", "impl words"]
+    assert agents.resolve_model_args(implementation, settings) == '--slot "impl words"'
+    assert agents.agent_args(owner, settings) == [
+        "--adapter",
+        "wide words",
+        "--slot",
+        "owner words",
+    ]
+
+
+def test_impl_model_only_does_not_inherit_owner_or_adapter_args():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "CODEX_ARGS": "-c model_reasoning_effort=high",
+            "AGENT_A_ARGS": "-c model_reasoning_effort=low",
+            "IMPL_MODEL": "gpt-impl",
+        }
+    )
+    implementation = agents.impl_ref(AgentRef("A", "codex"), settings)
+
+    assert implementation == AgentRef("I", "codex", base_slot="A")
+    assert agents.agent_model(implementation, settings) == "gpt-impl"
+    assert agents.agent_args(implementation, settings) == []
+    assert agents.resolve_model_args(implementation, settings) == ""
+
+
+def test_empty_impl_settings_keep_owner_slot_arguments():
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "CLAUDE_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "owner words"',
+        }
+    )
+    owner = AgentRef("A", "claude")
+
+    assert agents.impl_ref(owner, settings) is owner
+    assert agents.agent_args(owner, settings) == [
+        "--adapter",
+        "wide words",
+        "--slot",
+        "owner words",
+    ]
+
+
 @pytest.mark.parametrize(
     ("ref", "env", "expected"),
     [
@@ -338,12 +397,10 @@ def test_same_builtin_cli_keeps_a_and_b_slot_args_isolated():
             AgentRef("I", "claude", base_slot="A"),
             {
                 "CLAUDE_ARGS": '--append-system-prompt "base words"',
+                "AGENT_A_ARGS": '--slot "owner words"',
                 "IMPL_ARGS": '--permission-mode "impl mode"',
             },
-            [
-                ("CLAUDE_ARGS", '--append-system-prompt "base words"'),
-                ("IMPL_ARGS", '--permission-mode "impl mode"'),
-            ],
+            [("IMPL_ARGS", '--permission-mode "impl mode"')],
         ),
         (
             AgentRef("I", "impl-wrapper"),
@@ -901,10 +958,37 @@ def test_validate_agents_checks_impl_args_against_default_owner_adapter():
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
-def test_validate_agents_checks_impl_args_against_each_dual_owner_candidate():
+def test_validate_agents_defers_dual_spec_impl_args_when_adapters_differ():
     settings = make(
         {
             "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_still_quotes_impl_args_when_dual_spec_adapters_differ():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": '--flag "unterminated',
+        }
+    )
+
+    with pytest.raises(SettingsError, match=r"IMPL_ARGS.*quoting"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_checks_dual_spec_impl_args_when_adapters_match():
+    settings = make(
+        {
+            "AGENT_A": "claude",
             "AGENT_B": "claude",
             "DUAL_SPEC": "1",
             "IMPL_ARGS": "--continue",
@@ -937,6 +1021,22 @@ def test_impl_ref_revalidates_impl_args_for_resolved_runtime_adapter():
     )
     validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        agents.impl_ref(AgentRef("B", "claude"), settings)
+
+
+def test_impl_ref_revalidates_deferred_dual_spec_impl_args_against_owner():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+    agents.impl_ref(AgentRef("A", "codex"), settings)
     with pytest.raises(SettingsError, match="IMPL_ARGS"):
         agents.impl_ref(AgentRef("B", "claude"), settings)
 
@@ -1296,6 +1396,7 @@ def test_claude_implementation_worker_orders_fresh_and_resume_argv(
             "AGENT_A": "claude",
             "MODEL_A": "owner-model",
             "CLAUDE_ARGS": '--base-claude "base words"',
+            "AGENT_A_ARGS": '--owner-claude "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-claude "impl words"',
         }
@@ -1310,8 +1411,6 @@ def test_claude_implementation_worker_orders_fresh_and_resume_argv(
     expected_args = [
         "--model",
         "impl-model",
-        "--base-claude",
-        "base words",
         "--impl-claude",
         "impl words",
     ]
@@ -1339,6 +1438,7 @@ def test_codex_implementation_worker_orders_fresh_and_resume_argv(
             "AGENT_A": "codex",
             "MODEL_A": "owner-model",
             "CODEX_ARGS": '--base-codex "base words"',
+            "AGENT_A_ARGS": '--owner-codex "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-codex "impl words"',
         }
@@ -1353,8 +1453,6 @@ def test_codex_implementation_worker_orders_fresh_and_resume_argv(
     model_and_args = [
         "-c",
         'model="impl-model"',
-        "--base-codex",
-        "base words",
         "--impl-codex",
         "impl words",
     ]
@@ -1401,6 +1499,7 @@ def test_agy_implementation_worker_orders_fresh_and_resume_argv(
             "AGENT_A": "agy",
             "MODEL_A": "owner-model",
             "AGY_ARGS": '--base-agy "base words"',
+            "AGENT_A_ARGS": '--owner-agy "owner words"',
             "IMPL_MODEL": "impl-model",
             "IMPL_ARGS": '--impl-agy "impl words"',
         }
@@ -1415,8 +1514,6 @@ def test_agy_implementation_worker_orders_fresh_and_resume_argv(
     expected_args = [
         "--model",
         "impl-model",
-        "--base-agy",
-        "base words",
         "--impl-agy",
         "impl words",
     ]
@@ -1444,6 +1541,7 @@ def test_opencode_implementation_worker_orders_fresh_and_resume_argv(
             "AGENT_A": "opencode",
             "MODEL_A": "owner-model",
             "OPENCODE_ARGS": '--variant high --title "base words"',
+            "AGENT_A_ARGS": '--title "owner words"',
             "IMPL_MODEL": "xai/grok-4.6",
             "IMPL_ARGS": '--agent build --title "impl words"',
         }
@@ -1458,10 +1556,6 @@ def test_opencode_implementation_worker_orders_fresh_and_resume_argv(
     model_and_args = [
         "-m",
         "xai/grok-4.6",
-        "--variant",
-        "high",
-        "--title",
-        "base words",
         "--agent",
         "build",
         "--title",
