@@ -27,6 +27,7 @@ RESET_SANITY_MAX = 2_592_000  # 30 days; beyond this is a parsing artefact.
 _RATE_LIMIT = re.compile(
     r'"api_error_status": *429'
     r"|(?:hit|reached) your (?:session|usage|weekly|rate) limit"
+    r"|personal-team-blocked:spending-limit"
     r"|rate.?limit"
     r"|too many requests"
     r"|status.?429",

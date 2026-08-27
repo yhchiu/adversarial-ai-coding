@@ -2287,6 +2287,9 @@ OPENCODE_ERROR_UNSTRUCTURED = {
     "sessionID": "ses_quota",
     "error": {"name": "UnknownError", "data": {"statusCode": 429}},
 }
+OPENCODE_GROK_LIMIT_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "opencode_grok_spending_limit.jsonl"
+)
 
 
 def test_render_opencode_event_echoes_text_and_tool_file_path():
@@ -2346,6 +2349,19 @@ def test_render_opencode_event_keeps_the_reported_status_for_quota_detection():
     # The status travels with every error; only 429 means a quota wait.
     assert other.quota == "model not found (status 404)"
     assert not is_rate_limited(other.quota)
+
+
+def test_opencode_grok_spending_limit_event_reaches_quota_detection():
+    """Replay the redacted OpenCode/xAI event captured on 2026-08-27."""
+    event = agents.render_opencode_event(
+        OPENCODE_GROK_LIMIT_FIXTURE.read_text(encoding="utf-8")
+    )
+
+    assert event.session_id == "ses_redacted"
+    assert event.quota.endswith("(status 403)")
+    assert "personal-team-blocked:spending-limit" in event.quota
+    assert event.echo == [event.quota]
+    assert is_rate_limited(event.quota)
 
 
 def test_render_opencode_event_marks_a_failed_tool_call():
