@@ -114,6 +114,29 @@ def test_write_meta_matches_bash_fields(tmp_path):
             "A",
             ["--profile", "two words", "--last"],
         ),
+        (
+            {
+                "AGENT_A": "claude",
+                "CLAUDE_ARGS": '--adapter "wide words"',
+                "AGENT_A_ARGS": '--slot "a words"',
+            },
+            "A",
+            ["--adapter", "wide words", "--slot", "a words"],
+        ),
+        (
+            {
+                "AGENT_B": "codex",
+                "CODEX_ARGS": "-c model_reasoning_effort=low",
+                "AGENT_B_ARGS": "-c model_reasoning_effort=high",
+            },
+            "B",
+            [
+                "-c",
+                "model_reasoning_effort=low",
+                "-c",
+                "model_reasoning_effort=high",
+            ],
+        ),
     ],
 )
 def test_archive_model_args_match_builtin_and_custom_runtime_tokens(
@@ -132,6 +155,74 @@ def test_archive_model_args_match_builtin_and_custom_runtime_tokens(
     assert metadata["model_args"] == agents.resolve_model_args(ref, archive.settings)
     assert runtime_tokens == expected_tokens
     assert runtime_tokens == shlex.split(metadata["model_args"], posix=True)
+
+
+def test_same_builtin_cli_slot_args_match_runtime_in_all_records(tmp_path):
+    archive = make_archive(
+        tmp_path,
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "codex",
+            "CODEX_ARGS": "-c model_reasoning_effort=medium",
+            "AGENT_A_ARGS": "-c model_reasoning_effort=low",
+            "AGENT_B_ARGS": "-c model_reasoning_effort=high",
+        },
+    )
+    ref_a = agent_ref("A", archive.settings)
+    ref_b = agent_ref("B", archive.settings)
+    artifact_a = archive.archive_text(
+        "a-output.txt", "done", role="worker", agent=ref_a, stage="code"
+    )
+    artifact_b = archive.archive_text(
+        "b-output.txt", "done", role="reviewer", agent=ref_b, stage="code"
+    )
+    archive.log_section("AI call", "worker", ref_a, "code", 1, echo=lambda _: None)
+    archive.log_section("AI call", "reviewer", ref_b, "code", 1, echo=lambda _: None)
+    archive.metric("worker", ref_a, 1, 2, "", stage="code")
+    archive.metric("reviewer", ref_b, 1, 3, "", stage="code")
+    archive.write_run_metadata(spec_dir="aac/docs/test", wf="aac/.run")
+    archive.write_log_metadata()
+
+    expected_a = agents.resolve_model_args(ref_a, archive.settings)
+    expected_b = agents.resolve_model_args(ref_b, archive.settings)
+    assert agents.agent_args(ref_a, archive.settings) == [
+        "-c",
+        "model_reasoning_effort=medium",
+        "-c",
+        "model_reasoning_effort=low",
+    ]
+    assert agents.agent_args(ref_b, archive.settings) == [
+        "-c",
+        "model_reasoning_effort=medium",
+        "-c",
+        "model_reasoning_effort=high",
+    ]
+    meta_a = json.loads(
+        artifact_a.with_name(artifact_a.name + ".meta.json").read_text(encoding="utf-8")
+    )
+    meta_b = json.loads(
+        artifact_b.with_name(artifact_b.name + ".meta.json").read_text(encoding="utf-8")
+    )
+    assert meta_a["model_args"] == expected_a
+    assert meta_b["model_args"] == expected_b
+    banner = archive.log_path.read_text(encoding="utf-8")
+    assert f"args={expected_a}" in banner
+    assert f"args={expected_b}" in banner
+    rows = list(csv.reader(archive.metrics_path.read_text(encoding="utf-8").splitlines()))
+    assert rows[1][8] == expected_a
+    assert rows[2][8] == expected_b
+    run_metadata = json.loads(
+        next(archive.run_dir.glob("*-run-metadata.json")).read_text(encoding="utf-8")
+    )
+    log_metadata = json.loads(
+        archive.log_path.with_name(archive.log_path.name + ".meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert run_metadata["args_a"] == expected_a
+    assert run_metadata["args_b"] == expected_b
+    assert log_metadata["args_a"] == expected_a
+    assert log_metadata["args_b"] == expected_b
 
 
 def test_archive_snapshot_missing_source_is_noop(tmp_path):

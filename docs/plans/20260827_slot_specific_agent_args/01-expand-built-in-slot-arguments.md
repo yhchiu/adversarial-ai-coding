@@ -9,16 +9,16 @@ arguments.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A built-in agent in slot A receives `AGENT_A_ARGS` in fresh and resumed calls.
-- [ ] A built-in agent in slot B receives `AGENT_B_ARGS` in fresh and resumed calls.
-- [ ] A and B can use the same built-in CLI with different slot arguments, and neither call receives the other slot's value.
-- [ ] The old adapter-wide arguments still work during this expand step and appear before slot arguments.
-- [ ] Built-in slot arguments are checked with the rules for their exact adapter.
-- [ ] Model flags and workflow-owned flags are rejected with an error that names `AGENT_A_ARGS` or `AGENT_B_ARGS`.
-- [ ] A flag reserved by another adapter is not rejected.
-- [ ] Custom A/B agents still receive pass-through slot arguments after shell-quoting validation.
-- [ ] Logs, artifact metadata, run metadata, and metrics report the same effective arguments used by runtime calls.
-- [ ] Focused configuration, adapter, session, and archive tests pass.
-- [ ] The complete test suite remains green before Ticket 2 starts.
+- [x] A built-in agent in slot A receives `AGENT_A_ARGS` in fresh and resumed calls.
+- [x] A built-in agent in slot B receives `AGENT_B_ARGS` in fresh and resumed calls.
+- [x] A and B can use the same built-in CLI with different slot arguments, and neither call receives the other slot's value.
+- [x] The old adapter-wide arguments still work during this expand step and appear before slot arguments.
+- [x] Built-in slot arguments are checked with the rules for their exact adapter.
+- [x] Model flags and workflow-owned flags are rejected with an error that names `AGENT_A_ARGS` or `AGENT_B_ARGS`.
+- [x] A flag reserved by another adapter is not rejected.
+- [x] Custom A/B agents still receive pass-through slot arguments after shell-quoting validation.
+- [x] Logs, artifact metadata, run metadata, and metrics report the same effective arguments used by runtime calls.
+- [x] Focused configuration, adapter, session, and archive tests pass.
+- [x] The complete test suite remains green before Ticket 2 starts.

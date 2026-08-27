@@ -208,6 +208,94 @@ def test_custom_agent_args_use_slot_when_names_match():
 
 
 @pytest.mark.parametrize(
+    ("env", "ref", "expected_tokens", "expected_raw"),
+    [
+        (
+            {
+                "AGENT_A": "claude",
+                "CLAUDE_ARGS": '--adapter "wide words"',
+                "AGENT_A_ARGS": '--slot "a words"',
+            },
+            AgentRef("A", "claude"),
+            ["--adapter", "wide words", "--slot", "a words"],
+            '--adapter "wide words" --slot "a words"',
+        ),
+        (
+            {
+                "AGENT_B": "codex",
+                "CODEX_ARGS": "-c model_reasoning_effort=low",
+                "AGENT_B_ARGS": "-c model_reasoning_effort=high",
+            },
+            AgentRef("B", "codex"),
+            [
+                "-c",
+                "model_reasoning_effort=low",
+                "-c",
+                "model_reasoning_effort=high",
+            ],
+            "-c model_reasoning_effort=low -c model_reasoning_effort=high",
+        ),
+        (
+            {
+                "AGENT_A": "agy",
+                "AGY_ARGS": '--adapter "wide words"',
+                "AGENT_A_ARGS": '--slot "a words"',
+            },
+            AgentRef("A", "agy"),
+            ["--adapter", "wide words", "--slot", "a words"],
+            '--adapter "wide words" --slot "a words"',
+        ),
+        (
+            {
+                "AGENT_B": "opencode",
+                "OPENCODE_ARGS": "--variant low",
+                "AGENT_B_ARGS": '--title "slot words"',
+            },
+            AgentRef("B", "opencode"),
+            ["--variant", "low", "--title", "slot words"],
+            '--variant low --title "slot words"',
+        ),
+    ],
+)
+def test_builtin_slot_args_follow_adapter_wide_args(
+    env, ref, expected_tokens, expected_raw
+):
+    settings = make(env)
+
+    assert agents.agent_args(ref, settings) == expected_tokens
+    assert agents.resolve_model_args(ref, settings) == expected_raw
+
+
+def test_same_builtin_cli_keeps_a_and_b_slot_args_isolated():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "codex",
+            "CODEX_ARGS": "-c model_reasoning_effort=medium",
+            "AGENT_A_ARGS": "-c model_reasoning_effort=low",
+            "AGENT_B_ARGS": "-c model_reasoning_effort=high",
+        }
+    )
+    ref_a = AgentRef("A", "codex")
+    ref_b = AgentRef("B", "codex")
+
+    assert agents.agent_args(ref_a, settings) == [
+        "-c",
+        "model_reasoning_effort=medium",
+        "-c",
+        "model_reasoning_effort=low",
+    ]
+    assert agents.agent_args(ref_b, settings) == [
+        "-c",
+        "model_reasoning_effort=medium",
+        "-c",
+        "model_reasoning_effort=high",
+    ]
+    assert "model_reasoning_effort=high" not in agents.agent_args(ref_a, settings)
+    assert "model_reasoning_effort=low" not in agents.agent_args(ref_b, settings)
+
+
+@pytest.mark.parametrize(
     ("ref", "env", "expected"),
     [
         (
@@ -692,6 +780,52 @@ def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
     validate_agents(s, which=lambda name: "C:/fake/" + name)
 
 
+@pytest.mark.parametrize("slot", ["A", "B"])
+@pytest.mark.parametrize(
+    ("adapter", "value"),
+    [
+        ("claude", "--continue"),
+        ("claude", "--output-format=text"),
+        ("claude", "--model pro"),
+        ("codex", "resume thread-id"),
+        ("codex", "--sandbox=workspace-write"),
+        ("codex", "-c model=gpt-5"),
+        ("agy", "--conversation=conversation-id"),
+        ("agy", "--log-file output.log"),
+        ("agy", "-m pro"),
+        ("opencode", "--session=ses_abc"),
+        ("opencode", "--auto"),
+        ("opencode", "--model pro"),
+    ],
+)
+def test_validate_agents_rejects_reserved_flags_in_builtin_slot_args(
+    slot, adapter, value
+):
+    variable = f"AGENT_{slot}_ARGS"
+    settings = make({f"AGENT_{slot}": adapter, variable: value})
+
+    with pytest.raises(SettingsError, match=variable):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize("slot", ["A", "B"])
+@pytest.mark.parametrize(
+    ("adapter", "value"),
+    [
+        ("claude", "--json"),
+        ("codex", "--continue"),
+        ("agy", "--sandbox workspace-write"),
+        ("opencode", "--json"),
+    ],
+)
+def test_validate_agents_allows_other_adapter_flags_in_builtin_slot_args(
+    slot, adapter, value
+):
+    settings = make({f"AGENT_{slot}": adapter, f"AGENT_{slot}_ARGS": value})
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
 @pytest.mark.parametrize(
     ("adapter", "value"),
     [
@@ -957,6 +1091,192 @@ def test_generic_runner_places_shared_agent_args_before_prompt(monkeypatch, tmp_
     agents._run_generic(AgentRef("A", "wrapper"), "prompt", make(), io)
 
     assert seen["argv"] == ["wrapper", "--shared", "two words", "prompt"]
+
+
+def _assert_tokens_in_order(argv, tokens):
+    index = 0
+    for token in tokens:
+        assert token in argv[index:], (token, argv)
+        index = argv.index(token, index) + 1
+
+
+def test_claude_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_path):
+    calls = []
+    session_ids = iter(["claude-a-1", "claude-a-2", "claude-b-1", "claude-b-2"])
+
+    def fake_run(argv, io, ref):
+        calls.append((ref.slot, argv))
+        return 0, json.dumps({"session_id": next(session_ids), "result": "ok"}), None
+
+    monkeypatch.setattr(agents, "_run_claude_stream", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "AGENT_B": "claude",
+            "CLAUDE_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "a words"',
+            "AGENT_B_ARGS": '--slot "b words"',
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session_a = AgentSession()
+    session_b = AgentSession()
+
+    agents.run_worker(AgentRef("A", "claude"), "a-fresh", settings, session_a, io)
+    agents.run_worker(AgentRef("A", "claude"), "a-resume", settings, session_a, io)
+    agents.run_worker(AgentRef("B", "claude"), "b-fresh", settings, session_b, io)
+    agents.run_worker(AgentRef("B", "claude"), "b-resume", settings, session_b, io)
+
+    a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
+    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
+    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    for argv in (a_fresh, a_resume):
+        _assert_tokens_in_order(argv, a_tokens)
+        assert "b words" not in argv
+    for argv in (b_fresh, b_resume):
+        _assert_tokens_in_order(argv, b_tokens)
+        assert "a words" not in argv
+    assert "--resume" not in a_fresh
+    assert "--resume" not in b_fresh
+    assert a_resume[-2:] == ["--resume", "claude-a-1"]
+    assert b_resume[-2:] == ["--resume", "claude-b-1"]
+
+
+def test_codex_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_path):
+    calls = []
+    thread_ids = iter(["codex-a-1", "codex-a-1", "codex-b-1", "codex-b-1"])
+
+    def fake_run(argv, io, ref):
+        calls.append((ref.slot, argv))
+        return 0, "ok", next(thread_ids), ""
+
+    monkeypatch.setattr(agents, "_run_codex_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "codex",
+            "CODEX_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "a words"',
+            "AGENT_B_ARGS": '--slot "b words"',
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session_a = AgentSession()
+    session_b = AgentSession()
+
+    agents.run_worker(AgentRef("A", "codex"), "a-fresh", settings, session_a, io)
+    agents.run_worker(AgentRef("A", "codex"), "a-resume", settings, session_a, io)
+    agents.run_worker(AgentRef("B", "codex"), "b-fresh", settings, session_b, io)
+    agents.run_worker(AgentRef("B", "codex"), "b-resume", settings, session_b, io)
+
+    a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
+    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
+    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    for argv in (a_fresh, a_resume):
+        _assert_tokens_in_order(argv, a_tokens)
+        assert "b words" not in argv
+    for argv in (b_fresh, b_resume):
+        _assert_tokens_in_order(argv, b_tokens)
+        assert "a words" not in argv
+    assert "resume" not in a_fresh
+    assert "resume" not in b_fresh
+    assert a_resume[-2:] == ["codex-a-1", "a-resume"]
+    assert b_resume[-2:] == ["codex-b-1", "b-resume"]
+
+
+def test_agy_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_path):
+    calls = []
+    conversation_ids = {
+        "A": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "B": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    }
+
+    def fake_run(argv, io, ref):
+        calls.append((ref.slot, argv))
+        log_path = Path(argv[argv.index("--log-file") + 1])
+        log_path.write_text(
+            f"Created conversation {conversation_ids[ref.slot]}\n", encoding="utf-8"
+        )
+        return 0, "ok"
+
+    monkeypatch.setattr(agents, "_run_streaming", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "agy",
+            "AGENT_B": "agy",
+            "AGY_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "a words"',
+            "AGENT_B_ARGS": '--slot "b words"',
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session_a = AgentSession()
+    session_b = AgentSession()
+
+    agents.run_worker(AgentRef("A", "agy"), "a-fresh", settings, session_a, io)
+    agents.run_worker(AgentRef("A", "agy"), "a-resume", settings, session_a, io)
+    agents.run_worker(AgentRef("B", "agy"), "b-fresh", settings, session_b, io)
+    agents.run_worker(AgentRef("B", "agy"), "b-resume", settings, session_b, io)
+
+    a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
+    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
+    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    for argv in (a_fresh, a_resume):
+        _assert_tokens_in_order(argv, a_tokens)
+        assert "b words" not in argv
+    for argv in (b_fresh, b_resume):
+        _assert_tokens_in_order(argv, b_tokens)
+        assert "a words" not in argv
+    assert "--conversation" not in a_fresh
+    assert "--conversation" not in b_fresh
+    assert a_resume[-2:] == ["--conversation", conversation_ids["A"]]
+    assert b_resume[-2:] == ["--conversation", conversation_ids["B"]]
+
+
+def test_opencode_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, tmp_path):
+    calls = []
+    session_ids = iter(["ses_a_1", "ses_a_1", "ses_b_1", "ses_b_1"])
+
+    def fake_run(argv, io, ref):
+        calls.append((ref.slot, argv))
+        return 0, "ok", next(session_ids), "", "0.01"
+
+    monkeypatch.setattr(agents, "_run_opencode_json", fake_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "OPENCODE_ARGS": '--adapter "wide words"',
+            "AGENT_A_ARGS": '--slot "a words"',
+            "AGENT_B_ARGS": '--slot "b words"',
+        }
+    )
+    io, _ = make_io(tmp_path)
+    session_a = AgentSession()
+    session_b = AgentSession()
+
+    agents.run_worker(AgentRef("A", "opencode"), "a-fresh", settings, session_a, io)
+    agents.run_worker(AgentRef("A", "opencode"), "a-resume", settings, session_a, io)
+    agents.run_worker(AgentRef("B", "opencode"), "b-fresh", settings, session_b, io)
+    agents.run_worker(AgentRef("B", "opencode"), "b-resume", settings, session_b, io)
+
+    a_fresh, a_resume, b_fresh, b_resume = [argv for _, argv in calls]
+    a_tokens = ["--adapter", "wide words", "--slot", "a words"]
+    b_tokens = ["--adapter", "wide words", "--slot", "b words"]
+    for argv in (a_fresh, a_resume):
+        _assert_tokens_in_order(argv, a_tokens)
+        assert "b words" not in argv
+    for argv in (b_fresh, b_resume):
+        _assert_tokens_in_order(argv, b_tokens)
+        assert "a words" not in argv
+    assert "--session" not in a_fresh
+    assert "--session" not in b_fresh
+    assert a_resume[-3:-1] == ["--session", "ses_a_1"]
+    assert b_resume[-3:-1] == ["--session", "ses_b_1"]
 
 
 def test_claude_implementation_worker_orders_fresh_and_resume_argv(
