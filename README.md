@@ -901,8 +901,12 @@ used directly; otherwise four message shapes are understood:
 | `try again at Jul 14th, 2026 7:23 PM` | Codex | Until that timestamp, plus 30 seconds |
 | `try again at 12:50 AM` | Codex | Until that clock time, plus 30 seconds |
 
-Anything else falls back to exponential backoff (`RETRY_BASE_WAIT` doubling up to
-`RETRY_MAX_WAIT`), for at most `RETRY_MAX` retries.
+Balance-exhausted errors that require account action are not transient: xAI's
+OpenCode `personal-team-blocked:spending-limit` response and Grok Build's
+`usage balance exhausted` response abort immediately with exit code 75 instead
+of sleeping or resending the request. Other unparseable limits fall back to
+exponential backoff (`RETRY_BASE_WAIT` doubling up to `RETRY_MAX_WAIT`), for at
+most `RETRY_MAX` retries.
 
 A weekly quota can reset days away. Sleeping through it would waste hours and
 still fail, so when a parsed reset time exceeds `RETRY_MAX_RESET_WAIT` the run

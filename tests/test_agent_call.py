@@ -2,11 +2,19 @@
 
 from datetime import datetime
 
+import pytest
+
 from adversarial_ai_coding.config import Settings
 from adversarial_ai_coding.agents import AgentResult
 from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC, RetryEvents, agent_call
 
 RATE_LIMITED = 'api_error_status":429 hit your session limit'
+NON_RETRYABLE_QUOTAS = (
+    "personal-team-blocked:spending-limit: You have run out of credits or "
+    "need a Grok subscription. (status 403)",
+    "API error (status 402 Payment Required): "
+    "Grok Build usage balance exhausted",
+)
 NOW = int(datetime(2026, 7, 10, 9, 0, 0).timestamp())
 
 
@@ -54,6 +62,16 @@ def test_retry_off_no_retry_typed_quota_abort(tmp_path):
     assert result.rc == QUOTA_ABORT_RC
     assert stub.calls == 1
     assert slept == []
+
+
+@pytest.mark.parametrize("quota_text", NON_RETRYABLE_QUOTAS)
+def test_exhausted_balance_aborts_without_retrying_or_sleeping(tmp_path, quota_text):
+    result, stub, slept, archived = run(tmp_path, quota_text)
+
+    assert result.rc == QUOTA_ABORT_RC
+    assert stub.calls == 1
+    assert slept == []
+    assert archived == [(1, 1)]
 
 
 def test_ordinary_error_no_retry(tmp_path):

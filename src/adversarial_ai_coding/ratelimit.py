@@ -24,11 +24,15 @@ QUOTA_ABORT_RC = 75
 
 RESET_SANITY_MAX = 2_592_000  # 30 days; beyond this is a parsing artefact.
 
+_NON_RETRYABLE_QUOTA = re.compile(
+    r"personal-team-blocked:spending-limit"
+    r"|grok build usage balance exhausted",
+    re.IGNORECASE,
+)
+
 _RATE_LIMIT = re.compile(
     r'"api_error_status": *429'
     r"|(?:hit|reached) your (?:session|usage|weekly|rate) limit"
-    r"|personal-team-blocked:spending-limit"
-    r"|grok build usage balance exhausted"
     r"|rate.?limit"
     r"|too many requests"
     r"|status.?429",
@@ -87,6 +91,8 @@ def is_rate_limited(text: str) -> bool:
     """
     if not text:
         return False
+    if _NON_RETRYABLE_QUOTA.search(text):
+        return True
     status = _api_error_status(text)
     if status is not None:
         return status == 429
@@ -247,7 +253,9 @@ def agent_call(
             return result
         if not is_rate_limited(result.quota_text):
             return result
-        if not settings.retry_on_limit:
+        if not settings.retry_on_limit or _NON_RETRYABLE_QUOTA.search(
+            result.quota_text
+        ):
             return AgentResult(QUOTA_ABORT_RC, result.text)
         if n >= settings.retry_max:
             emit(
