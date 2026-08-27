@@ -155,9 +155,10 @@ uses only `IMPL_ARGS`.
   parity documentation is updated. Historical plans, reviews, todos, and
   design records are not rewritten.
 - This feature does not introduce a changelog or change the package version.
-- The implementation is delivered as one coherent Conventional Commit after
-  the complete test suite passes: `feat(agents): use slot-specific adapter
-  arguments`.
+- The implementation uses three green commits in an expand-contract sequence:
+  first add built-in A/B slot arguments, then isolate I-slot arguments, and
+  finally remove the adapter-wide variables and publish the final contract.
+  Each commit must pass its relevant tests before the next ticket starts.
 
 ## Testing Decisions
 
@@ -224,3 +225,9 @@ slot configuration.
 
 The architectural reason for this invariant is recorded in
 [adr.md](adr.md).
+
+The approved implementation sequence is split into these tickets:
+
+1. [Expand built-in slots to accept slot arguments](01-expand-built-in-slot-arguments.md)
+2. [Make implementation overrides use independent arguments](02-isolate-implementation-slot-arguments.md)
+3. [Remove adapter-wide arguments and publish the final contract](03-remove-adapter-wide-arguments.md)
