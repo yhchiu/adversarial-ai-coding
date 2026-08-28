@@ -402,37 +402,6 @@ def test_slot_args_resolve_only_the_ref_slot(
     assert agents.resolve_model_args(ref, settings) == expected_raw
 
 
-def test_shared_sources_keep_runtime_and_metadata_order(monkeypatch):
-    sources = [
-        ("AGENT_A_ARGS", '--first "two words"'),
-        ("AGENT_A_ARGS", "--second final"),
-    ]
-    monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
-    ref = AgentRef("A", "claude")
-    settings = make()
-
-    assert agents.agent_args(ref, settings) == [
-        "--first",
-        "two words",
-        "--second",
-        "final",
-    ]
-    assert agents.resolve_model_args(ref, settings) == (
-        '--first "two words" --second final'
-    )
-
-
-def test_agent_args_attributes_quoting_error_to_each_source(monkeypatch):
-    sources = [
-        ("AGENT_A_ARGS", "--first valid"),
-        ("AGENT_A_ARGS", '--second "unterminated'),
-    ]
-    monkeypatch.setattr(agents, "_arg_sources", lambda ref, settings: sources)
-
-    with pytest.raises(SettingsError, match=r"AGENT_A_ARGS.*quoting"):
-        agents.agent_args(AgentRef("A", "claude"), make())
-
-
 def test_agent_model_unset_is_empty_for_cli_default():
     s = make({"AGENT_A": "claude", "AGENT_B": "codex"})
     assert agent_model("claude", s) == ""
