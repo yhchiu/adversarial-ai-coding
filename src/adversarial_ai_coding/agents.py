@@ -61,6 +61,8 @@ def impl_ref(owner: AgentRef, settings: Settings) -> AgentRef:
     if not (settings.impl_agent or settings.impl_model or settings.impl_args):
         return owner
     name = settings.impl_agent or owner.name
+    if not settings.impl_agent and not is_builtin_agent(name):
+        raise _custom_impl_conflict(name)
     base_slot = owner.slot if name == owner.name else ""
     ref = AgentRef(slot="I", name=name, base_slot=base_slot)
     _validate_impl_args(settings, (ref.name,))
@@ -177,7 +179,7 @@ def _validate_custom_impl_command(settings: Settings) -> None:
 
     if not (settings.impl_model or settings.impl_args):
         return
-    for name in _impl_owner_candidates(settings):
+    for name in _startup_impl_adapters(settings):
         if not is_builtin_agent(name):
             raise _custom_impl_conflict(name)
 

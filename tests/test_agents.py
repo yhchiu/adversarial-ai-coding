@@ -1062,35 +1062,48 @@ def test_validate_agents_rejects_impl_command_shared_with_custom_slot(
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
-@pytest.mark.parametrize(
-    ("env", "owner_name"),
-    [
-        (
-            {
-                "AGENT_A": "worker-wrapper",
-                "AGENT_B": "codex",
-                "IMPL_ARGS": "--fast",
-            },
-            "worker-wrapper",
-        ),
-        (
-            {
-                "AGENT_A": "claude",
-                "AGENT_B": "review-wrapper",
-                "DUAL_SPEC": "1",
-                "IMPL_MODEL": "impl-model",
-            },
-            "review-wrapper",
-        ),
-    ],
-)
-def test_validate_agents_requires_explicit_impl_wrapper_for_custom_owner(
-    env, owner_name
-):
-    settings = make(env)
+def test_validate_agents_requires_explicit_impl_wrapper_for_custom_owner():
+    settings = make(
+        {
+            "AGENT_A": "worker-wrapper",
+            "AGENT_B": "codex",
+            "IMPL_ARGS": "--fast",
+        }
+    )
 
-    with pytest.raises(SettingsError, match=rf"custom agent command {owner_name}"):
+    with pytest.raises(SettingsError, match=r"custom agent command worker-wrapper"):
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_defers_mixed_dual_spec_custom_impl_conflict():
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "AGENT_B": "review-wrapper",
+            "DUAL_SPEC": "1",
+            "IMPL_MODEL": "impl-model",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_impl_ref_checks_mixed_dual_spec_custom_conflict_for_selected_owner():
+    settings = make(
+        {
+            "AGENT_A": "codex",
+            "AGENT_B": "review-wrapper",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--continue",
+        }
+    )
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+    assert agents.impl_ref(AgentRef("A", "codex"), settings) == AgentRef(
+        "I", "codex", base_slot="A"
+    )
+    with pytest.raises(SettingsError, match=r"custom agent command review-wrapper"):
+        agents.impl_ref(AgentRef("B", "review-wrapper"), settings)
 
 
 def test_validate_agents_keeps_zero_impl_custom_slots_valid():
