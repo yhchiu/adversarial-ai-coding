@@ -753,9 +753,9 @@ Reserved flags per built-in command:
 
 | Argument variable | Reserved flags |
 |---|---|
-| Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema`; no tool allowlist through `--allowedTools` / `--allowed-tools`, which `TOOLS` owns |
+| Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema`; no tool allowlist through `--allowedTools` / `--allowed-tools`, which `TOOLS` owns; no `--permission-mode` of `plan`, `manual`, or `default` |
 | Codex-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
-| Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `--conversation`, `--log-file`; no replacement of the prompt or how it is delivered through `-p` / `--print`, `--prompt`, `-i` / `--prompt-interactive`, or `--print-timeout`; no override of the output contract through `--output-format` or `--json-schema`. Agy uses the Go flag package, so every reserved name is blocked with one dash or two |
+| Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `--conversation`, `--log-file`; no replacement of the prompt or how it is delivered through `-p` / `--print`, `--prompt`, `-i` / `--prompt-interactive`, or `--print-timeout`; no `--mode plan`; no override of the output contract through `--output-format` or `--json-schema`. Agy uses the Go flag package, so every reserved name is blocked with one dash or two |
 | OpenCode-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
 
 For every built-in argument variable:
@@ -767,8 +767,16 @@ For every built-in argument variable:
   `--allowed-tools`. Use `TOOLS`, for the same reason. `TOOLS` is one value
   for the whole run; `--disallowedTools` is not reserved and can narrow a
   single slot.
+- A permission mode that cannot finish a stage without a human is refused:
+  Claude `--permission-mode plan` / `manual` / `default` and Agy
+  `--mode plan`. Claude reads `manual` as `default`, and both wait for an
+  answer no headless run can give, while `plan` forbids the edits the stage
+  exists to make. `acceptEdits`, `auto`, `bypassPermissions`, and `dontAsk`
+  are yours to choose, as is `--dangerously-skip-permissions`.
 - Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are parsed
-  by the same reserved-option rules.
+  by the same reserved-option rules, except on Agy: the Go flag package has
+  no attached short form and Agy has no `-m`, so `-model` is the second
+  spelling of `--model` there and `-mode` is a flag of its own.
 - Custom argument variables are passed through instead, so custom model and
   session flags may be supplied there.
 

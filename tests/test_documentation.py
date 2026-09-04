@@ -255,6 +255,24 @@ def test_tool_allowlist_belongs_to_the_tools_variable_bilingually():
         assert "--allowedTools" in variable_row
 
 
+def test_headless_impossible_permission_modes_are_documented_bilingually():
+    """The refused modes are named, and so are the ones left to the user.
+
+    Half the rule is useless: a reader who only learns that some modes are
+    refused cannot tell whether the permission flag is usable at all.
+    """
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    for readme in (english, chinese):
+        claude = _reserved_row(readme, "Claude")
+        for mode in ("`plan`", "`manual`", "`default`"):
+            assert mode in claude
+        assert "`--mode plan`" in _reserved_row(readme, "Agy")
+        for allowed in ("acceptEdits", "auto", "bypassPermissions", "dontAsk"):
+            assert allowed in readme
+        assert "--dangerously-skip-permissions" in readme
+
+
 def test_agy_prompt_and_session_flags_are_documented_bilingually():
     """Every spelling that could drop the workflow prompt is named.
 

@@ -555,16 +555,17 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 
 | 參數變數 | 不得包含 |
 |---|---|
-| Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約;也不得用 `--allowedTools` / `--allowed-tools` 設定工具白名單,那是 `TOOLS` 的職責 |
+| Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約;也不得用 `--allowedTools` / `--allowed-tools` 設定工具白名單,那是 `TOOLS` 的職責;`--permission-mode` 不得為 `plan`、`manual`、`default` |
 | Codex 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`;也不得透過 `-c` / `--config` 覆寫 `sandbox_mode` |
-| Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`--conversation`、`--log-file`;也不得用 `-p` / `--print`、`--prompt`、`-i` / `--prompt-interactive` 或 `--print-timeout` 取代 prompt 或其傳遞方式,或用 `--output-format`、`--json-schema` 覆寫輸出契約。agy 使用 Go flag 套件,每個保留名稱單破折號與雙破折號都會被擋 |
+| Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`--conversation`、`--log-file`;也不得用 `-p` / `--print`、`--prompt`、`-i` / `--prompt-interactive` 或 `--print-timeout` 取代 prompt 或其傳遞方式,不得使用 `--mode plan`,也不得用 `--output-format`、`--json-schema` 覆寫輸出契約。agy 使用 Go flag 套件,每個保留名稱單破折號與雙破折號都會被擋 |
 | OpenCode 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--command`(會用既存 command 取代 workflow 的 prompt)、`--dir` |
 
 所有內建參數變數的共同規則:
 
 - 不得用 `--model`、`-m` 或 Codex 的 `-c model=` / `--config model=` 指定模型;必須使用 `MODEL_A`、`MODEL_B` 或 `IMPL_MODEL`,確保實際呼叫與 archive metadata 一致。
 - 不得用 `--allowedTools` / `--allowed-tools` 設定 Claude 的工具白名單,理由同上;請用 `TOOLS`。`TOOLS` 是整個 run 共用的單一值;`--disallowedTools` 不在保留名單內,可以用來收窄單一 slot。
-- `-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析。
+- 在 headless 下無法完成 stage 的權限模式會被拒絕:Claude 的 `--permission-mode plan` / `manual` / `default`,以及 Agy 的 `--mode plan`。Claude 內部把 `manual` 正規化成 `default`,兩者都會等一個 headless 下沒有人能給的回答;`plan` 則禁止 stage 本來就要做的修改。`acceptEdits`、`auto`、`bypassPermissions`、`dontAsk` 由你決定,`--dangerously-skip-permissions` 也是。
+- `-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析;Agy 例外:Go flag 套件沒有 attached short form,agy 也沒有 `-m`,所以那裡的 `-model` 是 `--model` 的另一種拼法,而 `-mode` 是獨立的旗標。
 - Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 
 ### 推理深度

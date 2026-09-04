@@ -231,6 +231,46 @@ def _option_value(
     return ""
 
 
+def _long_option_value(tokens: list[str], index: int, option: str) -> str:
+    """The value of a long-only option already known to match at `index`."""
+    token = tokens[index]
+    if token == option:
+        return tokens[index + 1] if index + 1 < len(tokens) else ""
+    return token.removeprefix(f"{option}=")
+
+
+def _go_option_value(tokens: list[str], index: int, option: str) -> str:
+    """The value of a Go flag written with either one dash or two."""
+    name = option.lstrip("-")
+    token = tokens[index]
+    for dashes in ("-", "--"):
+        candidate = f"{dashes}{name}"
+        if token == candidate:
+            return tokens[index + 1] if index + 1 < len(tokens) else ""
+        if token.startswith(f"{candidate}="):
+            return token.removeprefix(f"{candidate}=")
+    return ""
+
+
+# Claude normalises "manual" to "default", and both wait for an answer no
+# headless run can give. "plan" forbids the edits every implementation
+# stage exists to make. The remaining modes only widen what the agent may
+# do, which is the user's call.
+HEADLESS_IMPOSSIBLE_CLAUDE_MODES = ("default", "manual", "plan")
+USABLE_CLAUDE_MODES = "acceptEdits, auto, bypassPermissions, or dontAsk"
+USABLE_AGY_MODES = "accept-edits"
+
+
+def _headless_mode_conflict(
+    variable: str, option: str, mode: str, usable: str
+) -> SettingsError:
+    return SettingsError(
+        f"{variable} cannot set {option} {mode}; the workflow runs headless, "
+        "so a mode that waits for an answer or forbids edits can never "
+        f"finish a stage. Use {usable}."
+    )
+
+
 def _model_conflict(variable: str) -> SettingsError:
     return SettingsError(
         f"{variable} cannot set the model; "
@@ -248,8 +288,22 @@ def _validate_builtin_arg_tokens(
     variable: str, adapter: str, tokens: list[str]
 ) -> None:
     for index, token in enumerate(tokens):
-        if _matches_option(token, "--model") or _matches_short_option(token, "-m"):
+        if adapter == "agy":
+            # Go flags have no attached short form and agy has no -m, so
+            # -model is simply the other spelling of --model. Reading -m
+            # as an attached short form here would take -mode, a real agy
+            # flag, for a model override.
+            if _matches_go_option(token, "--model"):
+                raise _model_conflict(variable)
+        elif _matches_option(token, "--model") or _matches_short_option(token, "-m"):
             raise _model_conflict(variable)
+
+        if adapter == "claude" and _matches_option(token, "--permission-mode"):
+            mode = _long_option_value(tokens, index, "--permission-mode")
+            if mode in HEADLESS_IMPOSSIBLE_CLAUDE_MODES:
+                raise _headless_mode_conflict(
+                    variable, "--permission-mode", mode, USABLE_CLAUDE_MODES
+                )
 
         # TOOLS already owns this setting, the way MODEL_* owns the model.
         # Reserving the flag is what keeps the argv and the archived
@@ -331,6 +385,13 @@ def _validate_builtin_arg_tokens(
             # later value replace an earlier one, so any second spelling of
             # it silently discards the prompt the workflow sent. The timeout
             # and the output contract are workflow-owned for the same reason.
+            if _matches_go_option(token, "--mode"):
+                mode = _go_option_value(tokens, index, "--mode")
+                if mode == "plan":
+                    raise _headless_mode_conflict(
+                        variable, "--mode", mode, USABLE_AGY_MODES
+                    )
+
             if any(
                 _matches_go_option(token, option)
                 for option in {

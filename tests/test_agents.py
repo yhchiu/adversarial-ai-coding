@@ -572,11 +572,55 @@ def test_validate_agents_allows_claude_permission_args_aac_does_not_own(value):
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        # "manual" is claude's own alias for "default"; both wait for an
+        # answer. "plan" forbids the edits the stage exists to make.
+        "--permission-mode plan",
+        "--permission-mode=plan",
+        "--permission-mode manual",
+        "--permission-mode=manual",
+        "--permission-mode default",
+        "--permission-mode=default",
+    ],
+)
+def test_validate_agents_rejects_claude_modes_that_cannot_run_headless(value):
+    s = make({"AGENT_A_ARGS": value})
+
+    with pytest.raises(SettingsError, match="runs headless"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "--permission-mode acceptEdits",
+        "--permission-mode auto",
+        "--permission-mode bypassPermissions",
+        "--permission-mode=dontAsk",
+    ],
+)
+def test_validate_agents_allows_claude_modes_that_only_widen_permission(value):
+    s = make({"AGENT_A_ARGS": value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "value", ["--mode plan", "--mode=plan", "-mode plan", "-mode=plan"]
+)
+def test_validate_agents_rejects_the_agy_plan_mode(value):
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+
+    with pytest.raises(SettingsError, match="runs headless"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
     ("key", "agent_env"),
     [
         ("AGENT_A_ARGS", {}),
         ("AGENT_B_ARGS", {}),
-        ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
         ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
@@ -591,6 +635,28 @@ def test_validate_agents_rejects_builtin_model_args(key, agent_env, value):
         f"{key} cannot set the model; "
         "use MODEL_A / MODEL_B / IMPL_MODEL instead"
     )
+
+
+@pytest.mark.parametrize(
+    "value", ["--model pro", "--model=pro", "-model pro", "-model=pro"]
+)
+def test_validate_agents_rejects_agy_model_args_in_both_dash_spellings(value):
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+
+    with pytest.raises(SettingsError, match="cannot set the model"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize("value", ["-m pro", "-mode accept-edits", "-mode=accept-edits"])
+def test_validate_agents_does_not_read_agy_tokens_as_attached_short_model(value):
+    """Go flags have no attached short form, and agy has no -m.
+
+    Reading one would take -mode, a real agy flag, for a model override
+    and answer a permission question with a message about models.
+    """
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
 
 
 @pytest.mark.parametrize(
@@ -679,7 +745,7 @@ def test_validate_agents_rejects_extended_codex_workflow_owned_args(value):
     [
         ("AGENT_A_ARGS", {}),
         ("AGENT_B_ARGS", {}),
-        ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
+        # agy is absent on purpose: Go flags have no attached short form.
         ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),
     ],
 )
@@ -808,7 +874,7 @@ def test_validate_agents_rejects_agy_prompt_and_output_args(value):
         "--prompt-file request.md",
         "--agent reviewer",
         "--add-dir ../shared",
-        "--mode plan",
+        "--mode accept-edits",
         "--effort=low",
     ],
 )
@@ -904,7 +970,7 @@ def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
         ("codex", "-c model=gpt-5"),
         ("agy", "--conversation=conversation-id"),
         ("agy", "--log-file output.log"),
-        ("agy", "-m pro"),
+        ("agy", "-model pro"),
         ("opencode", "--session=ses_abc"),
         ("opencode", "--auto"),
         ("opencode", "--model pro"),
@@ -962,8 +1028,19 @@ def test_validate_agents_applies_explicit_impl_adapter_reserved_rules(
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
-@pytest.mark.parametrize("adapter", ["claude", "codex", "agy", "opencode"])
-@pytest.mark.parametrize("value", ["--model impl", "-m=impl"])
+@pytest.mark.parametrize(
+    ("adapter", "value"),
+    [
+        (adapter, value)
+        for adapter in ("claude", "codex", "agy", "opencode")
+        # agy spells the same override -model; it has no -m at all.
+        for value in (
+            ["--model impl", "-model impl"]
+            if adapter == "agy"
+            else ["--model impl", "-m=impl"]
+        )
+    ],
+)
 def test_validate_agents_rejects_impl_model_flags_for_builtin_adapters(
     adapter, value
 ):
