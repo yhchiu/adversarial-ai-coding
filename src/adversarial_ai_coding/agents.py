@@ -203,6 +203,21 @@ def _matches_short_option(token: str, option: str) -> bool:
     )
 
 
+def _matches_go_option(token: str, option: str) -> bool:
+    """Match a Go flag package option written with one or two dashes.
+
+    The flag package treats `-flag` and `--flag` as the same flag, so a
+    name reserved for agy has to be blocked in both spellings. Attached
+    values such as `-pVALUE` are not a Go form and stay unmatched, which
+    is what keeps `--project` out of the `-p` rule.
+    """
+    name = option.lstrip("-")
+    return any(
+        token == f"{dashes}{name}" or token.startswith(f"{dashes}{name}=")
+        for dashes in ("-", "--")
+    )
+
+
 def _option_value(
     tokens: list[str], index: int, short: str, long: str
 ) -> str:
@@ -279,13 +294,40 @@ def _validate_builtin_arg_tokens(
                     f"{variable} cannot override sandbox_mode; the workflow owns it"
                 )
 
-        if adapter == "agy" and any(
-            _matches_option(token, option)
-            for option in {"--log-file", "--continue", "--conversation"}
-        ):
-            raise SettingsError(
-                f"{variable} cannot contain session-control argument:{token}"
-            )
+        if adapter == "agy":
+            if any(
+                _matches_go_option(token, option)
+                for option in {
+                    "--log-file",
+                    "--continue",
+                    "-c",
+                    "--conversation",
+                }
+            ):
+                raise SettingsError(
+                    f"{variable} cannot contain session-control argument:{token}"
+                )
+
+            # --print carries the workflow prompt, and agy's parser lets a
+            # later value replace an earlier one, so any second spelling of
+            # it silently discards the prompt the workflow sent. The timeout
+            # and the output contract are workflow-owned for the same reason.
+            if any(
+                _matches_go_option(token, option)
+                for option in {
+                    "--print",
+                    "-p",
+                    "--prompt",
+                    "--prompt-interactive",
+                    "-i",
+                    "--print-timeout",
+                    "--output-format",
+                    "--json-schema",
+                }
+            ):
+                raise SettingsError(
+                    f"{variable} cannot contain workflow-owned argument:{token}"
+                )
 
         # Only flags `opencode run` really has. --command belongs here too:
         # it replaces the message with a stored command, which would drop

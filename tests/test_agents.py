@@ -706,15 +706,69 @@ def test_validate_agents_keeps_custom_impl_args_unmodified():
         "--log-file=output.log",
         "--continue",
         "--continue=true",
+        # -c is agy's documented short alias for --continue.
+        "-c",
+        "-c=true",
         "--conversation conversation-id",
         "--conversation=conversation-id",
+        # The Go flag package reads one or two dashes as the same flag.
+        "-log-file output.log",
+        "-continue",
+        "-conversation conversation-id",
     ],
 )
-def test_validate_agents_rejects_agy_workflow_owned_args(value):
+def test_validate_agents_rejects_agy_session_control_args(value):
     s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
 
-    with pytest.raises(SettingsError):
+    with pytest.raises(SettingsError, match="session-control"):
         validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # agy carries the prompt in --print, and its parser lets a later
+        # value replace an earlier one, so each of these spellings would
+        # discard the workflow prompt instead of adding to it.
+        "--print hijacked",
+        "--print=hijacked",
+        "-print hijacked",
+        "-p hijacked",
+        "--prompt hijacked",
+        "-prompt hijacked",
+        "--prompt-interactive hijacked",
+        "-i hijacked",
+        "--print-timeout 1s",
+        "--output-format json",
+        "--json-schema schema.json",
+    ],
+)
+def test_validate_agents_rejects_agy_prompt_and_output_args(value):
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+
+    with pytest.raises(SettingsError, match="workflow-owned"):
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # Reserved names must not swallow the agy flags that merely start
+        # with the same letters, in either dash spelling.
+        "--project project-id",
+        "-project project-id",
+        "--new-project",
+        "--prompt-file request.md",
+        "--agent reviewer",
+        "--add-dir ../shared",
+        "--mode plan",
+        "--effort=low",
+    ],
+)
+def test_validate_agents_allows_agy_args_that_only_share_a_prefix(value):
+    s = make({"AGENT_A": "agy", "AGENT_A_ARGS": value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
 
 
 @pytest.mark.parametrize(

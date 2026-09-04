@@ -43,6 +43,28 @@ def _adapter_cells(text: str, label: str) -> list[str]:
     raise AssertionError(f"no {label!r} row in the adapter comparison table")
 
 
+def _reserved_row(text: str, adapter: str) -> str:
+    """The reserved-flag cell of one built-in command.
+
+    Read per adapter so that a flag reserved for one CLI can never
+    satisfy -- or break -- an assertion about another. Agy reserves
+    `--prompt`, which OpenCode must still never claim.
+    """
+    rows = [
+        cells
+        for cells in (
+            line.strip().strip("|").split("|")
+            for line in text.splitlines()
+            if line.startswith(f"| {adapter}") and "AGENT_A_ARGS" in line
+        )
+        # Two cells is what tells the reserved table apart from the
+        # four-column adapter comparison, which also names these variables.
+        if len(cells) == 2
+    ]
+    assert len(rows) == 1, f"expected one {adapter} reserved row, got {len(rows)}"
+    return rows[0][1]
+
+
 def test_artifact_layout_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         # The committed half and the ignored half, and the fact that one
@@ -208,10 +230,42 @@ def test_opencode_permission_and_reserved_args_are_documented_bilingually():
     for readme in (english, chinese):
         # Reserved flags must be flags `opencode run` really has. --command
         # would replace the workflow prompt; --interactive and --prompt do
-        # not exist and were never ours to reserve.
-        assert "`--command`" in readme
-        assert "--interactive" not in readme
-        assert "`--prompt`" not in readme
+        # not exist and were never ours to reserve. Read from OpenCode's own
+        # row, because agy does reserve a --prompt of its own.
+        row = _reserved_row(readme, "OpenCode")
+        assert "`--command`" in row
+        assert "--interactive" not in row
+        assert "`--prompt`" not in row
+
+
+def test_agy_prompt_and_session_flags_are_documented_bilingually():
+    """Every spelling that could drop the workflow prompt is named.
+
+    Agy carries the prompt in `--print` and its parser lets a later value
+    replace an earlier one, so the reserved list has to cover the aliases
+    and both dash spellings, not just the canonical name.
+    """
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    for readme in (english, chinese):
+        row = _reserved_row(readme, "Agy")
+        for flag in (
+            "`-c`",
+            "`--continue`",
+            "`--conversation`",
+            "`--log-file`",
+            "`-p`",
+            "`--print`",
+            "`--prompt`",
+            "`-i`",
+            "`--prompt-interactive`",
+            "`--print-timeout`",
+            "`--output-format`",
+            "`--json-schema`",
+        ):
+            assert flag in row, f"{flag} missing from the Agy reserved row"
+    assert "one dash or two" in _reserved_row(english, "Agy")
+    assert "單破折號與雙破折號" in _reserved_row(chinese, "Agy")
 
 
 def test_active_docs_teach_only_slot_specific_argument_variables():

@@ -557,7 +557,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 |---|---|
 | Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約 |
 | Codex 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`;也不得透過 `-c` / `--config` 覆寫 `sandbox_mode` |
-| Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--log-file`、`--continue`、`--conversation` |
+| Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`--conversation`、`--log-file`;也不得用 `-p` / `--print`、`--prompt`、`-i` / `--prompt-interactive` 或 `--print-timeout` 取代 prompt 或其傳遞方式,或用 `--output-format`、`--json-schema` 覆寫輸出契約。agy 使用 Go flag 套件,每個保留名稱單破折號與雙破折號都會被擋 |
 | OpenCode 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--command`(會用既存 command 取代 workflow 的 prompt)、`--dir` |
 
 所有內建參數變數的共同規則:

@@ -751,7 +751,7 @@ flags per built-in command:
 |---|---|
 | Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema` |
 | Codex-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
-| Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--log-file`, `--continue`, `--conversation` |
+| Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `--conversation`, `--log-file`; no replacement of the prompt or how it is delivered through `-p` / `--print`, `--prompt`, `-i` / `--prompt-interactive`, or `--print-timeout`; no override of the output contract through `--output-format` or `--json-schema`. Agy uses the Go flag package, so every reserved name is blocked with one dash or two |
 | OpenCode-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
 
 For every built-in argument variable:
