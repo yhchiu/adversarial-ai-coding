@@ -667,3 +667,22 @@ def test_list_runs_is_documented_in_both_readmes():
         # The default view truncates, so the way to see everything has to be
         # documented next to it, not left to be discovered from --help.
         assert "aac list-runs --full" in readme
+        assert "aac list-runs --spec-title" in readme
+
+
+def test_spec_title_flag_is_documented_as_opt_in_bilingually():
+    """The heading it reads is a convention, and the docs must not imply more.
+
+    C4 lists what spec.md has to contain and a title is not on the list, so
+    a reader who takes --spec-title for a guarantee has been misled by us.
+    """
+    # Both files wrap at a fixed width, so match on flowed text.
+    english = " ".join(_read("README.md").split())
+    assert "no prompt asks an agent for a heading" in english
+    chinese = " ".join(_read("README.zh-TW.md").split())
+    assert "沒有任何 prompt 要求 agent 寫標題" in chinese
+    for name in ("docs/artifact-contract.md", "docs/artifact-contract.zh-TW.md"):
+        contract = _read(name)
+        heading = [line for line in contract.splitlines() if line.startswith("### C4")]
+        assert len(heading) == 1
+        assert "spec.md" in heading[0]

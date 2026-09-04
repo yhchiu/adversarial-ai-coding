@@ -307,6 +307,25 @@ aac list-runs --full
 Use the table to find a run and `--full` to read what it was asked to do.
 The complete request is also in `aac/docs/<RUN_ID>/run.json` for tooling.
 
+A request submitted as a file often opens on a line like `## Goal`, which
+names every run identically. `--spec-title` takes the title from the first
+heading in `spec.md` instead:
+
+```bash
+aac list-runs --spec-title
+```
+
+```text
+RUN_ID           STATUS     REQUEST
+20260904-101500  completed  JSON output for the list command
+```
+
+It is opt-in rather than the default because no prompt asks an agent for a
+heading — `spec.md`'s required sections are listed in
+[`docs/artifact-contract.md`](docs/artifact-contract.md#c4--aacdocsrun_idspecmd--the-specification)
+and a title is not among them. When a spec has no heading the row falls back
+to the request, so the flag can never blank a row.
+
 Show the CLI help or version:
 
 ```bash

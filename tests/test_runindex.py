@@ -241,6 +241,32 @@ def test_the_manifest_wins_over_the_spec_heading(tmp_path):
     assert entries(tmp_path)[0].title == "The request"
 
 
+def test_prefer_spec_title_swaps_which_source_names_a_run(tmp_path):
+    """A file request often opens on "## Goal", which names every run alike."""
+    record(tmp_path, "20260904-101500", "## Goal\nAdd a flag.\n", "# JSON output\n")
+
+    assert entries(tmp_path)[0].title == "## Goal"
+    preferred = load_run_entries(tmp_path, no_git, prefer_spec_title=True)
+    assert preferred[0].title == "JSON output"
+
+
+def test_prefer_spec_title_falls_back_when_the_spec_has_no_heading(tmp_path):
+    """No prompt asks for a heading, so the preference cannot be a guarantee."""
+    record(tmp_path, "20260904-101500", "Add a flag", "## Only a subheading\n")
+
+    preferred = load_run_entries(tmp_path, no_git, prefer_spec_title=True)
+    assert preferred[0].title == "Add a flag"
+
+
+def test_prefer_spec_title_leaves_the_request_itself_untouched(tmp_path):
+    """--full must still print what was asked, not the spec's name for it."""
+    record(tmp_path, "20260904-101500", "## Goal\nAdd a flag.\n", "# JSON output\n")
+
+    preferred = load_run_entries(tmp_path, no_git, prefer_spec_title=True)
+    assert preferred[0].request == "## Goal\nAdd a flag.\n"
+    assert "    Add a flag." in format_run_details(preferred)
+
+
 def test_a_multi_line_request_lists_as_its_first_line(tmp_path):
     record(tmp_path, "20260904-101500", MULTI_LINE_REQUEST)
     assert entries(tmp_path)[0].title == "# Heading"
@@ -478,7 +504,7 @@ def test_details_say_which_runs_predate_the_manifest(tmp_path):
     empty, heading_only = format_run_details(entries(tmp_path)).split("\n\n")
     assert empty.endswith("    (no request recorded)")
     assert "    Resume a stopped run" in heading_only
-    assert "    (spec heading; this run predates run.json)" in heading_only
+    assert "    (heading from spec.md; no request recorded)" in heading_only
 
 
 def test_details_omit_started_at_when_there_is_no_manifest(tmp_path):

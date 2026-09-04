@@ -250,11 +250,24 @@ class RunEntry:
     request: str = ""
 
 
-def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
+def load_run_entries(
+    root: Path,
+    run_git=_run_git_default,
+    *,
+    prefer_spec_title: bool = False,
+) -> list[RunEntry]:
     """Every run discoverable from root, newest run id first.
 
     One run is one row even when two sources find it, which they routinely
     do: a committed run in the default location is reported by all three.
+
+    prefer_spec_title swaps which source names a run. The default is the
+    request, because the workflow wrote it and it is therefore always
+    there. The spec heading often reads better — a request submitted as a
+    file frequently starts with a line like "## Goal", which names every
+    run identically — but no prompt asks an agent for a heading, so it is
+    an opt-in preference and never a guarantee. Either way the other
+    source is the fallback, so a row is never left blank by the choice.
     """
 
     state_root = root / WORK_DIR / "state"
@@ -265,9 +278,11 @@ def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
         if run_id in entries:
             continue
         request = str(manifest.get("request", ""))
-        title = first_line(request)
-        if not title:
-            title = spec_title(spec_dir / "spec.md")
+        spec = spec_dir / "spec.md"
+        if prefer_spec_title:
+            title = spec_title(spec) or first_line(request)
+        else:
+            title = first_line(request) or spec_title(spec)
         try:
             shown = spec_dir.relative_to(root)
         except ValueError:
@@ -326,9 +341,9 @@ def format_run_details(entries: list[RunEntry]) -> str:
     is the view that gives all of it back, so it also shows started_at,
     which the table has no room to carry.
 
-    A run with no manifest has no request to print. Its first heading is
-    all that was ever recoverable, so the block says which one it is rather
-    than pretending the text is missing.
+    A run with no readable manifest has no request to print. Its spec
+    heading is all that was ever recoverable, so the block says where the
+    line came from rather than passing it off as the request.
     """
 
     if not entries:
@@ -341,7 +356,7 @@ def format_run_details(entries: list[RunEntry]) -> str:
         if entry.request:
             body = entry.request.rstrip().splitlines() or [""]
         elif entry.title:
-            body = [entry.title, "(spec heading; this run predates run.json)"]
+            body = [entry.title, "(heading from spec.md; no request recorded)"]
         else:
             body = ["(no request recorded)"]
         blocks.append("\n".join([head, *(f"    {line}".rstrip() for line in body)]))

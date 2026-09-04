@@ -213,6 +213,24 @@ aac list-runs --full
 用表格找到那次執行,用 `--full` 讀它當初被要求做什麼。完整請求同樣存在
 `aac/docs/<RUN_ID>/run.json` 裡,供其他工具取用。
 
+用檔案提交的需求,第一行常常是 `## Goal` 之類的字,結果每一筆執行的名稱都長一樣。
+`--spec-title` 改成取 `spec.md` 的第一個標題當名稱:
+
+```bash
+aac list-runs --spec-title
+```
+
+```text
+RUN_ID           STATUS     REQUEST
+20260904-101500  completed  JSON output for the list command
+```
+
+它是 opt-in 而不是預設,因為沒有任何 prompt 要求 agent 寫標題——`spec.md` 的必要
+章節列在
+[`docs/artifact-contract.zh-TW.md`](docs/artifact-contract.zh-TW.md#c4--aacdocsrun_idspecmd--規格)
+,標題不在其中。Spec 沒有標題時該列會退回請求內容,所以這個 flag 不可能讓任何一
+列變空白。
+
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
 與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
 時會印出提示,新版本加入的規則才不會被漏掉。標記區塊之外你自己寫的內容不會被

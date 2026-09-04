@@ -168,8 +168,8 @@ def test_parse_argv_classifies_flags_and_operands():
 
 def test_parse_argv_scopes_flags_to_the_subcommand_that_takes_them():
     """A typo must not silently start a run instead of being reported."""
-    assert cli._parse_argv(["list-runs", "--full"]) == ("list-runs", "full")
-    assert cli._parse_argv(["--full", "list-runs"]) == ("list-runs", "full")
+    assert cli._parse_argv(["list-runs", "--full"]) == ("list-runs", "--full")
+    assert cli._parse_argv(["--full", "list-runs"]) == ("list-runs", "--full")
     assert cli._parse_argv(["list-runs", "--fll"]) == ("error", "--fll")
     assert cli._parse_argv(["--full"]) == ("error", "--full")
     assert cli._parse_argv(["--full", "a request"]) == ("error", "--full")
@@ -177,6 +177,21 @@ def test_parse_argv_scopes_flags_to_the_subcommand_that_takes_them():
     # Help still wins, so "list-runs --help" explains rather than lists.
     assert cli._parse_argv(["list-runs", "--help"]) == ("help", "")
     assert cli._parse_argv(["--", "list-runs", "--full"]) == ("run", "list-runs")
+
+
+def test_parse_argv_carries_every_list_runs_flag_in_a_stable_order():
+    assert cli._parse_argv(["list-runs", "--spec-title"]) == (
+        "list-runs",
+        "--spec-title",
+    )
+    both = ("list-runs", "--full,--spec-title")
+    assert cli._parse_argv(["list-runs", "--full", "--spec-title"]) == both
+    assert cli._parse_argv(["list-runs", "--spec-title", "--full"]) == both
+    # A repeat is the same request, not a different one.
+    assert cli._parse_argv(["list-runs", "--full", "--full"]) == (
+        "list-runs",
+        "--full",
+    )
 
 
 def _record_run(repo, run_id, request, completed=False):
@@ -279,6 +294,33 @@ def test_list_runs_full_prints_the_whole_request(tmp_path, monkeypatch, capsys):
     # The default view still cuts it down to one scannable line.
     cli.main(["list-runs"], {}, stdin_isatty=False)
     assert "Acceptance" not in capsys.readouterr().out
+
+
+def test_list_runs_spec_title_names_runs_from_the_spec(tmp_path, monkeypatch, capsys):
+    """A request submitted as a file often starts with a useless first line."""
+    monkeypatch.chdir(tmp_path)
+    _record_run(tmp_path, "20260904-101500", "## Goal\nAdd a --json option.\n")
+    spec = tmp_path / "aac" / "docs" / "20260904-101500" / "spec.md"
+    spec.write_text("# JSON output for the list command\n", encoding="utf-8")
+
+    assert cli.main(["list-runs"], {}, stdin_isatty=False) == 0
+    assert capsys.readouterr().out.splitlines()[1].endswith("## Goal")
+
+    assert cli.main(["list-runs", "--spec-title"], {}, stdin_isatty=False) == 0
+    row = capsys.readouterr().out.splitlines()[1]
+    assert row.endswith("JSON output for the list command")
+
+
+def test_list_runs_spec_title_falls_back_to_the_request(tmp_path, monkeypatch, capsys):
+    """The heading is not in the artifact contract, so it can simply be absent."""
+    monkeypatch.chdir(tmp_path)
+    _record_run(tmp_path, "20260904-101500", "Add a --json output option")
+    spec = tmp_path / "aac" / "docs" / "20260904-101500" / "spec.md"
+    spec.write_text("## Only a subheading\n", encoding="utf-8")
+
+    assert cli.main(["list-runs", "--spec-title"], {}, stdin_isatty=False) == 0
+    row = capsys.readouterr().out.splitlines()[1]
+    assert row.endswith("Add a --json output option")
 
 
 def test_list_runs_follows_aac_lang(tmp_path, monkeypatch, capsys):

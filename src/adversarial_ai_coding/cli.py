@@ -67,7 +67,9 @@ from .workflow import (
 USAGE = """Usage:adversarial-ai-coding [options] "request description"
       adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit
-      adversarial-ai-coding list-runs [--full]  # List recorded runs; --full prints each whole request
+      adversarial-ai-coding list-runs       # List the recorded runs and exit
+        --full        Print each run's whole request instead of one line
+        --spec-title  Title each run from spec.md's heading, not its request
       adversarial-ai-coding -h, --help      # Show this help and exit
       adversarial-ai-coding -V, -v, --version  # Print version and exit"""
 
@@ -76,7 +78,7 @@ _VERSION_FLAGS = frozenset({"-V", "-v", "--version"})
 # Recognised only as a bare first positional. "--" ends flag parsing and so
 # also ends this, which is how a request may literally be one of these words.
 _SUBCOMMANDS = frozenset({"print-agents", "list-runs"})
-_LIST_RUNS_FLAGS = frozenset({"--full"})
+_LIST_RUNS_FLAGS = frozenset({"--full", "--spec-title"})
 
 
 def _parse_argv(argv: list[str]) -> tuple[str, str]:
@@ -121,7 +123,10 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
         rejected = next((flag for flag in flags if flag not in _LIST_RUNS_FLAGS), "")
         if rejected:
             return "error", rejected
-        return "list-runs", "full" if "--full" in flags else ""
+        # The payload carries the accepted flags by their own spelling, so
+        # there is one vocabulary for them rather than a parallel set of
+        # option names to keep in step.
+        return "list-runs", ",".join(sorted(set(flags)))
     if flags:
         return "error", flags[0]
     if subcommand in _SUBCOMMANDS:
@@ -149,7 +154,13 @@ def _slot_summary(slot: str, settings: Settings) -> str:
     return f"{ref.name} [{detail}]" if detail else ref.name
 
 
-def _list_runs(presenter: Presenter, cwd: Path, *, full: bool = False) -> int:
+def _list_runs(
+    presenter: Presenter,
+    cwd: Path,
+    *,
+    full: bool = False,
+    spec_title: bool = False,
+) -> int:
     """One row per discoverable run, newest first.
 
     Read-only, and it never requires a git repository: outside one the two
@@ -160,10 +171,10 @@ def _list_runs(presenter: Presenter, cwd: Path, *, full: bool = False) -> int:
 
     --full trades the table for one block per run carrying the whole
     request, which is the only shape that can hold a request that came from
-    a file.
+    a file. --spec-title changes which source names a run.
     """
 
-    entries = load_run_entries(cwd)
+    entries = load_run_entries(cwd, prefer_spec_title=spec_title)
     if not entries:
         presenter.err(
             "No runs found. A run records itself under {docs_root}/ when it "
@@ -244,7 +255,13 @@ def main(
         presenter.err(USAGE)
         return 1
     if action == "list-runs":
-        return _list_runs(presenter, startup_dir, full=payload == "full")
+        chosen = payload.split(",")
+        return _list_runs(
+            presenter,
+            startup_dir,
+            full="--full" in chosen,
+            spec_title="--spec-title" in chosen,
+        )
     if action == "print-agents":
         try:
             print(write_agents_section(default_agents_template(env)), end="")
