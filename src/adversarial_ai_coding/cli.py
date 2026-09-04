@@ -41,7 +41,12 @@ from .prompts import (
     default_prompts_dir,
     write_agents_section,
 )
-from .runindex import format_run_index, load_run_entries, write_run_manifest
+from .runindex import (
+    format_run_details,
+    format_run_index,
+    load_run_entries,
+    write_run_manifest,
+)
 from .runstate import (
     RunState,
     RunStateError,
@@ -62,7 +67,7 @@ from .workflow import (
 USAGE = """Usage:adversarial-ai-coding [options] "request description"
       adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit
-      adversarial-ai-coding list-runs       # List the runs recorded under aac/docs/ and exit
+      adversarial-ai-coding list-runs [--full]  # List recorded runs; --full prints each whole request
       adversarial-ai-coding -h, --help      # Show this help and exit
       adversarial-ai-coding -V, -v, --version  # Print version and exit"""
 
@@ -71,6 +76,7 @@ _VERSION_FLAGS = frozenset({"-V", "-v", "--version"})
 # Recognised only as a bare first positional. "--" ends flag parsing and so
 # also ends this, which is how a request may literally be one of these words.
 _SUBCOMMANDS = frozenset({"print-agents", "list-runs"})
+_LIST_RUNS_FLAGS = frozenset({"--full"})
 
 
 def _parse_argv(argv: list[str]) -> tuple[str, str]:
@@ -81,7 +87,7 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
     """
     help_requested = False
     version_requested = False
-    unknown = ""
+    flags: list[str] = []
     positionals: list[str] = []
     ended = False
 
@@ -99,8 +105,7 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
             version_requested = True
             continue
         if len(token) > 1 and token.startswith("-"):
-            if not unknown:
-                unknown = token
+            flags.append(token)
             continue
         positionals.append(token)
 
@@ -108,10 +113,19 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
         return "help", ""
     if version_requested:
         return "version", ""
-    if unknown:
-        return "error", unknown
-    if not ended and positionals and positionals[0] in _SUBCOMMANDS:
-        return positionals[0], ""
+    subcommand = positionals[0] if not ended and positionals else ""
+    # Flags belong to the subcommand that accepts them, never to the CLI at
+    # large: "--full" must stay an error in front of a request, or a typo
+    # would silently start a run instead of being reported.
+    if subcommand == "list-runs":
+        rejected = next((flag for flag in flags if flag not in _LIST_RUNS_FLAGS), "")
+        if rejected:
+            return "error", rejected
+        return "list-runs", "full" if "--full" in flags else ""
+    if flags:
+        return "error", flags[0]
+    if subcommand in _SUBCOMMANDS:
+        return subcommand, ""
     task = positionals[0] if positionals else ""
     return "run", task
 
@@ -135,7 +149,7 @@ def _slot_summary(slot: str, settings: Settings) -> str:
     return f"{ref.name} [{detail}]" if detail else ref.name
 
 
-def _list_runs(presenter: Presenter, cwd: Path) -> int:
+def _list_runs(presenter: Presenter, cwd: Path, *, full: bool = False) -> int:
     """One row per discoverable run, newest first.
 
     Read-only, and it never requires a git repository: outside one the two
@@ -143,6 +157,10 @@ def _list_runs(presenter: Presenter, cwd: Path) -> int:
     answers while the run status degrades to unknown. Rows go to stdout so
     they pipe into grep; the empty-listing note goes to stderr so it does
     not.
+
+    --full trades the table for one block per run carrying the whole
+    request, which is the only shape that can hold a request that came from
+    a file.
     """
 
     entries = load_run_entries(cwd)
@@ -153,7 +171,8 @@ def _list_runs(presenter: Presenter, cwd: Path) -> int:
             docs_root=DOCS_ROOT,
         )
         return 0
-    print(format_run_index(entries), end="")
+    render = format_run_details if full else format_run_index
+    print(render(entries), end="")
     return 0
 
 
@@ -225,7 +244,7 @@ def main(
         presenter.err(USAGE)
         return 1
     if action == "list-runs":
-        return _list_runs(presenter, startup_dir)
+        return _list_runs(presenter, startup_dir, full=payload == "full")
     if action == "print-agents":
         try:
             print(write_agents_section(default_agents_template(env)), end="")

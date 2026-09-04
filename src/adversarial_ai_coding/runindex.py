@@ -243,6 +243,11 @@ class RunEntry:
     started_at: str
     path: Path
     default_location: bool
+    # The whole request, untouched. title is this reduced twice — first line
+    # only, then cut to a column width — so a listing stays scannable; the
+    # detail view needs the original back, and a run with no manifest has
+    # nothing to give here at all.
+    request: str = ""
 
 
 def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
@@ -259,7 +264,8 @@ def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
         run_id = str(manifest.get("run_id") or spec_dir.name)
         if run_id in entries:
             continue
-        title = first_line(str(manifest.get("request", "")))
+        request = str(manifest.get("request", ""))
+        title = first_line(request)
         if not title:
             title = spec_title(spec_dir / "spec.md")
         try:
@@ -273,6 +279,7 @@ def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
             started_at=str(manifest.get("started_at", "")),
             path=shown,
             default_location=shown.as_posix() == f"{DOCS_ROOT}/{run_id}",
+            request=request,
         )
     return sorted(entries.values(), key=lambda entry: entry.run_id, reverse=True)
 
@@ -308,3 +315,34 @@ def format_run_index(entries: list[RunEntry]) -> str:
         for row in (header, *rows)
     ]
     return "\n".join(lines) + "\n"
+
+
+def format_run_details(entries: list[RunEntry]) -> str:
+    """One block per run, carrying the request whole; "" for no runs.
+
+    A table cannot hold a request that came from a file: the column view
+    keeps one line per run so it stays scannable and greppable, which costs
+    every line after the first and everything past the column width. This
+    is the view that gives all of it back, so it also shows started_at,
+    which the table has no room to carry.
+
+    A run with no manifest has no request to print. Its first heading is
+    all that was ever recoverable, so the block says which one it is rather
+    than pretending the text is missing.
+    """
+
+    if not entries:
+        return ""
+    blocks = []
+    for entry in entries:
+        head = f"{entry.run_id}  {entry.status}  {entry.path.as_posix()}"
+        if entry.started_at:
+            head += f"  {entry.started_at}"
+        if entry.request:
+            body = entry.request.rstrip().splitlines() or [""]
+        elif entry.title:
+            body = [entry.title, "(spec heading; this run predates run.json)"]
+        else:
+            body = ["(no request recorded)"]
+        blocks.append("\n".join([head, *(f"    {line}".rstrip() for line in body)]))
+    return "\n\n".join(blocks) + "\n"

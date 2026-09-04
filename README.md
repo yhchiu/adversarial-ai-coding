@@ -288,6 +288,25 @@ first commit), and the manifests git tracks (the only source that survives a
 clone). Runs committed on a branch this checkout does not have are not
 listed.
 
+The `REQUEST` column is one scannable line: the request's first line, cut to
+72 characters. `--full` gives all of it back, as one block per run:
+
+```bash
+aac list-runs --full
+```
+
+```text
+20260904-101500  completed  aac/docs/20260904-101500  2026-09-04T10:15:00+0800
+    ## Goal
+    Add a --json output option to the CLI.
+
+    ## Acceptance
+    - `mytool list --json` emits a valid JSON array
+```
+
+Use the table to find a run and `--full` to read what it was asked to do.
+The complete request is also in `aac/docs/<RUN_ID>/run.json` for tooling.
+
 Show the CLI help or version:
 
 ```bash

@@ -25,6 +25,7 @@ from adversarial_ai_coding.runindex import (
     RunEntry,
     discover_spec_dirs,
     first_line,
+    format_run_details,
     format_run_index,
     load_run_entries,
     read_manifest,
@@ -428,3 +429,59 @@ def test_format_marks_a_missing_title_and_never_leaves_trailing_space():
 
 def test_format_of_nothing_is_empty_not_a_bare_header():
     assert format_run_index([]) == ""
+    assert format_run_details([]) == ""
+
+
+def test_details_carry_the_request_whole(tmp_path):
+    """Everything the table drops: later lines, and anything past 72 chars."""
+    request = "## Goal\nAdd a --json output option.\n\n## Out of scope\n- --yaml\n"
+    record(tmp_path, "20260904-101500", request, completed=True)
+
+    text = format_run_details(entries(tmp_path))
+    head, *body = text.splitlines()
+    assert head.startswith("20260904-101500  completed  aac/docs/20260904-101500  ")
+    # started_at earns its place here; the table has no room to carry it.
+    assert head.endswith(load_run_entries(tmp_path, no_git)[0].started_at)
+    assert body == [
+        "    ## Goal",
+        "    Add a --json output option.",
+        "",
+        "    ## Out of scope",
+        "    - --yaml",
+    ]
+
+
+def test_details_do_not_cut_a_long_first_line(tmp_path):
+    long_request = "Add slot-specific agent arguments" + " and more words" * 8
+    record(tmp_path, "20260904-101500", long_request)
+
+    listed = entries(tmp_path)
+    assert len(listed[0].title) == 72
+    assert long_request in format_run_details(listed)
+
+
+def test_details_separate_runs_by_a_blank_line(tmp_path):
+    record(tmp_path, "20260904-101500", "Second run")
+    record(tmp_path, "20260901-000000", "First run")
+
+    text = format_run_details(entries(tmp_path))
+    assert "\n\n20260901-000000" in text
+    assert text.endswith("    First run\n")
+
+
+def test_details_say_which_runs_predate_the_manifest(tmp_path):
+    """There is no request to print, and pretending otherwise would mislead."""
+    record(tmp_path, "20260815-071227", spec=SPEC_WITH_H1)
+    record(tmp_path, "20260815-090255")
+
+    # Newest run id first, so the manifest-less 090255 block leads.
+    empty, heading_only = format_run_details(entries(tmp_path)).split("\n\n")
+    assert empty.endswith("    (no request recorded)")
+    assert "    Resume a stopped run" in heading_only
+    assert "    (spec heading; this run predates run.json)" in heading_only
+
+
+def test_details_omit_started_at_when_there_is_no_manifest(tmp_path):
+    record(tmp_path, "20260815-090255")
+    head = format_run_details(entries(tmp_path)).splitlines()[0]
+    assert head == "20260815-090255  unknown  aac/docs/20260815-090255"

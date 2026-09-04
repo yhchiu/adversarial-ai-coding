@@ -194,6 +194,25 @@ RUN_ID           STATUS   PATH                      REQUEST
 源),以及 git 追蹤到的 manifest(唯一撐得過 clone 的來源)。commit 在這個
 checkout 沒有的分支上的執行不會被列出。
 
+`REQUEST` 欄只有一行,方便掃視:取請求的第一行,截到 72 字元。`--full` 會把被砍
+掉的部分全部還給你,改成一次執行一個區塊:
+
+```bash
+aac list-runs --full
+```
+
+```text
+20260904-101500  completed  aac/docs/20260904-101500  2026-09-04T10:15:00+0800
+    ## Goal
+    Add a --json output option to the CLI.
+
+    ## Acceptance
+    - `mytool list --json` emits a valid JSON array
+```
+
+用表格找到那次執行,用 `--full` 讀它當初被要求做什麼。完整請求同樣存在
+`aac/docs/<RUN_ID>/run.json` 裡,供其他工具取用。
+
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
 與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
 時會印出提示,新版本加入的規則才不會被漏掉。標記區塊之外你自己寫的內容不會被

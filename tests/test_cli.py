@@ -166,6 +166,19 @@ def test_parse_argv_classifies_flags_and_operands():
     assert cli._parse_argv(["task", "list-runs"]) == ("run", "task")
 
 
+def test_parse_argv_scopes_flags_to_the_subcommand_that_takes_them():
+    """A typo must not silently start a run instead of being reported."""
+    assert cli._parse_argv(["list-runs", "--full"]) == ("list-runs", "full")
+    assert cli._parse_argv(["--full", "list-runs"]) == ("list-runs", "full")
+    assert cli._parse_argv(["list-runs", "--fll"]) == ("error", "--fll")
+    assert cli._parse_argv(["--full"]) == ("error", "--full")
+    assert cli._parse_argv(["--full", "a request"]) == ("error", "--full")
+    assert cli._parse_argv(["print-agents", "--full"]) == ("error", "--full")
+    # Help still wins, so "list-runs --help" explains rather than lists.
+    assert cli._parse_argv(["list-runs", "--help"]) == ("help", "")
+    assert cli._parse_argv(["--", "list-runs", "--full"]) == ("run", "list-runs")
+
+
 def _record_run(repo, run_id, request, completed=False):
     """One run's committed manifest, plus the ignored state it is judged by."""
     from adversarial_ai_coding.runindex import write_run_manifest
@@ -246,6 +259,26 @@ def test_list_runs_finds_a_run_that_spec_dir_moved(tmp_path, monkeypatch, capsys
     assert "specs/archive-port" in lines[1]
     assert lines[1].endswith("Port the archive module")
     assert "aac/docs/20260901-000000" in lines[2]
+
+
+def test_list_runs_full_prints_the_whole_request(tmp_path, monkeypatch, capsys):
+    """The table keeps one line per run; --full is where the rest lives."""
+    monkeypatch.chdir(tmp_path)
+    request = (
+        "## Goal\nAdd a --json output option to the CLI.\n\n"
+        "## Acceptance\n- `mytool list --json` emits a valid JSON array\n"
+    )
+    _record_run(tmp_path, "20260904-101500", request, completed=True)
+
+    assert cli.main(["list-runs", "--full"], {}, stdin_isatty=False) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("20260904-101500  completed  aac/docs/")
+    for line in request.strip().splitlines():
+        assert (f"    {line}".rstrip()) in out.splitlines()
+
+    # The default view still cuts it down to one scannable line.
+    cli.main(["list-runs"], {}, stdin_isatty=False)
+    assert "Acceptance" not in capsys.readouterr().out
 
 
 def test_list_runs_follows_aac_lang(tmp_path, monkeypatch, capsys):

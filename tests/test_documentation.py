@@ -664,3 +664,6 @@ def test_list_runs_is_documented_in_both_readmes():
         assert "aac list-runs" in readme
         # The layout tree decides what a reader expects to be committed.
         assert "run.json" in readme
+        # The default view truncates, so the way to see everything has to be
+        # documented next to it, not left to be discovered from --help.
+        assert "aac list-runs --full" in readme
