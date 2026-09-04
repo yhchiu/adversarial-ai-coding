@@ -268,7 +268,11 @@ Contract:
   run starts is wrong the moment that run is killed.
 - Written before the first stage, so the `commit-spec` stage sweeps it into
   the branch with `git add -A` semantics
-  (`src/adversarial_ai_coding/runindex.py:53`).
+  (`src/adversarial_ai_coding/runindex.py:58`).
+- It lives beside the spec, so `SPEC_DIR` moves it too. `list-runs` finds it
+  anyway, by unioning the default location, the `spec_dir` recorded in each
+  settings snapshot, and the manifests git tracks
+  (`src/adversarial_ai_coding/runindex.py:200`).
 
 ## Provenance: `.meta.json` Sidecars and `metrics.csv`
 
@@ -319,4 +323,4 @@ Names recorded in `ledger.json` and used in archive slugs:
 | 8 | Task queue truth is workflow state, `plan.md` is UI | `src/adversarial_ai_coding/runstate.py:541` |
 | 9 | Phased plan structure is validated before implementation | `src/adversarial_ai_coding/phases.py:33` |
 | 10 | Persisted state refuses unknown schemas and conflicting resumes | `src/adversarial_ai_coding/runstate.py:157,203` |
-| 11 | The run manifest is workflow-owned and write-once; no agent produces it | `src/adversarial_ai_coding/runindex.py:53` |
+| 11 | The run manifest is workflow-owned and write-once; no agent produces it | `src/adversarial_ai_coding/runindex.py:58` |

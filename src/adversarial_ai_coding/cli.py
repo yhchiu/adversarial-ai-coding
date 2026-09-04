@@ -136,19 +136,20 @@ def _slot_summary(slot: str, settings: Settings) -> str:
 
 
 def _list_runs(presenter: Presenter, cwd: Path) -> int:
-    """One line per run directory under aac/docs/, newest first.
+    """One row per discoverable run, newest first.
 
-    Read-only and git-free on purpose: it has to work in a fresh clone,
-    where aac/.run/ was never committed and the run status is simply not
-    knowable. Rows go to stdout so they pipe into grep; the empty-listing
-    note goes to stderr so it does not.
+    Read-only, and it never requires a git repository: outside one the two
+    filesystem sources still answer, and in a fresh clone git is what
+    answers while the run status degrades to unknown. Rows go to stdout so
+    they pipe into grep; the empty-listing note goes to stderr so it does
+    not.
     """
 
-    entries = load_run_entries(cwd / DOCS_ROOT, cwd / WORK_DIR / "state")
+    entries = load_run_entries(cwd)
     if not entries:
         presenter.err(
-            "No runs recorded under {docs_root}/. A run writes its manifest "
-            "there when it starts, unless SPEC_DIR points somewhere else.",
+            "No runs found. A run records itself under {docs_root}/ when it "
+            "starts, or wherever SPEC_DIR pointed.",
             docs_root=DOCS_ROOT,
         )
         return 0

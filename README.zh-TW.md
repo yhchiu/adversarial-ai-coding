@@ -180,6 +180,20 @@ RUN_ID           STATUS      REQUEST
 由 resume state 推導而來,在全新 clone 上會顯示 `unknown`,因為 `aac/.run/` 從來
 不進版控。
 
+用自訂 `SPEC_DIR` 啟動的執行同樣會被列出;只要有任何一筆不在預設位置,就會多出
+一個 `PATH` 欄:
+
+```text
+RUN_ID           STATUS   PATH                      REQUEST
+20260904-101500  unknown  specs/archive-port        Port the archive module
+20260901-000000  unknown  aac/docs/20260901-000000  A run in the usual place
+```
+
+它們靠三個來源找到,因為沒有任何單一來源涵蓋所有情況:預設的 `aac/docs/` 位置、
+每次執行的設定快照裡記錄的 `SPEC_DIR`(唯一知道「還沒 commit 就停掉的執行」的來
+源),以及 git 追蹤到的 manifest(唯一撐得過 clone 的來源)。commit 在這個
+checkout 沒有的分支上的執行不會被列出。
+
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
 與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
 時會印出提示,新版本加入的規則才不會被漏掉。標記區塊之外你自己寫的內容不會被

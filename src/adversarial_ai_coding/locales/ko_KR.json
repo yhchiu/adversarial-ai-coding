@@ -109,5 +109,5 @@
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} 이 올바른 JSON 이 아닙니다（{exc}）. suggestion 없음으로 처리합니다)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} 에 boolean \"phased\" 필드가 없습니다. suggestion 없음으로 처리합니다)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} 에 string \"reason\" 이 없습니다. reason 없이 제안은 유지합니다)",
-  "No runs recorded under {docs_root}/. A run writes its manifest there when it starts, unless SPEC_DIR points somewhere else.": "{docs_root}/ 에 기록된 실행이 없습니다. 실행은 시작할 때 그곳에 manifest 를 씁니다. 단 SPEC_DIR 이 다른 곳을 가리키면 예외입니다."
+  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "실행 기록을 찾을 수 없습니다. 실행은 시작할 때 {docs_root}/ 아래, 또는 SPEC_DIR 이 가리키는 곳에 자신을 기록합니다."
 }

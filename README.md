@@ -272,6 +272,22 @@ timestamped directory names stay findable long after the run. Rows go to
 stdout and pipe into `grep`; `STATUS` is derived from the resume state, and
 reads `unknown` in a fresh clone, where `aac/.run/` was never committed.
 
+Runs launched with a custom `SPEC_DIR` are listed too, and a `PATH` column
+appears as soon as one of them is:
+
+```text
+RUN_ID           STATUS   PATH                      REQUEST
+20260904-101500  unknown  specs/archive-port        Port the archive module
+20260901-000000  unknown  aac/docs/20260901-000000  A run in the usual place
+```
+
+They are found three ways, because no single one covers every case: the
+default `aac/docs/` location, the `SPEC_DIR` recorded in each run's settings
+snapshot (the only source that knows about a run that stopped before its
+first commit), and the manifests git tracks (the only source that survives a
+clone). Runs committed on a branch this checkout does not have are not
+listed.
+
 Show the CLI help or version:
 
 ```bash

@@ -109,5 +109,5 @@
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} は正しい JSON ではありません（{exc}）。suggestion なしとして扱います)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} に boolean の \"phased\" がありません。suggestion なしとして扱います)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} に string の \"reason\" がありません。reason なしで提案を残します)",
-  "No runs recorded under {docs_root}/. A run writes its manifest there when it starts, unless SPEC_DIR points somewhere else.": "{docs_root}/ に実行の記録がありません。実行は開始時にそこへ manifest を書きます（SPEC_DIR が別の場所を指している場合を除く）。"
+  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "実行の記録が見つかりません。実行は開始時に {docs_root}/ 以下、または SPEC_DIR が指す場所に自身を記録します。"
 }

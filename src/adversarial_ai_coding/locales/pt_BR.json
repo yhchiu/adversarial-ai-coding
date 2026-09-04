@@ -109,5 +109,5 @@
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} não é um JSON válido ({exc}); tratando como sem suggestion)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} não tem o campo boolean \"phased\"; tratando como sem suggestion)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} não tem o string \"reason\"; mantendo a recomendação sem reason)",
-  "No runs recorded under {docs_root}/. A run writes its manifest there when it starts, unless SPEC_DIR points somewhere else.": "Nenhuma execução registrada em {docs_root}/. Uma execução escreve seu manifest ali ao iniciar, a menos que SPEC_DIR aponte para outro lugar."
+  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "Nenhuma execução encontrada. Uma execução se registra em {docs_root}/ ao iniciar, ou onde quer que SPEC_DIR aponte."
 }

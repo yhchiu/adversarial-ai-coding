@@ -18,18 +18,24 @@ Two properties are deliberate:
 Nothing parses it as control flow. A missing, unreadable, or unknown-schema
 manifest degrades to a spec.md title and then to no title at all, because a
 run listing that refuses to print is worse than one with a blank cell.
+
+Finding the manifests is its own problem: SPEC_DIR moves a run's documents
+anywhere it likes, so the default location is a convention rather than a
+guarantee. discover_spec_dirs() unions the three sources that between them
+cover every run that can still be found — see its docstring.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .archive import generated_at
-from .config import Settings
+from .config import DOCS_ROOT, WORK_DIR, Settings
 
 MANIFEST_NAME = "run.json"
 MANIFEST_SCHEMA = 1
@@ -139,6 +145,96 @@ def run_status(state_root: Path, run_id: str) -> str:
     return STATUS_UNKNOWN
 
 
+def _run_git_default(args: list[str], cwd: Path) -> tuple[int, str]:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return proc.returncode, proc.stdout
+
+
+def _snapshot_spec_dir(state_dir: Path) -> str:
+    """Where one run wrote its documents, per its settings snapshot.
+
+    Deliberately not runstate.load_snapshot: that one refuses anything it
+    does not fully understand because a bad snapshot must never be resumed.
+    A listing has no such stake, so a damaged snapshot costs one row's
+    location, not the whole command.
+    """
+
+    try:
+        data = json.loads((state_dir / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    spec_dir = data.get("spec_dir")
+    return spec_dir if isinstance(spec_dir, str) else ""
+
+
+def _tracked_manifest_dirs(root: Path, run_git) -> list[Path]:
+    """Directories holding a manifest git tracks, wherever SPEC_DIR put them.
+
+    After a clone this is the only source left: aac/.run/ is never
+    committed, so the snapshots that recorded a custom SPEC_DIR are gone
+    while the manifests themselves are still on the branch. Runs committed
+    on branches this checkout does not have stay invisible, which is the
+    same thing every other git-aware tool reports.
+    """
+
+    rc, out = run_git(["ls-files", "-z", "--", f"*{MANIFEST_NAME}"], root)
+    if rc != 0:
+        return []
+    return [
+        root / name
+        for name in (part for part in out.split("\0") if part)
+        # The pathspec is a suffix match, so "myrun.json" reaches here too.
+        if PurePosixPath(name).name == MANIFEST_NAME
+    ]
+
+
+def discover_spec_dirs(root: Path, run_git=_run_git_default) -> list[Path]:
+    """Every directory that might hold a run's documents.
+
+    SPEC_DIR moves a run's documents anywhere, so a scan of the default
+    location alone would silently omit those runs. Three sources cover the
+    ways a run can still be found, and each covers a gap the others leave:
+
+    1. `aac/docs/*/` — the default, with no git and no state needed.
+    2. The settings snapshot of every run in `aac/.run/state/` — catches a
+       custom SPEC_DIR, including a run that stopped before its first
+       commit, and is the only source that knows about an uncommitted one.
+    3. Manifests git tracks — the only source that survives a clone.
+    """
+
+    found: list[Path] = []
+    docs_root = root / DOCS_ROOT
+    if docs_root.is_dir():
+        found += [path for path in docs_root.iterdir() if path.is_dir()]
+    state_root = root / WORK_DIR / "state"
+    if state_root.is_dir():
+        for state_dir in state_root.iterdir():
+            spec_dir = _snapshot_spec_dir(state_dir)
+            if spec_dir:
+                # An absolute SPEC_DIR wins the join, as it does in the run.
+                found.append(root / spec_dir)
+    found += [path.parent for path in _tracked_manifest_dirs(root, run_git)]
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in found:
+        resolved = path.resolve()
+        if resolved in seen or not path.is_dir():
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
 @dataclass(frozen=True)
 class RunEntry:
     run_id: str
@@ -146,45 +242,69 @@ class RunEntry:
     status: str
     started_at: str
     path: Path
+    default_location: bool
 
 
-def load_run_entries(docs_root: Path, state_root: Path) -> list[RunEntry]:
-    """Every run directory under docs_root, newest run id first."""
+def load_run_entries(root: Path, run_git=_run_git_default) -> list[RunEntry]:
+    """Every run discoverable from root, newest run id first.
 
-    if not docs_root.is_dir():
-        return []
-    entries: list[RunEntry] = []
-    for spec_dir in sorted(docs_root.iterdir(), reverse=True):
-        if not spec_dir.is_dir():
-            continue
+    One run is one row even when two sources find it, which they routinely
+    do: a committed run in the default location is reported by all three.
+    """
+
+    state_root = root / WORK_DIR / "state"
+    entries: dict[str, RunEntry] = {}
+    for spec_dir in discover_spec_dirs(root, run_git):
         manifest = read_manifest(spec_dir)
+        run_id = str(manifest.get("run_id") or spec_dir.name)
+        if run_id in entries:
+            continue
         title = first_line(str(manifest.get("request", "")))
         if not title:
             title = spec_title(spec_dir / "spec.md")
-        entries.append(
-            RunEntry(
-                run_id=str(manifest.get("run_id") or spec_dir.name),
-                title=title,
-                status=run_status(state_root, spec_dir.name),
-                started_at=str(manifest.get("started_at", "")),
-                path=spec_dir,
-            )
+        try:
+            shown = spec_dir.relative_to(root)
+        except ValueError:
+            shown = spec_dir
+        entries[run_id] = RunEntry(
+            run_id=run_id,
+            title=title,
+            status=run_status(state_root, run_id),
+            started_at=str(manifest.get("started_at", "")),
+            path=shown,
+            default_location=shown.as_posix() == f"{DOCS_ROOT}/{run_id}",
         )
-    return entries
+    return sorted(entries.values(), key=lambda entry: entry.run_id, reverse=True)
 
 
 def format_run_index(entries: list[RunEntry]) -> str:
-    """A grep-friendly fixed-column table; empty string for no runs."""
+    """A grep-friendly fixed-column table; empty string for no runs.
+
+    The PATH column appears only when some run sits outside the default
+    location, because there it is the answer to the question being asked
+    and everywhere else it only repeats the run id.
+    """
 
     if not entries:
         return ""
-    header = ("RUN_ID", "STATUS", "REQUEST")
-    rows = [(entry.run_id, entry.status, entry.title or "-") for entry in entries]
+    show_path = any(not entry.default_location for entry in entries)
+    header = ("RUN_ID", "STATUS", "PATH", "REQUEST")
+    rows = [
+        (entry.run_id, entry.status, entry.path.as_posix(), entry.title or "-")
+        for entry in entries
+    ]
+    if not show_path:
+        header = (header[0], header[1], header[3])
+        rows = [(row[0], row[1], row[3]) for row in rows]
+    last = len(header) - 1
     widths = [
-        max(len(row[column]) for row in (header, *rows)) for column in range(2)
+        max(len(row[column]) for row in (header, *rows)) for column in range(last)
     ]
     lines = [
-        f"{row[0]:<{widths[0]}}  {row[1]:<{widths[1]}}  {row[2]}".rstrip()
+        "  ".join(
+            [f"{cell:<{widths[column]}}" for column, cell in enumerate(row[:last])]
+            + [row[last]]
+        ).rstrip()
         for row in (header, *rows)
     ]
     return "\n".join(lines) + "\n"

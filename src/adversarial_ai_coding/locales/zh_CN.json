@@ -109,5 +109,5 @@
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} 不是合法 JSON（{exc}）；视为没有 suggestion)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} 没有 boolean \"phased\" 字段；视为没有 suggestion)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} 没有 string \"reason\"；保留建议但不带 reason)",
-  "No runs recorded under {docs_root}/. A run writes its manifest there when it starts, unless SPEC_DIR points somewhere else.": "{docs_root}/ 下没有任何执行记录。每次执行启动时会在那里写下 manifest，除非 SPEC_DIR 指向别处。"
+  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "找不到任何执行记录。每次执行启动时会把自己记录在 {docs_root}/ 下,或是 SPEC_DIR 指定的位置。"
 }

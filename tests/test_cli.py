@@ -220,10 +220,38 @@ def test_list_runs_needs_no_git_repository_or_request(tmp_path, monkeypatch, cap
     assert "20260904-101500  unknown  Add a feature" in capsys.readouterr().out
 
 
+def test_list_runs_finds_a_run_that_spec_dir_moved(tmp_path, monkeypatch, capsys):
+    """SPEC_DIR is a supported setting, so its runs have to list too."""
+    from adversarial_ai_coding.runindex import write_run_manifest
+
+    monkeypatch.chdir(tmp_path)
+    _record_run(tmp_path, "20260901-000000", "A run in the usual place")
+    moved = tmp_path / "specs" / "archive-port"
+    write_run_manifest(
+        moved,
+        run_id="20260904-101500",
+        request="Port the archive module",
+        branch="aac/20260904-101500",
+        settings=Settings.from_env({}, run_id="20260904-101500"),
+    )
+    state_dir = tmp_path / "aac" / ".run" / "state" / "20260904-101500"
+    state_dir.mkdir(parents=True)
+    (state_dir / "settings.json").write_text(
+        '{"schema": 2, "spec_dir": "specs/archive-port"}', encoding="utf-8"
+    )
+
+    assert cli.main(["list-runs"], {}, stdin_isatty=False) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["RUN_ID", "STATUS", "PATH", "REQUEST"]
+    assert "specs/archive-port" in lines[1]
+    assert lines[1].endswith("Port the archive module")
+    assert "aac/docs/20260901-000000" in lines[2]
+
+
 def test_list_runs_follows_aac_lang(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["list-runs"], {"AAC_LANG": "zh-TW"}, stdin_isatty=False) == 0
-    assert "沒有任何執行記錄" in capsys.readouterr().err
+    assert "找不到任何執行記錄" in capsys.readouterr().err
 
 
 def test_print_agents(capsys):

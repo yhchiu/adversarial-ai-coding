@@ -151,7 +151,8 @@ Schema —— 一行:`{"phased": true|false, "reason": "..."}`
 - **沒有任何 agent 會寫它。** 沒有 prompt 要求產出它,所以沒有任何審查或修訂輪次能弄丟它,reviewer 也不會把它當成 spec 內容。Agent 對它的待遇與上表的 state 檔完全相同:唯讀。
 - **只寫一次。** Resume 沿用同一個 run id,並保留既有的 manifest 不動,所以 `started_at` 永遠是最初的啟動時間。
 - **絕不是控制流。** 沒有任何東西解析它來做決定,裡面也不存 run 狀態:`adversarial-ai-coding list-runs` 改從 `state/<RUN_ID>/completed` 推導,因為啟動時寫下的狀態,在 run 被中斷的那一刻就是錯的。
-- 在第一個 stage 之前就寫入,好讓 `commit-spec` stage 以 `git add -A` 語意把它帶進分支(`src/adversarial_ai_coding/runindex.py:53`)。
+- 在第一個 stage 之前就寫入,好讓 `commit-spec` stage 以 `git add -A` 語意把它帶進分支(`src/adversarial_ai_coding/runindex.py:58`)。
+- 它跟 spec 放在一起,所以 `SPEC_DIR` 也會把它一起搬走。`list-runs` 仍然找得到:它聯集了預設位置、每份設定快照裡記錄的 `spec_dir`,以及 git 追蹤到的 manifest(`src/adversarial_ai_coding/runindex.py:200`)。
 
 ## 溯源:`.meta.json` Sidecar 與 `metrics.csv`
 
@@ -194,4 +195,4 @@ cost_usd, model, model_args, generated_at, agent_slot`。
 | 8 | 任務佇列真相在 workflow state,`plan.md` 只是 UI | `src/adversarial_ai_coding/runstate.py:541` |
 | 9 | 分階段 plan 結構在實作前先驗證 | `src/adversarial_ai_coding/phases.py:33` |
 | 10 | 持久化 state 拒絕未知 schema 與衝突的 resume | `src/adversarial_ai_coding/runstate.py:157,203` |
-| 11 | Run manifest 由 workflow 持有且只寫一次;沒有 agent 產出它 | `src/adversarial_ai_coding/runindex.py:53` |
+| 11 | Run manifest 由 workflow 持有且只寫一次;沒有 agent 產出它 | `src/adversarial_ai_coding/runindex.py:58` |
