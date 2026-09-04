@@ -951,6 +951,12 @@ def _jq_coalesce_empty(payload: dict[str, object], field: str) -> str:
 
 
 def _claude_common_args(ref: AgentRef, settings: Settings) -> list[str]:
+    # Known edge, left as it is: claude's --allowedTools is variadic, so it
+    # keeps collecting until the next dashed token. The workflow passes it
+    # right before these arguments, so when MODEL_* is empty and a slot's
+    # first token is a bare word, that word joins the allowlist instead of
+    # standing on its own. A bare word is not a claude argument in the
+    # first place, so nothing valid is lost.
     args: list[str] = []
     model = agent_model(ref, settings)
     if model:
