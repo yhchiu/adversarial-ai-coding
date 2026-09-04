@@ -51,6 +51,8 @@ let it influence approved or blockers.
 
 ## Spec and plan
 
+- `run.json` in the spec directory is written by the workflow, not by you.
+  Never create, edit, or delete it, and never review it as spec content.
 - spec.md must contain: feature description, testable acceptance criteria,
   edge cases, out-of-scope items, and an "Assumptions and Open Questions"
   section that honestly lists every assumption made without asking a human.

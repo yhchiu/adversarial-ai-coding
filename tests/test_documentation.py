@@ -646,6 +646,18 @@ def test_the_run_manifest_is_documented_as_workflow_owned_bilingually():
     assert "絕不是控制流" in chinese
 
 
+def test_agents_template_keeps_the_manifest_off_limits():
+    """The contract doc is not always in an agent's context; this is.
+
+    The manifest sits in the same directory an agent is told to write the
+    spec and plan into, so without a rule the honest failure is tidy-up:
+    an agent deletes the file it did not create.
+    """
+    template = _read("resources/AGENTS.template.md")
+    assert "`run.json` in the spec directory is written by the workflow" in template
+    assert "Never create, edit, or delete it" in template
+
+
 def test_list_runs_is_documented_in_both_readmes():
     for name in ("README.md", "README.zh-TW.md"):
         readme = _read(name)
