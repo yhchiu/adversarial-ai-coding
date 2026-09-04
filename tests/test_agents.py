@@ -1131,6 +1131,78 @@ def test_validate_agents_checks_dual_spec_impl_args_when_adapters_match():
         validate_agents(settings, which=lambda name: "C:/fake/" + name)
 
 
+def test_validate_agents_rejects_dual_spec_impl_args_no_candidate_accepts():
+    """A violation both candidates share cannot be waiting on a choice.
+
+    --model is reserved for every built-in, so neither selection could
+    make this run. Deferring it would spend the spec, plan, and
+    acceptance stages before saying so.
+    """
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "AGENT_B": "codex",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--model x",
+        }
+    )
+
+    with pytest.raises(SettingsError, match="cannot set the model"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_rejects_dual_spec_impl_args_when_both_owners_custom():
+    """An inherited custom owner is refused whichever candidate wins."""
+    settings = make(
+        {
+            "AGENT_A": "wrapper-a",
+            "AGENT_B": "wrapper-b",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--flag",
+        }
+    )
+
+    with pytest.raises(SettingsError, match="cannot reuse custom agent command"):
+        validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_allows_dual_spec_impl_args_one_candidate_accepts():
+    """One workable selection is enough to keep the run alive.
+
+    Picking codex gives the implementation slot a built-in owner, so the
+    custom command in slot A cannot decide the question on its own.
+    """
+    settings = make(
+        {
+            "AGENT_A": "wrapper-a",
+            "AGENT_B": "codex",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--flag",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
+def test_validate_agents_judges_explicit_impl_agent_without_the_candidates():
+    """IMPL_AGENT settles the command, so A and B stop being candidates.
+
+    --fork-session is reserved for claude and ordinary for codex, and the
+    implementation slot here is codex whichever spec is selected.
+    """
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "AGENT_B": "codex",
+            "DUAL_SPEC": "1",
+            "IMPL_AGENT": "codex",
+            "IMPL_ARGS": "--fork-session",
+        }
+    )
+
+    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+
+
 def test_validate_agents_uses_only_agent_a_candidate_without_dual_spec():
     settings = make(
         {

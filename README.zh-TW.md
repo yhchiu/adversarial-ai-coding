@@ -566,6 +566,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 - 不得用 `--allowedTools` / `--allowed-tools` 設定 Claude 的工具白名單,理由同上;請用 `TOOLS`。`TOOLS` 是整個 run 共用的單一值;`--disallowedTools` 不在保留名單內,可以用來收窄單一 slot。
 - 在 headless 下無法完成 stage 的權限模式會被拒絕:Claude 的 `--permission-mode plan` / `manual` / `default`,以及 Agy 的 `--mode plan`。Claude 內部把 `manual` 正規化成 `default`,兩者都會等一個 headless 下沒有人能給的回答;`plan` 則禁止 stage 本來就要做的修改。`acceptEdits`、`auto`、`bypassPermissions`、`dontAsk` 由你決定,`--dangerously-skip-permissions` 也是。
 - `-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析;Agy 例外:Go flag 套件沒有 attached short form,agy 也沒有 `-m`,所以那裡的 `-model` 是 `--model` 的另一種拼法,而 `-mode` 是獨立的旗標。
+- `IMPL_ARGS` 依實作 slot 實際會執行的 command 判定。`DUAL_SPEC=1` 時那支 command 取決於你選哪一份 spec,所以只有單一候選才違反的規則會等到選定後才檢查;但每個候選都違反的設定會在啟動時就拒絕——任何選擇都救不了它,而拖到實作階段才發現,得先付掉 spec、plan 與驗收測試三個階段的成本。
 - Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 
 ### 推理深度

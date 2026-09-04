@@ -273,6 +273,22 @@ def test_headless_impossible_permission_modes_are_documented_bilingually():
         assert "--dangerously-skip-permissions" in readme
 
 
+def test_impl_args_dual_spec_timing_is_documented_bilingually():
+    """Both halves of the rule, or a reader learns the wrong one.
+
+    Knowing only that some checks wait suggests IMPL_ARGS is unchecked
+    until stage five; knowing only that some fail at startup suggests a
+    candidate's rules apply to a run that will never use it.
+    """
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "DUAL_SPEC=1" in readme
+        assert "IMPL_ARGS" in readme
+    assert "waits for the selection" in _read("README.md")
+    assert "refused at startup" in _read("README.md")
+    assert "等到選定後才檢查" in _read("README.zh-TW.md")
+    assert "啟動時就拒絕" in _read("README.zh-TW.md")
+
+
 def test_agy_prompt_and_session_flags_are_documented_bilingually():
     """Every spelling that could drop the workflow prompt is named.
 

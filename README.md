@@ -777,6 +777,12 @@ For every built-in argument variable:
   by the same reserved-option rules, except on Agy: the Go flag package has
   no attached short form and Agy has no `-m`, so `-model` is the second
   spelling of `--model` there and `-mode` is a flag of its own.
+- `IMPL_ARGS` is judged against the command the implementation slot will
+  actually run. With `DUAL_SPEC=1` that command depends on which spec you
+  select, so a rule only one candidate has waits for the selection, while a
+  violation every candidate shares is refused at startup: no selection could
+  have accepted it, and finding out at the implementation stage would cost
+  the spec, plan, and acceptance stages first.
 - Custom argument variables are passed through instead, so custom model and
   session flags may be supplied there.
 

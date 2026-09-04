@@ -61,10 +61,11 @@ def impl_ref(owner: AgentRef, settings: Settings) -> AgentRef:
     if not (settings.impl_agent or settings.impl_model or settings.impl_args):
         return owner
     name = settings.impl_agent or owner.name
-    if not settings.impl_agent and not is_builtin_agent(name):
-        raise _custom_impl_conflict(name)
     base_slot = owner.slot if name == owner.name else ""
     ref = AgentRef(slot="I", name=name, base_slot=base_slot)
+    # The owner is settled by the time the workflow asks for this ref, so
+    # every rule of the resolved command applies, including the ones that
+    # had to wait at startup while two dual-spec candidates were live.
     _validate_impl_args(settings, (ref.name,))
     return ref
 
@@ -151,13 +152,15 @@ def _impl_owner_candidates(settings: Settings) -> tuple[str, ...]:
     return (settings.agent_a,)
 
 
-def _startup_impl_adapters(settings: Settings) -> tuple[str, ...]:
+def _impl_candidates(settings: Settings) -> tuple[str, ...]:
+    """Every command the implementation slot could end up running.
+
+    With dual spec the owner is whichever of A and B a human selects
+    several stages later, so both are live possibilities at startup.
+    """
     if settings.impl_agent:
         return (settings.impl_agent,)
-    candidates = tuple(dict.fromkeys(_impl_owner_candidates(settings)))
-    if len(candidates) == 1:
-        return candidates
-    return ()
+    return tuple(dict.fromkeys(_impl_owner_candidates(settings)))
 
 
 def _custom_impl_conflict(name: str) -> SettingsError:
@@ -169,19 +172,17 @@ def _custom_impl_conflict(name: str) -> SettingsError:
 
 
 def _validate_custom_impl_command(settings: Settings) -> None:
-    if settings.impl_agent:
-        if not is_builtin_agent(settings.impl_agent) and settings.impl_agent in {
-            settings.agent_a,
-            settings.agent_b,
-        }:
-            raise _custom_impl_conflict(settings.impl_agent)
-        return
+    """Reject an explicit implementation wrapper that A or B already uses.
 
-    if not (settings.impl_model or settings.impl_args):
-        return
-    for name in _startup_impl_adapters(settings):
-        if not is_builtin_agent(name):
-            raise _custom_impl_conflict(name)
+    An inherited custom owner is judged in `_impl_rejection` instead,
+    because whether it is inherited at all depends on the owner.
+    """
+    if (
+        settings.impl_agent
+        and not is_builtin_agent(settings.impl_agent)
+        and settings.impl_agent in {settings.agent_a, settings.agent_b}
+    ):
+        raise _custom_impl_conflict(settings.impl_agent)
 
 
 def _split_cli_args(variable: str, raw: str) -> list[str]:
@@ -448,18 +449,46 @@ def _validate_slot_arg_source(variable: str, command: str, raw: str) -> None:
 def _validate_reserved_args(settings: Settings) -> None:
     _validate_slot_arg_source("AGENT_A_ARGS", settings.agent_a, settings.agent_a_args)
     _validate_slot_arg_source("AGENT_B_ARGS", settings.agent_b, settings.agent_b_args)
-    adapters = _startup_impl_adapters(settings)
-    if adapters:
-        _validate_impl_args(settings, adapters)
-    else:
-        _split_cli_args("IMPL_ARGS", settings.impl_args)
+    # Quoting belongs to the value, not to any adapter, so it is settled
+    # before the question of who will own the slot is even asked.
+    _split_cli_args("IMPL_ARGS", settings.impl_args)
+    _validate_impl_args(settings, _impl_candidates(settings))
 
 
-def _validate_impl_args(settings: Settings, adapters: tuple[str, ...]) -> None:
-    tokens = _split_cli_args("IMPL_ARGS", settings.impl_args)
-    for adapter in dict.fromkeys(adapters):
-        if is_builtin_agent(adapter):
-            _validate_builtin_arg_tokens("IMPL_ARGS", adapter, tokens)
+def _impl_rejection(settings: Settings, candidate: str) -> SettingsError | None:
+    """The error an implementation slot running `candidate` would raise."""
+    if not settings.impl_agent and not is_builtin_agent(candidate):
+        return _custom_impl_conflict(candidate)
+    if not is_builtin_agent(candidate):
+        return None
+    try:
+        _validate_builtin_arg_tokens(
+            "IMPL_ARGS",
+            candidate,
+            _split_cli_args("IMPL_ARGS", settings.impl_args),
+        )
+    except SettingsError as exc:
+        return exc
+    return None
+
+
+def _validate_impl_args(settings: Settings, candidates: tuple[str, ...]) -> None:
+    """Refuse an implementation slot that no owner choice could rescue.
+
+    A rule belonging to one dual-spec candidate cannot be applied while
+    the other is still live: the user may well be about to pick the one
+    that accepts the argument. A violation every candidate shares is a
+    different thing. No selection can make it valid, so deferring it only
+    moves the abort past four paid stages and the human selection gate,
+    and leaves the user editing settings.json to recover the run.
+    """
+    if not (settings.impl_agent or settings.impl_model or settings.impl_args):
+        return
+    rejections = [_impl_rejection(settings, name) for name in candidates]
+    # Reported as the first candidate's error rather than a summary: the
+    # remedy it names is the same one every candidate needs.
+    if rejections and all(rejections):
+        raise rejections[0]
 
 
 @dataclass
