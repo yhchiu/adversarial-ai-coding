@@ -623,3 +623,32 @@ def test_imported_spec_without_review_has_no_phased_suggestion_bilingually():
         readme = _read(name)
         for detail in details:
             assert detail in readme
+
+
+def test_the_run_manifest_is_documented_as_workflow_owned_bilingually():
+    """The contract is what a reviewer is told to check.
+
+    An artifact that appears in aac/docs/ without being described there
+    reads as spec content nobody accounted for, which is exactly how a
+    reviewer ends up reporting it as a defect and burning a round.
+    """
+    for name in ("docs/artifact-contract.md", "docs/artifact-contract.zh-TW.md"):
+        contract = _read(name)
+        assert "aac/docs/<RUN_ID>/run.json" in contract
+        assert "runindex.py" in contract
+    english = _read("docs/artifact-contract.md")
+    assert "No agent writes it." in english
+    assert "Write-once." in english
+    assert "Never control flow." in english
+    chinese = _read("docs/artifact-contract.zh-TW.md")
+    assert "沒有任何 agent 會寫它" in chinese
+    assert "只寫一次" in chinese
+    assert "絕不是控制流" in chinese
+
+
+def test_list_runs_is_documented_in_both_readmes():
+    for name in ("README.md", "README.zh-TW.md"):
+        readme = _read(name)
+        assert "aac list-runs" in readme
+        # The layout tree decides what a reader expects to be committed.
+        assert "run.json" in readme

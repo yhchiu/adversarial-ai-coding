@@ -159,10 +159,26 @@ DUAL_SPEC=1 aac request.md
 # 輸出 AGENTS.md 規範範本(給已有 AGENTS.md 的專案手動合併)
 aac print-agents
 
+# 列出這個 repo 記錄過的每一次執行(新的在前)
+aac list-runs
+
 # 顯示 CLI 說明或版本
 aac --help
 aac --version
 ```
+
+`aac list-runs` 的輸出長這樣:
+
+```text
+RUN_ID           STATUS      REQUEST
+20260904-101500  completed   Add slot-specific agent arguments
+20260901-000000  unfinished  Port the archive module to Python
+```
+
+每次執行都會把「這次在做什麼」寫進 `aac/docs/<RUN_ID>/run.json`,所以時間戳目錄
+名在執行結束很久之後仍然找得回來。資料列走 stdout,可以直接接 `grep`;`STATUS`
+由 resume state 推導而來,在全新 clone 上會顯示 `unknown`,因為 `aac/.run/` 從來
+不進版控。
 
 既有的 `AGENTS.md` 絕不會被覆寫。每次執行都會把 `adversarial-ai-coding:begin`
 與 `adversarial-ai-coding:end` 標記之間的區塊拿去跟目前的範本比對,缺少或過時
@@ -450,7 +466,8 @@ Workflow 寫出的一切都放在單一頂層目錄 `aac/` 底下,並且只分�
 線同時決定版控:
 
 - `aac/docs/<RUN_ID>/` **會進版控**。裡面是 spec 與 plan——human gate 時由人
-  閱讀,PR 上由 reviewer 閱讀。沒有任何規則忽略這個路徑。
+  閱讀,PR 上由 reviewer 閱讀——外加讓這次執行事後仍找得到的 `run.json`
+  manifest。沒有任何規則忽略這個路徑。
 - `aac/.run/` **永遠不進版控**。Workflow 會在裡面寫一個內容只有 `*` 的
   `.gitignore`,整棵子樹對 git 隱形,而且不必動你自己 repo 的 `.gitignore`。
   它是隱藏目錄,因為只有 workflow 會讀它。
@@ -473,6 +490,7 @@ your-project/
 ├── CLAUDE.md            # 缺檔時補一行指向 AGENTS.md
 └── aac/
     ├── docs/<RUN_ID>/               # 會進版控
+    │   ├── run.json                 # 這次執行在做什麼(aac list-runs 讀它)
     │   ├── spec.md                  # 規格(含驗收條件、假設與未決問題)
     │   ├── plan.md                  # 實作計畫(checkbox 任務清單,完成會打勾)
     │   ├── spec-a.md                # DUAL_SPEC=1 時 A 的候選 spec

@@ -255,6 +255,23 @@ Print the agent rules template for manual merging into an existing `AGENTS.md`:
 aac print-agents
 ```
 
+List the runs recorded in this repository, newest first:
+
+```bash
+aac list-runs
+```
+
+```text
+RUN_ID           STATUS      REQUEST
+20260904-101500  completed   Add slot-specific agent arguments
+20260901-000000  unfinished  Port the archive module to Python
+```
+
+Each run records what it was about in `aac/docs/<RUN_ID>/run.json`, so the
+timestamped directory names stay findable long after the run. Rows go to
+stdout and pipe into `grep`; `STATUS` is derived from the resume state, and
+reads `unknown` in a fresh clone, where `aac/.run/` was never committed.
+
 Show the CLI help or version:
 
 ```bash
@@ -607,7 +624,8 @@ Everything the workflow writes goes under one top-level directory, `aac/`.
 It has exactly two halves, and the split is what decides version control:
 
 - `aac/docs/<RUN_ID>/` is **committed**. It holds the spec and plan, which a
-  human reads at the human gates and a reviewer reads on the pull request.
+  human reads at the human gates and a reviewer reads on the pull request,
+  plus the `run.json` manifest that keeps the run findable afterwards.
   Nothing ignores this path.
 - `aac/.run/` is **never committed**. The workflow writes a `.gitignore`
   containing a single `*` into it, so the whole subtree is invisible to git
@@ -633,6 +651,7 @@ your-project/
 |-- CLAUDE.md
 `-- aac/
     |-- docs/<RUN_ID>/                   # committed
+    |   |-- run.json                     # what this run was about (aac list-runs)
     |   |-- spec.md
     |   |-- plan.md
     |   |-- spec-a.md                    # DUAL_SPEC=1 candidate from slot A

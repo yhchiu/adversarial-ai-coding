@@ -238,6 +238,38 @@ Transient files directly under `aac/.run/` describe the current round only
 cleared on every start; durable controls survive a resume,
 `src/adversarial_ai_coding/runstate.py:595`).
 
+### The committed manifest: `aac/docs/<RUN_ID>/run.json`
+
+One workflow-owned file lives in the committed half instead of under
+`aac/.run/`. Everything above is invisible to git, so nothing recording what
+a run was about survives a clone, and a reader coming back later has only a
+timestamped directory name. This carries those facts across.
+
+| Field | Content |
+|---|---|
+| `schema` | `1`; an unknown value degrades the listing, never a run |
+| `run_id` | The run this directory belongs to |
+| `request` | Resolved request text, the same snapshot as `task.txt` |
+| `started_at` | Local time with offset, `%Y-%m-%dT%H:%M:%S%z` |
+| `branch` | Branch the run started on |
+| `agent_a` / `agent_b` | Slot commands the run was launched with |
+| `dual_spec` / `phases` / `imported_spec` | Mode flags that shaped the run |
+
+Contract:
+
+- **No agent writes it.** No prompt asks for it, so no review or revise
+  round can drop it and no reviewer sees it as spec content. Agents treat it
+  exactly like the state files above: read-only.
+- **Write-once.** A resumed attempt reuses the run id and leaves an existing
+  manifest untouched, so `started_at` stays the original start time.
+- **Never control flow.** Nothing parses it to decide anything, and no run
+  status is stored in it: `adversarial-ai-coding list-runs` derives status
+  from `state/<RUN_ID>/completed` instead, because a status written when a
+  run starts is wrong the moment that run is killed.
+- Written before the first stage, so the `commit-spec` stage sweeps it into
+  the branch with `git add -A` semantics
+  (`src/adversarial_ai_coding/runindex.py:53`).
+
 ## Provenance: `.meta.json` Sidecars and `metrics.csv`
 
 Every archived artifact gets a sibling `<name>.meta.json` written atomically
@@ -287,3 +319,4 @@ Names recorded in `ledger.json` and used in archive slugs:
 | 8 | Task queue truth is workflow state, `plan.md` is UI | `src/adversarial_ai_coding/runstate.py:541` |
 | 9 | Phased plan structure is validated before implementation | `src/adversarial_ai_coding/phases.py:33` |
 | 10 | Persisted state refuses unknown schemas and conflicting resumes | `src/adversarial_ai_coding/runstate.py:157,203` |
+| 11 | The run manifest is workflow-owned and write-once; no agent produces it | `src/adversarial_ai_coding/runindex.py:53` |

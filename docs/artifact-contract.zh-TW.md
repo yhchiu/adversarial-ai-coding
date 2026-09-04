@@ -132,6 +132,27 @@ Schema —— 一行:`{"phased": true|false, "reason": "..."}`
 
 `aac/.run/` 直下的暫存檔只描述當前這一輪(`review.md`、`verdict.json`、`last-agent-output.txt`、`pr-body.md` 每次啟動都清掉;耐久的控制檔在 resume 時保留,`src/adversarial_ai_coding/runstate.py:595`)。
 
+### 進版控的 manifest:`aac/docs/<RUN_ID>/run.json`
+
+有一個 workflow 持有的檔案不放在 `aac/.run/`,而放在進版控的那一半。上表所有東西對 git 都是隱形的,所以「這次 run 在做什麼」clone 之後什麼都不剩,之後回頭看的人手上只有一個時間戳目錄名。這個檔把那些事實帶過去。
+
+| 欄位 | 內容 |
+|---|---|
+| `schema` | `1`;未知值只會讓列表降級,絕不會擋掉 run |
+| `run_id` | 這個目錄所屬的 run |
+| `request` | 解析後的請求文字,與 `task.txt` 同一份快照 |
+| `started_at` | 含時區偏移的本地時間,`%Y-%m-%dT%H:%M:%S%z` |
+| `branch` | Run 啟動時所在的分支 |
+| `agent_a` / `agent_b` | 這次 run 啟動時的 slot 指令 |
+| `dual_spec` / `phases` / `imported_spec` | 決定這次 run 形狀的模式旗標 |
+
+契約:
+
+- **沒有任何 agent 會寫它。** 沒有 prompt 要求產出它,所以沒有任何審查或修訂輪次能弄丟它,reviewer 也不會把它當成 spec 內容。Agent 對它的待遇與上表的 state 檔完全相同:唯讀。
+- **只寫一次。** Resume 沿用同一個 run id,並保留既有的 manifest 不動,所以 `started_at` 永遠是最初的啟動時間。
+- **絕不是控制流。** 沒有任何東西解析它來做決定,裡面也不存 run 狀態:`adversarial-ai-coding list-runs` 改從 `state/<RUN_ID>/completed` 推導,因為啟動時寫下的狀態,在 run 被中斷的那一刻就是錯的。
+- 在第一個 stage 之前就寫入,好讓 `commit-spec` stage 以 `git add -A` 語意把它帶進分支(`src/adversarial_ai_coding/runindex.py:53`)。
+
 ## 溯源:`.meta.json` Sidecar 與 `metrics.csv`
 
 每個封存 artifact 都有原子寫入的 `<name>.meta.json` 兄弟檔(`src/adversarial_ai_coding/archive.py:114`):
@@ -173,3 +194,4 @@ cost_usd, model, model_args, generated_at, agent_slot`。
 | 8 | 任務佇列真相在 workflow state,`plan.md` 只是 UI | `src/adversarial_ai_coding/runstate.py:541` |
 | 9 | 分階段 plan 結構在實作前先驗證 | `src/adversarial_ai_coding/phases.py:33` |
 | 10 | 持久化 state 拒絕未知 schema 與衝突的 resume | `src/adversarial_ai_coding/runstate.py:157,203` |
+| 11 | Run manifest 由 workflow 持有且只寫一次;沒有 agent 產出它 | `src/adversarial_ai_coding/runindex.py:53` |
