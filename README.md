@@ -537,7 +537,7 @@ quoting-sensitive arguments, or other stateful setup.
 | `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `aac/docs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
-| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | Complete Claude Code `--allowedTools` value. Setting it replaces the default; see the [Troubleshooting Guide](docs/troubleshooting.md) for copyable Go, npm, Cargo, and Python examples. |
+| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | Complete Claude Code `--allowedTools` value, and the only way to set it: the flag itself is reserved in every argument variable. Setting it replaces the default; see the [Troubleshooting Guide](docs/troubleshooting.md) for copyable Go, npm, Cargo, and Python examples. |
 
 On Windows, if you want Go race tests in the gate, use:
 
@@ -744,12 +744,16 @@ OpenCode reports one only once the call has finished, marking it `(failed)` when
 it did, so a slow tool call is silent until it returns. Codex reports a shell call
 as the full interpreter invocation, so the `powershell -Command` or `bash -c` wrapper is stripped and only the command you care about is shown.
 
-Session, output, sandbox, and log flags belong to the workflow. Reserved
-flags per built-in command:
+A flag is reserved for one of three reasons: the workflow depends on it
+(session control, the structured output contract, prompt delivery), an AAC
+variable already owns that setting, or the CLI's own parser cannot take the
+flag twice. Being risky is not one of them: permission flags a reserved name
+does not cover are yours to set, and the run reports what they resolved to.
+Reserved flags per built-in command:
 
 | Argument variable | Reserved flags |
 |---|---|
-| Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema` |
+| Claude-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `-r` / `--resume`, `--session-id`, `--fork-session`, `--no-session-persistence`, `--from-pr`; no override of the structured output contract through `--output-format`, `--verbose`, or `--json-schema`; no tool allowlist through `--allowedTools` / `--allowed-tools`, which `TOOLS` owns |
 | Codex-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--json`, `resume`, `--sandbox` / `-s`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--ephemeral`; no `sandbox_mode` override through `-c` / `--config` |
 | Agy-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `-c` / `--continue`, `--conversation`, `--log-file`; no replacement of the prompt or how it is delivered through `-p` / `--print`, `--prompt`, `-i` / `--prompt-interactive`, or `--print-timeout`; no override of the output contract through `--output-format` or `--json-schema`. Agy uses the Go flag package, so every reserved name is blocked with one dash or two |
 | OpenCode-targeted `AGENT_A_ARGS`, `AGENT_B_ARGS`, or `IMPL_ARGS` | `--format`, `--session` / `-s`, `--continue` / `-c`, `--fork`, `--attach`, `--auto`, `--share`, `--command`, `--dir` |
@@ -759,6 +763,10 @@ For every built-in argument variable:
 - A model may not be set through `--model`, `-m`, or Codex
   `-c model=` / `--config model=`. Use `MODEL_A`, `MODEL_B`, or `IMPL_MODEL`
   so actual calls and archived metadata agree.
+- Claude's tool allowlist may not be set through `--allowedTools` /
+  `--allowed-tools`. Use `TOOLS`, for the same reason. `TOOLS` is one value
+  for the whole run; `--disallowedTools` is not reserved and can narrow a
+  single slot.
 - Attached short forms such as `-mMODEL`, `-sVALUE`, and `-cVALUE` are parsed
   by the same reserved-option rules.
 - Custom argument variables are passed through instead, so custom model and

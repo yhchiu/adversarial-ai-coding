@@ -528,6 +528,53 @@ def test_validate_agents_rejects_claude_workflow_owned_args(value):
     ("key", "agent_env"),
     [
         ("AGENT_A_ARGS", {}),
+        # Slot rules follow the slot's own command, so B has to be claude
+        # for a claude reservation to apply to it.
+        ("AGENT_B_ARGS", {"AGENT_B": "claude"}),
+        ("IMPL_ARGS", {}),
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        "--allowedTools Bash",
+        "--allowedTools=Bash",
+        # Claude documents --allowed-tools as the same option.
+        "--allowed-tools Bash",
+        "--allowed-tools=Bash",
+    ],
+)
+def test_validate_agents_reserves_the_claude_tool_allowlist(key, agent_env, value):
+    """TOOLS owns the allowlist the way MODEL_* owns the model."""
+    s = make({**agent_env, key: value})
+
+    with pytest.raises(SettingsError) as exc_info:
+        validate_agents(s, which=lambda name: "C:/fake/" + name)
+
+    assert str(exc_info.value) == (
+        f"{key} cannot set the tool allowlist; use TOOLS instead"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # No AAC variable owns these, so they stay the user's to set.
+        "--disallowedTools Edit",
+        "--disallowed-tools Edit",
+        "--dangerously-skip-permissions",
+    ],
+)
+def test_validate_agents_allows_claude_permission_args_aac_does_not_own(value):
+    s = make({"AGENT_A_ARGS": value})
+
+    validate_agents(s, which=lambda name: "C:/fake/" + name)  # must not raise
+
+
+@pytest.mark.parametrize(
+    ("key", "agent_env"),
+    [
+        ("AGENT_A_ARGS", {}),
         ("AGENT_B_ARGS", {}),
         ("AGENT_A_ARGS", {"AGENT_A": "agy"}),
         ("AGENT_A_ARGS", {"AGENT_A": "opencode"}),

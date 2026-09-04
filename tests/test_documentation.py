@@ -238,6 +238,23 @@ def test_opencode_permission_and_reserved_args_are_documented_bilingually():
         assert "`--prompt`" not in row
 
 
+def test_tool_allowlist_belongs_to_the_tools_variable_bilingually():
+    """The reserved row and the TOOLS row have to agree.
+
+    Reserving the flag is only defensible while the docs point at the
+    variable that replaced it, so both halves are asserted together.
+    """
+    english = _read("README.md")
+    chinese = _read("README.zh-TW.md")
+    for readme in (english, chinese):
+        row = _reserved_row(readme, "Claude")
+        variable_row = _settings_row(readme, "TOOLS")
+        assert "`--allowedTools`" in row
+        assert "`--allowed-tools`" in row
+        assert "TOOLS" in row
+        assert "--allowedTools" in variable_row
+
+
 def test_agy_prompt_and_session_flags_are_documented_bilingually():
     """Every spelling that could drop the workflow prompt is named.
 

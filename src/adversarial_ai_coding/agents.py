@@ -238,12 +238,27 @@ def _model_conflict(variable: str) -> SettingsError:
     )
 
 
+def _tools_conflict(variable: str) -> SettingsError:
+    return SettingsError(
+        f"{variable} cannot set the tool allowlist; use TOOLS instead"
+    )
+
+
 def _validate_builtin_arg_tokens(
     variable: str, adapter: str, tokens: list[str]
 ) -> None:
     for index, token in enumerate(tokens):
         if _matches_option(token, "--model") or _matches_short_option(token, "-m"):
             raise _model_conflict(variable)
+
+        # TOOLS already owns this setting, the way MODEL_* owns the model.
+        # Reserving the flag is what keeps the argv and the archived
+        # metadata from reporting two different allowlists.
+        if adapter == "claude" and any(
+            _matches_option(token, option)
+            for option in {"--allowedTools", "--allowed-tools"}
+        ):
+            raise _tools_conflict(variable)
 
         if adapter == "claude" and (
             token in {"-c", "-r"}
@@ -266,6 +281,10 @@ def _validate_builtin_arg_tokens(
                 f"{variable} cannot contain workflow-owned argument:{token}"
             )
 
+        # Sandbox flags are reserved because `codex exec resume` has no
+        # --sandbox at all, so the workflow has to inject sandbox_mode
+        # through -c. A user value would leave fresh and resumed calls
+        # running under different sandboxes.
         if adapter == "codex":
             if (
                 _matches_option(token, "--json")
@@ -329,9 +348,13 @@ def _validate_builtin_arg_tokens(
                     f"{variable} cannot contain workflow-owned argument:{token}"
                 )
 
-        # Only flags `opencode run` really has. --command belongs here too:
-        # it replaces the message with a stored command, which would drop
-        # the workflow's own prompt.
+        # Only flags `opencode run` really has, and only ones the workflow
+        # passes itself. The reason is the parser, not danger: yargs
+        # collects a repeated option into an array instead of keeping the
+        # last value, so a second --format or --auto reaches opencode as
+        # ["json", "json"] rather than overriding anything. --command
+        # belongs here too: it replaces the message with a stored command,
+        # which would drop the workflow's own prompt.
         if adapter == "opencode" and (
             any(
                 _matches_option(token, option)

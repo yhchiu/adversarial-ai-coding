@@ -406,7 +406,7 @@ exec my-agent --session aac-reviewer "$@"
 | `AGENTS_TEMPLATE` | workflow checkout 內的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | workflow checkout 內的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `aac/docs/<時間戳>` | 規格與計畫的存放目錄 |
-| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | 完整 Claude Code `--allowedTools` 值;設定後會取代預設值。可直接複製的 Go、npm、Cargo 與 Python 範例見[疑難排解指南](docs/troubleshooting.zh-TW.md) |
+| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | 完整 Claude Code `--allowedTools` 值,而且是唯一入口:該旗標在所有參數變數裡都是保留字。設定後會取代預設值。可直接複製的 Go、npm、Cargo 與 Python 範例見[疑難排解指南](docs/troubleshooting.zh-TW.md) |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
 
@@ -543,7 +543,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 - 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Stage 邊界同樣會清除 active session。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
 - workflow 絕不退回 Codex `--last`、Agy `--continue` 或 OpenCode `-c`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude、Codex、OpenCode 的原始 JSONL 與 Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
 - 內建 agent 執行時都會即時串流輸出,長步驟很少變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude、Codex 與 OpenCode 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。Claude 與 Codex 在工具呼叫「開始」時就印,因此跑十分鐘的指令執行中就看得到;OpenCode 只在呼叫「結束」時才印(失敗會標 `(failed)`),所以慢的工具呼叫在回來之前是安靜的。Codex 把 shell 呼叫回報成完整的解譯器命令列,因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉,只顯示你真正在意的那段指令。
-- 各內建指令的保留旗標(session、輸出、sandbox 與 log 控制由 workflow 管理)整理於下方表格;所有內建參數變數的共同規則也一併列在表後。
+- 各內建指令的保留旗標(workflow 依賴、已有 AAC 變數擁有,或 CLI parser 不接受重複)整理於下方表格;所有內建參數變數的共同規則也一併列在表後。
 - 所有內建與自訂 agent 的額外參數在各平台都採 POSIX shell quoting;含空白的值必須引用。Windows 反斜線路徑必須引用或改用 `/`,未引用的反斜線會套用 POSIX escape 語意。
 - Agy conversation id 依目前 log 文字解析;若升版改格式,會安全退化成警告 + fresh session,不會猜測或接到其他 conversation。
 - 自訂 agent 沒有自動 session resume;A/B 使用完全相同的自訂 command 仍會拒絕。若底層 CLI 相同,請用兩個 wrapper command 名稱隔離 session/profile。
@@ -551,11 +551,11 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 - agy 的 `--print-timeout` 預設僅 5 分鐘,workflow 已調高(工作 60 分、審查 30 分)。
 - 各 CLI 旗標以本機 `--help` 為準(本 workflow 依 2026-07 版本撰寫)。
 
-各內建指令的保留旗標一覽:
+一支旗標被保留只有三種理由:workflow 依賴它(session 控制、結構化輸出契約、prompt 傳遞)、AAC 已經有變數擁有那個設定,或該 CLI 的 parser 不接受同一支旗標出現兩次。「危險」不是理由:保留名單沒涵蓋到的權限旗標由你決定,run 也會回報它們最後解析成什麼。各內建指令的保留旗標一覽:
 
 | 參數變數 | 不得包含 |
 |---|---|
-| Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約 |
+| Claude 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`-r` / `--resume`、`--session-id`、`--fork-session`、`--no-session-persistence`、`--from-pr`;也不得用 `--output-format`、`--verbose` 或 `--json-schema` 覆寫結構化輸出契約;也不得用 `--allowedTools` / `--allowed-tools` 設定工具白名單,那是 `TOOLS` 的職責 |
 | Codex 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--json`、`resume`、`--sandbox` / `-s`、`--dangerously-bypass-approvals-and-sandbox`、`--yolo`、`--ephemeral`;也不得透過 `-c` / `--config` 覆寫 `sandbox_mode` |
 | Agy 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `-c` / `--continue`、`--conversation`、`--log-file`;也不得用 `-p` / `--print`、`--prompt`、`-i` / `--prompt-interactive` 或 `--print-timeout` 取代 prompt 或其傳遞方式,或用 `--output-format`、`--json-schema` 覆寫輸出契約。agy 使用 Go flag 套件,每個保留名稱單破折號與雙破折號都會被擋 |
 | OpenCode 的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS` | `--format`、`--session` / `-s`、`--continue` / `-c`、`--fork`、`--attach`、`--auto`、`--share`、`--command`(會用既存 command 取代 workflow 的 prompt)、`--dir` |
@@ -563,6 +563,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 所有內建參數變數的共同規則:
 
 - 不得用 `--model`、`-m` 或 Codex 的 `-c model=` / `--config model=` 指定模型;必須使用 `MODEL_A`、`MODEL_B` 或 `IMPL_MODEL`,確保實際呼叫與 archive metadata 一致。
+- 不得用 `--allowedTools` / `--allowed-tools` 設定 Claude 的工具白名單,理由同上;請用 `TOOLS`。`TOOLS` 是整個 run 共用的單一值;`--disallowedTools` 不在保留名單內,可以用來收窄單一 slot。
 - `-mMODEL`、`-sVALUE`、`-cVALUE` 等 attached short forms 也依相同的保留參數規則解析。
 - Custom args 則原樣傳入,自訂 agent 的模型或 session 旗標可以放在對應的 `AGENT_A_ARGS`、`AGENT_B_ARGS` 或 `IMPL_ARGS`。
 
