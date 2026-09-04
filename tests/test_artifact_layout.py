@@ -14,12 +14,14 @@ gates, and the human gate still shows a spec that later vanishes from the
 branch. These tests fail loudly instead.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from adversarial_ai_coding.config import ARTIFACT_ROOT, DOCS_ROOT, WORK_DIR
+from adversarial_ai_coding.runindex import MANIFEST_NAME
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -82,6 +84,28 @@ def test_work_dir_is_ignored_and_docs_are_committed(basic_run):
     # A clean tree proves nothing under the work dir is merely untracked:
     # git add -A would otherwise sweep it into the next commit.
     assert git(new_repo, "status", "--porcelain").stdout == ""
+
+
+@pytest.mark.slow
+def test_run_manifest_reaches_the_branch(basic_run):
+    """run.json is only useful if it survives into a clone.
+
+    It is written before the first stage precisely so the commit-spec
+    stage sweeps it in with git add -A. Nothing else pins that ordering,
+    and getting it wrong is silent: the run still passes, the file still
+    sits in the working tree, and it vanishes the moment someone clones.
+    """
+    new_repo = basic_run["repo"]
+    committed = tracked(new_repo, DOCS_ROOT)
+    manifests = [name for name in committed if name.endswith(f"/{MANIFEST_NAME}")]
+    assert len(manifests) == 1
+
+    payload = json.loads(
+        git(new_repo, "show", f"HEAD:{manifests[0]}").stdout
+    )
+    assert payload["schema"] == 1
+    assert payload["run_id"] == Path(manifests[0]).parent.name
+    assert payload["request"]
 
 
 @pytest.mark.slow

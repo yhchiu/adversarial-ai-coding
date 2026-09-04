@@ -41,6 +41,7 @@ from .prompts import (
     default_prompts_dir,
     write_agents_section,
 )
+from .runindex import write_run_manifest
 from .runstate import (
     RunState,
     RunStateError,
@@ -387,12 +388,22 @@ def main(
             ask=bind_ask(_default_ask, lang),
         )
         ctx.spec_dir.mkdir(parents=True, exist_ok=True)
+        branch = current_branch(workspace)
+        # Before the first stage, so the commit-spec stage sweeps it into the
+        # branch with git add -A semantics. A resumed run keeps the original.
+        write_run_manifest(
+            ctx.spec_dir,
+            run_id=run_id,
+            request=task,
+            branch=branch,
+            settings=settings,
+        )
 
         write_snapshot(
             state.state_dir,
             snapshot_values(
                 settings,
-                branch=current_branch(workspace),
+                branch=branch,
                 gate_cmd=gate_cmd,
                 build_gate_cmd=build_gate_cmd,
                 phase_gate_cmd=phase_gate_cmd,
