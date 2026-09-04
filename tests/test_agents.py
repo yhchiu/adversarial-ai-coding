@@ -1396,6 +1396,77 @@ def test_opencode_a_and_b_keep_slot_args_in_fresh_and_resume_argv(monkeypatch, t
     assert b_resume[-3:-1] == ["--session", "ses_b_1"]
 
 
+# The workflow keeps these after the slot arguments on purpose: the log
+# path and the session id are its own. Both names are reserved, so a user
+# value can never reach them from an argument variable.
+_TRAILING_WORKFLOW_FLAGS = ("--log-file", "--session")
+
+
+@pytest.mark.parametrize("command", ["claude", "codex", "agy", "opencode"])
+@pytest.mark.parametrize("role", ["worker", "reviewer"])
+def test_slot_args_outrank_workflow_flags_on_every_adapter_and_role(
+    monkeypatch, tmp_path, command, role
+):
+    """Slot arguments are the last word, whichever adapter and role.
+
+    The reserved list decides what a user may set; this decides that what
+    the list lets through actually takes effect. The claude reviewer used
+    to place slot arguments first, so its own flags won and one variable
+    meant opposite things in the two roles.
+    """
+    calls = []
+
+    def claude_run(argv, io, ref):
+        calls.append(argv)
+        return 0, "{}", None
+
+    def codex_run(argv, io, ref):
+        calls.append(argv)
+        return 0, "{}", "", ""
+
+    def streaming_run(argv, io, ref):
+        calls.append(argv)
+        for token in argv:
+            if str(token).endswith(".log"):
+                Path(token).write_text("no conversation", encoding="utf-8")
+        return 0, "ok"
+
+    def opencode_run(argv, io, ref):
+        calls.append(argv)
+        return 0, "ok", "", "", "0.01"
+
+    monkeypatch.setattr(agents, "_run_claude_stream", claude_run)
+    monkeypatch.setattr(agents, "_run_codex_json", codex_run)
+    monkeypatch.setattr(agents, "_run_streaming", streaming_run)
+    monkeypatch.setattr(agents, "_run_opencode_json", opencode_run)
+    monkeypatch.setattr(agents.shutil, "which", lambda name: name)
+    settings = make(
+        {
+            "AGENT_A": command,
+            "AGENT_B": "codex" if command == "claude" else "claude",
+            "AGENT_A_ARGS": "--slot-marker",
+        }
+    )
+    io, _ = make_io(tmp_path)
+    run = agents.run_worker if role == "worker" else agents.run_reviewer
+
+    run(AgentRef("A", command), "PROMPT", settings, AgentSession(), io)
+
+    argv = calls[-1]
+    tail = argv[argv.index("--slot-marker") + 1 :]
+    position = 0
+    while position < len(tail):
+        token = tail[position]
+        if token in _TRAILING_WORKFLOW_FLAGS:
+            position += 2
+            continue
+        assert token == "PROMPT", (
+            f"{command} {role}: {token!r} is placed after the slot arguments "
+            "and would win a collision with them"
+        )
+        position += 1
+
+
 def test_claude_implementation_worker_orders_fresh_and_resume_argv(
     monkeypatch, tmp_path
 ):

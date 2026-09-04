@@ -933,9 +933,10 @@ def _reviewer_claude(
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
-    argv = [_resolve_argv0("claude"), "-p", prompt]
-    argv += _claude_common_args(ref, settings)
-    argv += [
+    argv = [
+        _resolve_argv0("claude"),
+        "-p",
+        prompt,
         "--output-format",
         "stream-json",
         "--verbose",
@@ -946,6 +947,10 @@ def _reviewer_claude(
         "--json-schema",
         VERDICT_SCHEMA,
     ]
+    # Slot arguments come last here for the same reason they do in the
+    # worker: whatever the reserved list still lets through is the user's
+    # to decide, and claude reads the last value of a repeated option.
+    argv += _claude_common_args(ref, settings)
     rc, out, reset_epoch = _run_claude_stream(argv, io, ref)
     _write_agent_out(io, out)
     if rc != 0:
