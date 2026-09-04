@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from . import __version__
-from .agents import AgentSession, validate_agents
+from .agents import (
+    AgentSession,
+    agent_model,
+    agent_ref,
+    resolve_model_args,
+    validate_agents,
+)
 from .archive import establish_run_archive
 from .config import WORK_DIR, Settings, SettingsError, WorkflowAbort
 from .dual_spec import dual_spec_preflight
@@ -103,6 +109,25 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
         return "print-agents", ""
     task = positionals[0] if positionals else ""
     return "run", task
+
+
+def _slot_summary(slot: str, settings: Settings) -> str:
+    """One slot's command with whatever it actually resolved to.
+
+    The startup line already names the commands; the model and arguments
+    are what a reader cannot otherwise check without opening
+    run-metadata.json after the fact. Empty parts are dropped so the
+    common case stays as short as it was.
+    """
+    ref = agent_ref(slot, settings)
+    model = agent_model(ref, settings)
+    args = resolve_model_args(ref, settings)
+    detail = "  ".join(
+        part
+        for part in (f"model={model}" if model else "", f"args={args}" if args else "")
+        if part
+    )
+    return f"{ref.name} [{detail}]" if detail else ref.name
 
 
 def _absolute_import_path(raw: str, startup_dir: Path) -> str:
@@ -254,8 +279,8 @@ def main(
             "Workflow settings:A={agent_a}  B={agent_b}  "
             "DUAL_SPEC={dual_spec}  MAX_ROUNDS={max_rounds}  "
             "SPEC_DIR={spec_dir}  PHASES={phases}",
-            agent_a=settings.agent_a,
-            agent_b=settings.agent_b,
+            agent_a=_slot_summary("A", settings),
+            agent_b=_slot_summary("B", settings),
             dual_spec="1" if settings.dual_spec else "0",
             max_rounds=settings.max_rounds,
             spec_dir=settings.spec_dir,

@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from adversarial_ai_coding import __version__, cli
+from adversarial_ai_coding.config import Settings
 from adversarial_ai_coding.prompts import AGENTS_MARKER
 
 
@@ -458,3 +459,38 @@ def test_resume_task_conflict_fails(new_repo, monkeypatch, capsys):
     )
     assert rc == 1
     assert "request snapshot" in capsys.readouterr().err
+
+
+def _summary(env):
+    settings = Settings.from_env({"AGENT_B": "codex", **env}, "run-id")
+    return cli._slot_summary("A", settings)
+
+
+def test_slot_summary_stays_bare_when_nothing_is_overridden():
+    assert _summary({}) == "claude"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"MODEL_A": "opus"}, "claude [model=opus]"),
+        ({"AGENT_A_ARGS": "--effort=high"}, "claude [args=--effort=high]"),
+        (
+            {"MODEL_A": "opus", "AGENT_A_ARGS": "--effort=high"},
+            "claude [model=opus  args=--effort=high]",
+        ),
+        # A custom agent has no model of its own; only its arguments show.
+        (
+            {"AGENT_A": "my-wrapper", "AGENT_A_ARGS": "--model custom"},
+            "my-wrapper [args=--model custom]",
+        ),
+    ],
+)
+def test_slot_summary_reports_what_the_slot_resolved_to(env, expected):
+    """The startup line has to agree with what the call will use.
+
+    Permission flags a reserved name does not cover take effect silently
+    otherwise: the only other record is run-metadata.json, which is read
+    after the run rather than while it starts.
+    """
+    assert _summary(env) == expected
