@@ -1,5 +1,5 @@
 {
-  "Usage:adversarial-ai-coding [options] \"request description\"\n      adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request\n      adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit\n      adversarial-ai-coding -h, --help      # Show this help and exit\n      adversarial-ai-coding -V, -v, --version  # Print version and exit": "Usage:adversarial-ai-coding [options] \"request description\"\n      adversarial-ai-coding [options] request.md      # 若参数是文件，以其内容作为 request\n      adversarial-ai-coding print-agents    # 打印 AGENTS.md 规则模板后结束\n      adversarial-ai-coding -h, --help      # 显示此说明后结束\n      adversarial-ai-coding -V, -v, --version  # 打印版本后结束",
+  "Usage:adversarial-ai-coding [options] \"request description\"\n      adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request\n      adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit\n      adversarial-ai-coding list-runs       # List the runs recorded under aac/docs/ and exit\n      adversarial-ai-coding -h, --help      # Show this help and exit\n      adversarial-ai-coding -V, -v, --version  # Print version and exit": "Usage:adversarial-ai-coding [options] \"request description\"\n      adversarial-ai-coding [options] request.md      # 若参数是文件，以其内容作为 request\n      adversarial-ai-coding print-agents    # 打印 AGENTS.md 规则模板后结束\n      adversarial-ai-coding list-runs       # 列出 aac/docs/ 下记录的每一次执行后结束\n      adversarial-ai-coding -h, --help      # 显示此说明后结束\n      adversarial-ai-coding -V, -v, --version  # 打印版本后结束",
   "!! unrecognized option:{option}": "!! 无法识别的选项:{option}",
   "To resume this run:\n  cd {workspace} && RESUME_RUN={run_id} adversarial-ai-coding": "若要续跑这次 run:\n  cd {workspace} && RESUME_RUN={run_id} adversarial-ai-coding",
   "To resume this run:\n  RESUME_RUN={run_id} adversarial-ai-coding": "若要续跑这次 run:\n  RESUME_RUN={run_id} adversarial-ai-coding",
@@ -108,5 +108,6 @@
   "(warning: {name} is unreadable ({exc}); treating it as no suggestion)": "(warning: {name} 无法读取（{exc}）；视为没有 suggestion)",
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} 不是合法 JSON（{exc}）；视为没有 suggestion)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} 没有 boolean \"phased\" 字段；视为没有 suggestion)",
-  "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} 没有 string \"reason\"；保留建议但不带 reason)"
+  "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} 没有 string \"reason\"；保留建议但不带 reason)",
+  "No runs recorded under {docs_root}/. A run writes its manifest there when it starts, unless SPEC_DIR points somewhere else.": "{docs_root}/ 下没有任何执行记录。每次执行启动时会在那里写下 manifest，除非 SPEC_DIR 指向别处。"
 }

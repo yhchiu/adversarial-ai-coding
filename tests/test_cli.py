@@ -2,6 +2,7 @@
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 
@@ -158,6 +159,71 @@ def test_parse_argv_classifies_flags_and_operands():
     assert cli._parse_argv(["--", "print-agents"]) == ("run", "print-agents")
     assert cli._parse_argv(["--nope"]) == ("error", "--nope")
     assert cli._parse_argv(["-"]) == ("run", "-")
+    assert cli._parse_argv(["list-runs"]) == ("list-runs", "")
+    # A subcommand is a bare first positional only, so "--" still hands the
+    # word through as a request and no run is ever unrunnable by its name.
+    assert cli._parse_argv(["--", "list-runs"]) == ("run", "list-runs")
+    assert cli._parse_argv(["task", "list-runs"]) == ("run", "task")
+
+
+def _record_run(repo, run_id, request, completed=False):
+    """One run's committed manifest, plus the ignored state it is judged by."""
+    from adversarial_ai_coding.runindex import write_run_manifest
+
+    write_run_manifest(
+        repo / "aac" / "docs" / run_id,
+        run_id=run_id,
+        request=request,
+        branch=f"aac/{run_id}",
+        settings=Settings.from_env({}, run_id=run_id),
+    )
+    state_dir = repo / "aac" / ".run" / "state" / run_id
+    state_dir.mkdir(parents=True)
+    if completed:
+        (state_dir / "completed").write_text("", encoding="utf-8")
+
+
+def test_list_runs_prints_a_row_per_run_newest_first(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    _record_run(tmp_path, "20260901-000000", "Port the archive module", True)
+    _record_run(tmp_path, "20260904-101500", "Add slot-specific agent arguments")
+
+    assert cli.main(["list-runs"], {}, stdin_isatty=False) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[0].split() == ["RUN_ID", "STATUS", "REQUEST"]
+    assert lines[1].startswith("20260904-101500  unfinished")
+    assert lines[1].endswith("Add slot-specific agent arguments")
+    assert lines[2].startswith("20260901-000000  completed")
+    assert len(lines) == 3
+
+
+def test_list_runs_says_so_on_stderr_when_there_is_nothing(
+    tmp_path, monkeypatch, capsys
+):
+    """The note must not reach stdout: a listing is meant to pipe into grep."""
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["list-runs"], {}, stdin_isatty=False) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "aac/docs/" in captured.err
+
+
+def test_list_runs_needs_no_git_repository_or_request(tmp_path, monkeypatch, capsys):
+    """It has to work in a fresh clone, and without the usual startup checks."""
+    monkeypatch.chdir(tmp_path)
+    _record_run(tmp_path, "20260904-101500", "Add a feature")
+    # Only the committed half survives a clone; drop the rest.
+    shutil.rmtree(tmp_path / "aac" / ".run")
+
+    assert cli.main(["list-runs"], {}, stdin_isatty=False) == 0
+    assert "20260904-101500  unknown  Add a feature" in capsys.readouterr().out
+
+
+def test_list_runs_follows_aac_lang(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["list-runs"], {"AAC_LANG": "zh-TW"}, stdin_isatty=False) == 0
+    assert "沒有任何執行記錄" in capsys.readouterr().err
 
 
 def test_print_agents(capsys):

@@ -23,7 +23,7 @@ from .agents import (
     validate_agents,
 )
 from .archive import establish_run_archive
-from .config import WORK_DIR, Settings, SettingsError, WorkflowAbort
+from .config import DOCS_ROOT, WORK_DIR, Settings, SettingsError, WorkflowAbort
 from .dual_spec import dual_spec_preflight
 from .gates import detect_build_gate, detect_gate
 from .gitops import (
@@ -41,7 +41,7 @@ from .prompts import (
     default_prompts_dir,
     write_agents_section,
 )
-from .runindex import write_run_manifest
+from .runindex import format_run_index, load_run_entries, write_run_manifest
 from .runstate import (
     RunState,
     RunStateError,
@@ -62,17 +62,21 @@ from .workflow import (
 USAGE = """Usage:adversarial-ai-coding [options] "request description"
       adversarial-ai-coding [options] request.md      # If the argument is a file, use its contents as the request
       adversarial-ai-coding print-agents    # Print the AGENTS.md rule template and exit
+      adversarial-ai-coding list-runs       # List the runs recorded under aac/docs/ and exit
       adversarial-ai-coding -h, --help      # Show this help and exit
       adversarial-ai-coding -V, -v, --version  # Print version and exit"""
 
 _HELP_FLAGS = frozenset({"-h", "--help"})
 _VERSION_FLAGS = frozenset({"-V", "-v", "--version"})
+# Recognised only as a bare first positional. "--" ends flag parsing and so
+# also ends this, which is how a request may literally be one of these words.
+_SUBCOMMANDS = frozenset({"print-agents", "list-runs"})
 
 
 def _parse_argv(argv: list[str]) -> tuple[str, str]:
     """Classify argv into (action, payload) before any work starts.
 
-    Actions: help, version, print-agents, run, error.
+    Actions: help, version, print-agents, list-runs, run, error.
     A bare "--" ends flag parsing so a request may start with a dash.
     """
     help_requested = False
@@ -106,8 +110,8 @@ def _parse_argv(argv: list[str]) -> tuple[str, str]:
         return "version", ""
     if unknown:
         return "error", unknown
-    if not ended and positionals and positionals[0] == "print-agents":
-        return "print-agents", ""
+    if not ended and positionals and positionals[0] in _SUBCOMMANDS:
+        return positionals[0], ""
     task = positionals[0] if positionals else ""
     return "run", task
 
@@ -129,6 +133,27 @@ def _slot_summary(slot: str, settings: Settings) -> str:
         if part
     )
     return f"{ref.name} [{detail}]" if detail else ref.name
+
+
+def _list_runs(presenter: Presenter, cwd: Path) -> int:
+    """One line per run directory under aac/docs/, newest first.
+
+    Read-only and git-free on purpose: it has to work in a fresh clone,
+    where aac/.run/ was never committed and the run status is simply not
+    knowable. Rows go to stdout so they pipe into grep; the empty-listing
+    note goes to stderr so it does not.
+    """
+
+    entries = load_run_entries(cwd / DOCS_ROOT, cwd / WORK_DIR / "state")
+    if not entries:
+        presenter.err(
+            "No runs recorded under {docs_root}/. A run writes its manifest "
+            "there when it starts, unless SPEC_DIR points somewhere else.",
+            docs_root=DOCS_ROOT,
+        )
+        return 0
+    print(format_run_index(entries), end="")
+    return 0
 
 
 def _absolute_import_path(raw: str, startup_dir: Path) -> str:
@@ -198,6 +223,8 @@ def main(
         presenter.err("!! unrecognized option:{option}", option=payload)
         presenter.err(USAGE)
         return 1
+    if action == "list-runs":
+        return _list_runs(presenter, startup_dir)
     if action == "print-agents":
         try:
             print(write_agents_section(default_agents_template(env)), end="")
