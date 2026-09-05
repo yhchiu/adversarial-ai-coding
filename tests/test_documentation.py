@@ -20,6 +20,7 @@ row, one adapter cell, or one section, so an assertion cannot be
 satisfied - or broken - by unrelated text elsewhere in the file.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -50,6 +51,33 @@ def _clause_about(row: str, topic: str) -> str:
     clauses = [part for part in re.split(r"[;。.]", row) if topic in part]
     assert clauses, f"no clause about {topic!r} in: {row}"
     return " ".join(clauses)
+
+
+def _ask_prompts() -> list[str]:
+    """Every prompt the workflow puts to a human, read from the source.
+
+    A prompt quoted in the README is quoted so a reader recognizes it on
+    their terminal, which only holds while the two say the same thing.
+    Reading the literal out of the call that asks it is what makes a
+    reworded prompt fail here instead of going unnoticed.
+    """
+    prompts: list[str] = []
+    for name in ("workflow.py", "dual_spec.py"):
+        source = (ROOT / "src" / "adversarial_ai_coding" / name).read_text(
+            encoding="utf-8"
+        )
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call) or len(node.args) < 2:
+                continue
+            if getattr(node.func, "id", None) != "emit":
+                continue
+            sink, prompt = node.args[0], node.args[1]
+            if not (isinstance(sink, ast.Attribute) and sink.attr == "ask"):
+                continue
+            if isinstance(prompt, ast.Constant) and isinstance(prompt.value, str):
+                prompts.append(prompt.value)
+    assert prompts, "no emit(ctx.ask, ...) prompts found in the workflow source"
+    return prompts
 
 
 def _section(text: str, heading: str) -> str:
@@ -607,9 +635,13 @@ def test_agents_drift_note_is_documented_bilingually():
 
 
 def test_phased_suggestion_is_documented_bilingually():
+    # The offer is quoted in both READMEs, so take the wording from the
+    # call that asks it rather than repeating the literal here.
+    offers = [prompt for prompt in _ask_prompts() if "Phased ATDD" in prompt]
+    assert len(offers) == 1, offers
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "phased-suggestion.json" in readme
-        assert "Enable Phased ATDD for this run? [y/N]:" in readme
+        assert offers[0] in readme
         phases_rows = [
             line for line in readme.splitlines() if line.startswith("| `PHASES` |")
         ]
@@ -696,11 +728,20 @@ def test_spec_title_flag_is_documented_as_opt_in_bilingually():
     C4 lists what spec.md has to contain and a title is not on the list, so
     a reader who takes --spec-title for a guarantee has been misled by us.
     """
+    # The claim is about the prompts, so check the prompts. A spec-writing
+    # prompt that starts asking for a title is exactly when the README
+    # sentence turns into a false promise.
+    for name in (
+        "write-spec.md",
+        "dual-spec-write-candidate.md",
+        "dual-spec-merge-final.md",
+    ):
+        prompt = _read(f"resources/prompts/{name}").lower()
+        assert "title" not in prompt, f"{name} now asks for a title"
+        assert "heading" not in prompt, f"{name} now asks for a heading"
     # Both files wrap at a fixed width, so match on flowed text.
-    english = " ".join(_read("README.md").split())
-    assert "no prompt asks an agent for a heading" in english
-    chinese = " ".join(_read("README.zh-TW.md").split())
-    assert "沒有任何 prompt 要求 agent 寫標題" in chinese
+    assert "no prompt" in " ".join(_read("README.md").split())
+    assert "沒有任何 prompt" in " ".join(_read("README.zh-TW.md").split())
     for name in ("docs/artifact-contract.md", "docs/artifact-contract.zh-TW.md"):
         contract = _read(name)
         heading = [line for line in contract.splitlines() if line.startswith("### C4")]
