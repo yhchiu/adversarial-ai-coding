@@ -564,6 +564,26 @@ def test_phased_mode_is_documented_bilingually():
     assert "regression-guard" in _read("resources/AGENTS.template.md")
 
 
+def test_detected_gate_commands_are_documented_bilingually():
+    """Every command detection can pick has to appear in the settings row.
+
+    A gate the workflow runs on its own, that the docs never name, reads
+    as the workflow running something unaccounted for.
+    """
+    for name in ("README.md", "README.zh-TW.md"):
+        row = _settings_row(_read(name), "GATE_CMD")
+        for command in (
+            "go test ./...",
+            "npm test",
+            "cargo test",
+            "uv run pytest",
+            "poetry run pytest",
+            "python -m pytest",
+        ):
+            assert command in row, f"{name}: GATE_CMD row must name {command}"
+        assert ".venv" in row
+
+
 def test_import_mode_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "IMPORT_SPEC" in readme

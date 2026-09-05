@@ -479,8 +479,8 @@ exec my-agent --session aac-reviewer "$@"
 | `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。未設定 `PHASES` 且未設定 `IMPORT_PLAN` 時,spec reviewer 也會判斷是否適合分階段模式,spec human gate 可能提議啟用(詳見[分階段 ATDD 模式](#分階段-atdd-模式phased-atdd))。 |
 | `PHASE_GATE_CMD` | 空 | 每個 phase 的 red check 與 phase gate 命令。空值時改用 `GATE_CMD`。 |
 | `PHASE_REVIEW` | `0` | `1` 時每個 phase 結尾由 reviewer 審該 phase 的 diff(含 blocker 迴圈)。預設關閉,因為 phase gate 本身就是 reviewer 寫的受保護測試在把關。 |
-| `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;偵測不到則停用並警告 |
-| `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈) |
+| `GATE_CMD` | 自動偵測 | 完整品質關卡。go:`go build ./... && go vet ./... && go test ./...`;npm(有 test script):`npm test`;cargo:`cargo test`;Python(有寫明用 pytest 且有測試檔):交給管環境的工具跑——有 `uv.lock` 用 `uv run pytest`,有 `poetry.lock` 用 `poetry run pytest`,有專案自己的 `.venv` 就用它的直譯器,否則 `python -m pytest`(或 `python3`,看這台機器有哪個);偵測不到則停用並警告 |
+| `BUILD_GATE_CMD` | 自動偵測 | 逐任務的輕量關卡(只驗編譯,容忍驗收測試紅燈)。Python 沒有值得逐任務把關的編譯步驟,因此不偵測,除非你自己設 |
 | `AUTO_BRANCH` | `1` | 自動建立 `aac/<時間戳>` branch |
 | `USE_WORKTREE` | `0` | `1` = 在獨立 git worktree 執行(隔離性比 branch 好)。worktree 建在 repo 的**兄弟目錄** `<repo>-aac-<時間戳>`,不會自動清除:跑完請自行 `git worktree remove` |
 | `OPEN_PR` | `0` | `1` = 結尾自動 push 並 `gh pr create`(需 gh 與 origin);預設只印指令 |
