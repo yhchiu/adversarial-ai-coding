@@ -10,8 +10,10 @@ One AI agent is the worker, and a second AI agent is the reviewer that reviews
 the work and writes adversarial acceptance tests.
 
 The workflow is designed around spec-driven development (SDD), adversarial
-test-driven development with protected acceptance tests, deterministic quality
-gates, small commits, and human review before costly implementation starts.
+test-driven development (TDD) with protected acceptance tests, acceptance
+test-driven development (ATDD) phase by phase on big jobs, deterministic
+quality gates, small commits, and human review before costly implementation
+starts.
 
 ## How It Works
 
@@ -459,7 +461,8 @@ When a spec is imported with review disabled (`IMPORT_SPEC` + `IMPORT_REVIEW=0`)
 ## Phased ATDD Mode
 
 This mode is for big requests — the ones that are really several features
-handed over as one job.
+handed over as one job. It runs acceptance test-driven development (ATDD)
+one phase at a time instead of once for the whole job.
 
 In the default pipeline the reviewer writes every acceptance test up
 front, and the implementer then works through the whole task list with
