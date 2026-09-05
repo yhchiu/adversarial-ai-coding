@@ -65,7 +65,7 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 - **[分階段 ATDD](#分階段-atdd-模式phased-atdd)**(`PHASES=1`):給大任務用——那種一次交辦、其實包了好幾個功能的請求。Plan 拆成數個 phase,每個 phase 動工前才寫它自己的測試——reviewer 寫該 phase 的測試、workflow 驗證測試起始為紅、實作該 phase,phase gate 保證已完成的 phase 持續全綠。
 - **[雙 spec](#雙-spec-模式)**(`DUAL_SPEC=1`):取代訂規格階段——A/B 各寫獨立候選 spec、交叉審查,由人選出 base(或合併)。選中的 slot 成為 owner,另一方成為 reviewer;slot 名稱仍是 A 與 B。
 
-為什麼這樣設計(確定性關卡、對抗式測試、分級裁決……)見下一節[核心設計](#核心設計為什麼這樣做);逐 stage 的完整說明(完整流程圖、審查迴圈機制、關卡指令與各 stage 細節)見 [`docs/how-it-works.zh-TW.md`](docs/how-it-works.zh-TW.md)。
+為什麼這樣設計(確定性關卡、對抗式測試、分級裁決……)見下一節[核心設計](#核心設計為什麼這樣做);逐 stage 的完整說明(完整流程圖、審查迴圈機制、關卡指令與各 stage 細節)見 [`docs/how-it-works.zh-TW.md`](docs/how-it-works.zh-TW.md)。所有關卡集中一處——各跑什麼、怎麼偵測、沒設定會怎樣、偵測不到的專案怎麼自己設——見 [`docs/gates.zh-TW.md`](docs/gates.zh-TW.md)。
 
 ## 核心設計(為什麼這樣做)
 

@@ -46,7 +46,7 @@ flowchart LR
     verdict -. "MAX_ROUNDS 用盡" .-> halt(["中止 + 通知人工"])
 ```
 
-確定性關卡是由 workflow 親自執行的 shell 指令,AI 的「測試通過」回報不被採信。共兩個:`GATE_CMD` 是完整關卡(build、vet 與全部測試,包含驗收測試);`BUILD_GATE_CMD` 是逐任務的輕量關卡(只驗編譯)。未設定關卡指令的 stage 會跳過該步。
+確定性關卡是由 workflow 親自執行的 shell 指令,AI 的「測試通過」回報不被採信。這裡有兩個:`GATE_CMD` 是完整關卡(build、vet 與全部測試,包含驗收測試);`BUILD_GATE_CMD` 是逐任務的輕量關卡(只驗編譯)。未設定關卡指令的 stage 會跳過該步。分階段 ATDD 另有第三個 `PHASE_GATE_CMD`。各關卡如何偵測、沒有設定會怎樣、失敗後如何修復,見 [`gates.zh-TW.md`](gates.zh-TW.md)。
 
 各 stage 說明:
 

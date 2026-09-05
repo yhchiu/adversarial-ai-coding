@@ -106,7 +106,10 @@ Two optional modes reshape parts of the pipeline:
 
 For the stage-by-stage walkthrough — the full pipeline diagram, review-loop
 mechanics, gate commands, and per-stage notes — see
-[`docs/how-it-works.md`](docs/how-it-works.md).
+[`docs/how-it-works.md`](docs/how-it-works.md). Every gate in one place —
+what each one runs, how it is detected, what happens when it is missing, and
+how to set one for a project detection does not know — is
+[`docs/gates.md`](docs/gates.md).
 
 ## Core Design (Why It Works)
 

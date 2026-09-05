@@ -67,10 +67,12 @@ flowchart LR
 ```
 
 A deterministic gate is a shell command the workflow runs itself instead of
-trusting the AI's "tests pass" claims. There are two: `GATE_CMD` is the full
-gate (build, vet, and every test, including the acceptance tests), and
+trusting the AI's "tests pass" claims. There are two here: `GATE_CMD` is the
+full gate (build, vet, and every test, including the acceptance tests), and
 `BUILD_GATE_CMD` is the lightweight per-task gate (compile only). Stages
-without a configured gate command skip that step.
+without a configured gate command skip that step. Phased ATDD adds a third,
+`PHASE_GATE_CMD`. For how each one is detected, what an empty value costs,
+and how a failure is repaired, see [`gates.md`](gates.md).
 
 Stage notes:
 

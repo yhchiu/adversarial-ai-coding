@@ -576,6 +576,75 @@ def test_phased_mode_is_documented_bilingually():
     assert "regression-guard" in _read("resources/AGENTS.template.md")
 
 
+def test_gate_reference_covers_every_gate_bilingually():
+    """One page a reader can be sent to for anything gate-shaped.
+
+    The three command variables, the detection markers and the commands
+    they produce, the bounds on every loop, and the two gate families that
+    are not shell commands. Read from the code where the code owns the
+    value, so a renamed variable or a changed rule set fails here.
+    """
+    guides = {
+        "docs/gates.md": ("README.md", "docs/how-it-works.md"),
+        "docs/gates.zh-TW.md": ("README.zh-TW.md", "docs/how-it-works.zh-TW.md"),
+    }
+    for name, linking in guides.items():
+        guide = _read(name)
+        for variable in (
+            "GATE_CMD",
+            "BUILD_GATE_CMD",
+            "PHASE_GATE_CMD",
+            "MAX_ROUNDS",
+            "HUMAN_GATE",
+            "HUMAN_GATE_PLAN",
+            "PHASES",
+            "TOOLS",
+            "RESUME_RUN",
+        ):
+            assert variable in guide, f"{name}: must document {variable}"
+        # Every marker detection reads, and every command it can produce.
+        for marker in (
+            "go.mod",
+            "package.json",
+            "Cargo.toml",
+            "pyproject.toml",
+            "uv.lock",
+            "poetry.lock",
+            ".venv",
+        ):
+            assert marker in guide, f"{name}: must name the {marker} marker"
+        for command in (
+            "go build ./... && go vet ./... && go test ./...",
+            "go build ./...",
+            "npm test",
+            "cargo test",
+            "cargo build",
+            "uv run pytest",
+            "poetry run pytest",
+            "python -m pytest",
+            "python3 -m pytest",
+        ):
+            assert command in guide, f"{name}: must name {command}"
+        # The allowlist detection shares this page with the gates.
+        for rules in (VCS_TOOLS, GO_TOOLS, NPM_TOOLS, CARGO_TOOLS, PYTEST_TOOLS):
+            assert rules in guide, f"{name}: must name {rules}"
+        # The gates that are not shell commands.
+        for control in (
+            "protected-tests.txt",
+            "protected-base.sha",
+            "verdict.json",
+            "Acceptance:",
+            "regression-guard",
+        ):
+            assert control in guide, f"{name}: must cover {control}"
+        # The startup warning is what a reader arrives with.
+        assert "no quality gate command detected" in guide
+        for document in linking:
+            assert name.split("/")[-1] in _read(document), (
+                f"{document} must link to {name}"
+            )
+
+
 def test_detected_gate_commands_are_documented_bilingually():
     """Every command detection can pick has to appear in the settings row.
 
