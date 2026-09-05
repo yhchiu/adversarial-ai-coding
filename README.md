@@ -47,10 +47,10 @@ The default pipeline:
 
 ```text
 Spec (A writes, B reviews)
-human gate (if PHASES is unset and no plan is imported, may offer Phased ATDD; see below)
+human gate
 commit
   ↓
-Plan into a checkbox task list (- [ ], A writes, B reviews)
+Plan into a checkbox task list (A writes, B reviews)
 (HUMAN_GATE_PLAN=1) human gate
 commit
   ↓
@@ -59,7 +59,7 @@ A reviews
 commit acceptance tests
 record + arm the protected-test guard (whole list at once; re-checked after every later producing call)
   ↓
-For each task (- [ ] in plan.md):
+For each task in plan.md:
     A implements (IMPL_AGENT swaps the implementer)
     build gate
     commit
@@ -99,7 +99,7 @@ Two optional modes reshape parts of the pipeline:
   each phase gets its own tests just before it is built. The reviewer writes
   one phase's tests, the workflow verifies they start red, the phase is
   implemented, and the phase gate keeps every finished phase green.
-- **[Dual spec](#dual-spec-mode)** (`DUAL_SPEC=1`) replaces the spec stage:
+- **[Dual spec](#dual-spec-mode)** (`DUAL_SPEC=1`) replaces the single spec:
   A and B write independent candidate specs, cross-review them, and a human
   picks the base (or a merge). The chosen slot becomes owner; the other
   becomes reviewer. Slot names stay A and B.
@@ -274,7 +274,7 @@ aac list-runs
 
 ```text
 RUN_ID           STATUS      REQUEST
-20260904-101500  completed   Add slot-specific agent arguments
+20260905-101500  completed   Add slot-specific agent arguments
 20260901-000000  unfinished  Port the archive module to Python
 ```
 
@@ -288,7 +288,7 @@ appears as soon as one of them is:
 
 ```text
 RUN_ID           STATUS   PATH                      REQUEST
-20260904-101500  unknown  specs/archive-port        Port the archive module
+20260905-101500  unknown  specs/archive-port        Port the archive module
 20260901-000000  unknown  aac/docs/20260901-000000  A run in the usual place
 ```
 
@@ -307,7 +307,7 @@ aac list-runs --full
 ```
 
 ```text
-20260904-101500  completed  aac/docs/20260904-101500  2026-09-04T10:15:00+0800
+20260905-101500  completed  aac/docs/20260905-101500  2026-09-05T10:15:00+0800
     ## Goal
     Add a --json output option to the CLI.
 
@@ -328,7 +328,7 @@ aac list-runs --spec-title
 
 ```text
 RUN_ID           STATUS     REQUEST
-20260904-101500  completed  JSON output for the list command
+20260905-101500  completed  JSON output for the list command
 ```
 
 It is opt-in rather than the default because no prompt asks an agent for a
