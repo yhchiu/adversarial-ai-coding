@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+import adversarial_ai_coding.gates as gates
+
 from adversarial_ai_coding.config import WorkflowAbort
 from adversarial_ai_coding.gates import (
     detect_build_gate,
@@ -36,6 +38,107 @@ def test_detect_gate_npm_without_test_script(tmp_path):
     assert detect_gate(tmp_path) == ""
     (tmp_path / "package.json").write_text("broken json", encoding="utf-8")
     assert detect_gate(tmp_path) == ""
+
+
+def _python_project(cwd, *, runner="pytest"):
+    """A project whose files say pytest runs its tests."""
+    (cwd / "pyproject.toml").write_text(
+        f'[project]\nname = "x"\n[dependency-groups]\ndev = ["{runner}"]\n',
+        encoding="utf-8",
+    )
+    tests = cwd / "tests"
+    tests.mkdir()
+    (tests / "test_x.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+
+
+def test_detect_gate_python_project_uses_the_interpreter_on_this_machine(
+    tmp_path, monkeypatch
+):
+    _python_project(tmp_path)
+    monkeypatch.setattr(gates.shutil, "which", lambda name: None)
+    assert detect_gate(tmp_path) == ""
+    monkeypatch.setattr(
+        gates.shutil,
+        "which",
+        lambda name: "/usr/bin/python3" if name == "python3" else None,
+    )
+    assert detect_gate(tmp_path) == "python3 -m pytest"
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert detect_gate(tmp_path) == "python -m pytest"
+    # Python projects have no compile step to gate per task.
+    assert detect_build_gate(tmp_path) == ""
+
+
+def test_detect_gate_python_prefers_the_tool_that_owns_the_environment(tmp_path):
+    _python_project(tmp_path)
+    (tmp_path / "poetry.lock").touch()
+    assert detect_gate(tmp_path) == "poetry run pytest"
+    (tmp_path / "uv.lock").touch()
+    assert detect_gate(tmp_path) == "uv run pytest"
+
+
+def test_detect_gate_python_venv_beats_the_bare_interpreter(tmp_path, monkeypatch):
+    _python_project(tmp_path)
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    scripts = tmp_path / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "python.exe").touch()
+    expected = gates.Path(".venv") / "Scripts" / "python.exe"
+    assert detect_gate(tmp_path) == f"{expected} -m pytest"
+
+
+def test_detect_gate_python_posix_venv_is_found_too(tmp_path, monkeypatch):
+    _python_project(tmp_path)
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    binaries = tmp_path / ".venv" / "bin"
+    binaries.mkdir(parents=True)
+    (binaries / "python").touch()
+    expected = gates.Path(".venv") / "bin" / "python"
+    assert detect_gate(tmp_path) == f"{expected} -m pytest"
+
+
+def test_detect_gate_python_without_pytest_or_tests_claims_nothing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    # A marker file alone is not a pytest project.
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n', encoding="utf-8"
+    )
+    assert detect_gate(tmp_path) == ""
+    # Nor is one whose runner is something else.
+    _python_project(tmp_path, runner="nose2")
+    assert detect_gate(tmp_path) == ""
+    # pytest named, but nothing for it to collect: it would exit 5 and the
+    # gate would read that as a failure to repair.
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[tool.pytest.ini_options]\naddopts = "-q"\n',
+        encoding="utf-8",
+    )
+    for path in (tmp_path / "tests").rglob("*.py"):
+        path.unlink()
+    assert detect_gate(tmp_path) == ""
+    (tmp_path / "test_root.py").write_text(
+        "def test_root():\n    pass\n", encoding="utf-8"
+    )
+    assert detect_gate(tmp_path) == "python -m pytest"
+
+
+def test_detect_gate_python_config_files_other_than_pyproject(tmp_path, monkeypatch):
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    (tmp_path / "setup.py").write_text("setup()\n", encoding="utf-8")
+    (tmp_path / "test_x.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+    assert detect_gate(tmp_path) == ""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    assert detect_gate(tmp_path) == "python -m pytest"
+
+
+def test_detect_gate_another_language_still_wins(tmp_path, monkeypatch):
+    monkeypatch.setattr(gates.shutil, "which", lambda name: f"/usr/bin/{name}")
+    _python_project(tmp_path)
+    (tmp_path / "go.mod").touch()
+    assert detect_gate(tmp_path) == "go build ./... && go vet ./... && go test ./..."
+    assert detect_build_gate(tmp_path) == "go build ./..."
 
 
 def test_detect_gate_cargo_and_unknown(tmp_path):
