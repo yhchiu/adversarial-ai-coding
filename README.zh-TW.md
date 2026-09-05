@@ -462,7 +462,6 @@ exec my-agent --session aac-reviewer "$@"
 |---|---|---|
 | `AGENT_A` | `claude` | Slot A 的 agent command(預設為 owner):`claude` \| `codex` \| `agy` \| `opencode` 或自訂命令 |
 | `AGENT_B` | `codex` | Slot B 的 agent command(預設為 reviewer)。驗收測試 stage 改由 reviewer 撰寫、owner 審查 |
-
 | `IMPL_AGENT` | 選定 owner 的 command | Stage-5 逐任務實作迴圈使用的 command。內建 command 可與 A/B 同名;自訂實作 wrapper 必須與兩者都不同名 |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |

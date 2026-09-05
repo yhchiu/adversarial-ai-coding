@@ -576,6 +576,35 @@ def test_phased_mode_is_documented_bilingually():
     assert "regression-guard" in _read("resources/AGENTS.template.md")
 
 
+def test_no_markdown_table_is_split_by_a_blank_line():
+    """A blank line ends a table, and the rest renders as one paragraph.
+
+    The settings tables are long enough that the break is invisible in a
+    diff and obvious only to a reader: README.zh-TW.md carried one for
+    months, which turned every row after AGENT_B into a wall of text.
+    """
+    documents = [ROOT / "README.md", ROOT / "README.zh-TW.md"]
+    documents += sorted((ROOT / "docs").rglob("*.md"))
+    for document in documents:
+        lines = document.read_text(encoding="utf-8").split("\n")
+        in_table = False
+        for number, line in enumerate(lines, start=1):
+            if line.startswith("|---"):
+                in_table = True
+                continue
+            if not in_table:
+                continue
+            if line.startswith("|"):
+                continue
+            # A blank line only breaks a table when rows follow it; a table
+            # that simply ended is what a blank line is normally for.
+            following = lines[number] if number < len(lines) else ""
+            assert not (line.strip() == "" and following.startswith("|")), (
+                f"{document.name}:{number} blank line splits a table"
+            )
+            in_table = False
+
+
 def test_gate_reference_covers_every_gate_bilingually():
     """One page a reader can be sent to for anything gate-shaped.
 
