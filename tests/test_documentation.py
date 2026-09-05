@@ -1,3 +1,25 @@
+"""Tests that the docs keep pace with the code.
+
+What is worth asserting here, and what only rigidifies the prose:
+
+1. A behavior that already has a behavioral test elsewhere needs no
+   sentence pinned here - assert that the doc names the knob, and let
+   the other test own the behavior.
+2. A fact the code owns (a variable, flag, path, filename, JSON key, or
+   a string the CLI prints) is asserted as that name, never as the
+   sentence wrapped around it. Read it from the code where you can.
+3. A claim with no code counterpart - a guarantee, a negation, a timing
+   rule - is worth locking, but as the shortest keyword pair that still
+   fails when the claim disappears, one per language.
+4. Multi-word English phrases carrying function words ("Claude and Codex
+   report a") are the brittle kind: a comma or an "and" rewritten breaks
+   the build while locking nothing rule 2 or 3 has not already locked.
+
+Structure beats prose throughout: the helpers below read one settings
+row, one adapter cell, or one section, so an assertion cannot be
+satisfied - or broken - by unrelated text elsewhere in the file.
+"""
+
 import re
 from pathlib import Path
 
@@ -28,6 +50,18 @@ def _clause_about(row: str, topic: str) -> str:
     clauses = [part for part in re.split(r"[;。.]", row) if topic in part]
     assert clauses, f"no clause about {topic!r} in: {row}"
     return " ".join(clauses)
+
+
+def _section(text: str, heading: str) -> str:
+    """One `## ` section, so a claim is asserted where it has to appear.
+
+    A knob named anywhere in the file cannot stand in for a safety note
+    that has to be in the safety section.
+    """
+    start = text.index(f"## {heading}\n")
+    rest = text[start + len(heading) + 4 :]
+    end = rest.find("\n## ")
+    return rest if end == -1 else rest[:end]
 
 
 def _adapter_cells(text: str, label: str) -> list[str]:
@@ -147,35 +181,25 @@ def test_troubleshooting_guides_are_linked_and_actionable_bilingually():
         ):
             assert detail in guide
 
-    assert "Setting `TOOLS` replaces that entire value" in _read(
-        "docs/troubleshooting.md"
-    )
-    assert "設定 `TOOLS` 會取代整個值" in _read(
-        "docs/troubleshooting.zh-TW.md"
-    )
-    assert "The rule added in that example is `Bash(gofmt *)`" in _read(
-        "docs/troubleshooting.md"
-    )
-    assert "上例實際新增的是 `Bash(gofmt *)`" in _read(
-        "docs/troubleshooting.zh-TW.md"
-    )
+    # That TOOLS replaces the default rather than extending it is already
+    # covered above: both guides have to print DEFAULT_TOOLS in full, which
+    # is only readable as a replacement value, and the worked example's own
+    # rule is asserted with it.
 
 
 def test_permission_prompt_adapter_table_is_documented_bilingually():
-    guides = {
+    headers = {
         "docs/troubleshooting.md": (
-            "AAC calls agents non-interactively, so nobody can answer a prompt.",
-            "| Adapter | Arguments and settings added by AAC | Effective behavior |",
+            "| Adapter | Arguments and settings added by AAC | Effective behavior |"
         ),
         "docs/troubleshooting.zh-TW.md": (
-            "AAC 以非互動模式呼叫 agent,沒有人能回答權限 prompt。",
-            "| Adapter | AAC 加入的參數與設定 | 實際行為 |",
+            "| Adapter | AAC 加入的參數與設定 | 實際行為 |"
         ),
     }
 
-    for guide_name, (opening, header) in guides.items():
+    for guide_name, header in headers.items():
         guide = _read(guide_name)
-        assert f"{opening}\n\n{header}" in guide
+        assert header in guide
         permission_section = guide.split(header, 1)[1].split("### Claude Code", 1)[0]
         for detail in (
             "--permission-mode acceptEdits",
@@ -203,16 +227,15 @@ def test_codex_reserved_aliases_are_documented_bilingually():
 def test_quota_detection_channel_is_documented_bilingually():
     english = _read("docs/troubleshooting.md")
     chinese = _read("docs/troubleshooting.zh-TW.md")
-    assert "AAC reads only an agent's own error channel" in english
-    assert "Agy has no" in english and "complete output is scanned" in english
+    # What detection actually does is proved in test_ratelimit_parsing.py
+    # (envelope status, a 429 with no wording, the reported reset epoch).
+    # Left here: the wait table both guides publish, and the fact that a
+    # status is what makes a 429 detectable, because OpenCode relays each
+    # provider's own wording.
     assert "| Reported reset epoch | Claude |" in english
-    assert "AAC 只讀 agent 自己的錯誤通道做 quota 判斷" in chinese
-    assert "Agy 沒有結構化 event 邊界,所以仍掃完整輸出" in chinese
     assert "| 回報的 reset epoch | Claude |" in chinese
-    # OpenCode relays each provider's own wording, so what makes a 429
-    # detectable is the status it reports, not the words in the message.
-    assert "retaining the provider's" in english and "HTTP status" in english
-    assert "保留 provider HTTP status" in chinese
+    assert "HTTP status" in english
+    assert "HTTP status" in chinese
 
 
 def test_opencode_permission_and_reserved_args_are_documented_bilingually():
@@ -223,10 +246,8 @@ def test_opencode_permission_and_reserved_args_are_documented_bilingually():
     """
     english = _read("README.md")
     chinese = _read("README.zh-TW.md")
-    assert "`opencode` runs with `--auto`" in english
-    assert "explicitly denied" in english
-    assert "**opencode agent 使用 `--auto`**" in chinese
-    assert "自動核准" in chinese
+    assert "--auto" in _section(english, "Safety Notes")
+    assert "--auto" in _section(chinese, "安全性注意事項")
     for readme in (english, chinese):
         # Reserved flags must be flags `opencode run` really has. --command
         # would replace the workflow prompt; --interactive and --prompt do
@@ -283,10 +304,12 @@ def test_impl_args_dual_spec_timing_is_documented_bilingually():
     for readme in (_read("README.md"), _read("README.zh-TW.md")):
         assert "DUAL_SPEC=1" in readme
         assert "IMPL_ARGS" in readme
-    assert "waits for the selection" in _read("README.md")
-    assert "refused at startup" in _read("README.md")
-    assert "等到選定後才檢查" in _read("README.zh-TW.md")
-    assert "啟動時就拒絕" in _read("README.zh-TW.md")
+    # Read the section the rule lives in: a bare "waits" anywhere in the
+    # file would let half the rule disappear unnoticed.
+    english = _section(_read("README.md"), "Agent CLI Session Behavior")
+    chinese = _section(_read("README.zh-TW.md"), "Agent CLI 差異與限制")
+    assert "waits" in english and "refused at startup" in english
+    assert "等到選定" in chinese and "啟動時就拒絕" in chinese
 
 
 def test_agy_prompt_and_session_flags_are_documented_bilingually():
@@ -315,8 +338,6 @@ def test_agy_prompt_and_session_flags_are_documented_bilingually():
             "`--json-schema`",
         ):
             assert flag in row, f"{flag} missing from the Agy reserved row"
-    assert "one dash or two" in _reserved_row(english, "Agy")
-    assert "單破折號與雙破折號" in _reserved_row(chinese, "Agy")
 
 
 def test_active_docs_teach_only_slot_specific_argument_variables():
@@ -364,10 +385,8 @@ def test_agent_streaming_is_documented_bilingually():
         assert "`AGENT`" in readme
     english = _read("README.md")
     chinese = _read("README.zh-TW.md")
-    assert "`--output-format`, `--verbose`, or `--json-schema`" in english
-    assert "archived artifacts and the run log never contain" in english
-    assert "`--output-format`、`--verbose` 或 `--json-schema`" in chinese
-    assert "封存產物與 run log 永遠不含前綴" in chinese
+    assert "never" in _clause_about(english, "run log")
+    assert "永遠不" in _clause_about(chinese, "run log")
     # Codex reports tool calls too, and its shell wrapper is stripped. Read
     # the two adapter cells rather than counting the phrase over the whole
     # file: documenting a third streaming adapter must not fail this.
@@ -385,12 +404,11 @@ def test_agent_streaming_is_documented_bilingually():
     assert "原始合併輸出" in agy
     assert "每個工具呼叫一行摘要" in opencode
     assert "(工具結束時)" in opencode
-    assert "Claude and Codex report a" in english
-    assert "OpenCode reports one only once the call has finished" in english
-    assert "Claude 與 Codex 在工具呼叫「開始」時就印" in chinese
-    assert "OpenCode 只在呼叫「結束」時才印" in chinese
-    assert "`powershell -Command` or `bash -c` wrapper" in english
-    assert "`powershell -Command` 或 `bash -c` 這層包裝會被剝掉" in chinese
+    # When each adapter prints is locked in the cells above, and what it
+    # prints is behavior owned by test_agent_call.py.
+    for readme in (english, chinese):
+        assert "powershell -Command" in readme
+        assert "bash -c" in readme
 
 
 def test_agent_session_lifecycle_is_documented_bilingually():
@@ -415,12 +433,16 @@ def test_agent_session_lifecycle_is_documented_bilingually():
             "AgentSession",
         ):
             assert detail in guide
-    assert "Every reviewer call is fresh" in _read(
-        "docs/agent-session-lifecycle.md"
-    )
-    assert "每次 reviewer 呼叫都是全新 session" in _read(
-        "docs/agent-session-lifecycle.zh-TW.md"
-    )
+    # Session reuse and discard is behavior owned by test_session_resume.py.
+    # Left here: the guides still have to tie reviewer calls to a fresh
+    # session, which "fresh" alone cannot show - the word appears dozens of
+    # times about other slots.
+    for guide_name, word in (
+        ("docs/agent-session-lifecycle.md", "fresh"),
+        ("docs/agent-session-lifecycle.zh-TW.md", "全新"),
+    ):
+        lines = _read(guide_name).splitlines()
+        assert any("reviewer" in line and word in line for line in lines)
 
 
 def test_cli_help_and_version_flags_are_documented_bilingually():
@@ -607,16 +629,14 @@ def test_phased_suggestion_is_documented_bilingually():
 
 
 def test_imported_spec_without_review_has_no_phased_suggestion_bilingually():
+    # Which combinations arm the suggestion is proved by
+    # test_phased_suggestion.py::test_suggestion_armed_matrix. Left here:
+    # both READMEs have to name the combination and say it offers nothing.
     required_details = {
-        "README.md": (
-            "IMPORT_SPEC` + `IMPORT_REVIEW=0",
-            "no spec reviewer runs",
-            "no phased suggestion is produced or offered",
-        ),
+        "README.md": ("IMPORT_SPEC` + `IMPORT_REVIEW=0", "no phased suggestion"),
         "README.zh-TW.md": (
             "IMPORT_SPEC` + `IMPORT_REVIEW=0",
-            "不會執行 spec reviewer",
-            "不會產生或提供分階段模式建議",
+            "不會產生或提供",
         ),
     }
     for name, details in required_details.items():
