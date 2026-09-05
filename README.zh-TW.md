@@ -62,7 +62,7 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 
 兩個選用模式會改寫部分流程:
 
-- **[分階段 ATDD](#分階段-atdd-模式phased-atdd)**(`PHASES=1`):plan 拆成垂直 phase,單一測試階段改為逐 phase 迴圈——reviewer 寫該 phase 的測試、workflow 驗證測試起始為紅、實作該 phase,phase gate 保證已完成的 phase 持續全綠。
+- **[分階段 ATDD](#分階段-atdd-模式phased-atdd)**(`PHASES=1`):給大任務用——那種一次交辦、其實包了好幾個功能的請求。Plan 拆成數個 phase,每個 phase 動工前才寫它自己的測試——reviewer 寫該 phase 的測試、workflow 驗證測試起始為紅、實作該 phase,phase gate 保證已完成的 phase 持續全綠。
 - **[雙 spec](#雙-spec-模式)**(`DUAL_SPEC=1`):取代訂規格階段——A/B 各寫獨立候選 spec、交叉審查,由人選出 base(或合併)。選中的 slot 成為 owner,另一方成為 reviewer;slot 名稱仍是 A 與 B。
 
 為什麼這樣設計(確定性關卡、對抗式測試、分級裁決……)見下一節[核心設計](#核心設計為什麼這樣做);逐 stage 的完整說明(完整流程圖、審查迴圈機制、關卡指令與各 stage 細節)見 [`docs/how-it-works.zh-TW.md`](docs/how-it-works.zh-TW.md)。
@@ -324,7 +324,30 @@ review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
 
 ## 分階段 ATDD 模式(Phased ATDD)
 
-設定 `PHASES=1` 後,單次預先撰寫驗收測試的 stage 會改成逐 phase
+這個模式是給大任務用的——那種一次交辦、其實裡面包了好幾個功能的請求。
+
+預設流程是 reviewer 一次把所有驗收測試寫完,implementer 接著從頭做到
+尾,任務之間只檢查編譯過不過,完整測試要等到最後才跑。小任務這樣沒
+問題;大任務就會變成跑到終點才冒出幾十個失敗,而你不知道二十個 task
+裡是哪一個弄壞了什麼。
+
+分階段 ATDD 把工作切成幾個 phase,做完一個才開始下一個。每個 phase 的
+測試都在該 phase 動工前才寫,而且 phase 一旦完成,它的測試在整個 run
+剩下的時間都必須維持綠燈。失敗因此只會指向你正在做的那個 phase,而不
+是整包工作。
+
+舉個例子:請求是「幫這個 app 加上使用者帳號:註冊、登入、忘記密碼」,
+這就是三個 phase。Phase 1 先寫註冊的測試、實作、轉綠;Phase 2 才寫登入
+的測試——如果做登入的時候弄壞了註冊,phase gate 當場就會講,而這時整個
+run 新增的程式只有登入那一段。
+
+單一功能、bugfix、重構或只改文件不適合用這個模式:沒有東西可切,而每
+多一個 phase 就多一輪寫測試與 review 的成本,這些請用預設流程。
+
+未設定 `PHASES` 時,spec reviewer 會替你判斷,human gate 可能會問要不要
+把這個 run 改成分階段模式。`PHASES=1` 強制開啟;`PHASES=0` 關掉這個提議。
+
+在這個模式下,單次預先撰寫驗收測試的 stage 會換成下面的逐 phase
 迴圈。Plan 必須使用 `## Phase N: <title>` 標題;每個 phase 都需要一行
 `Acceptance:`,以穩定邊界上的可觀察行為描述驗收條件,並至少包含一個
 `- [ ]` 任務。Phase 必須是垂直功能切片(一個可運作的行為增量),不可是

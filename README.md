@@ -92,10 +92,11 @@ Four rules make the pipeline adversarial instead of cooperative:
 
 Two optional modes reshape parts of the pipeline:
 
-- **[Phased ATDD](#phased-atdd-mode)** (`PHASES=1`) splits the plan into
-  vertical phases and replaces the single test stage with a per-phase loop:
-  the reviewer writes one phase's tests, the workflow verifies they start red,
-  the phase is implemented, and the phase gate keeps every finished phase green.
+- **[Phased ATDD](#phased-atdd-mode)** (`PHASES=1`) is for big requests that
+  are really several features in one job: the plan is split into phases, and
+  each phase gets its own tests just before it is built. The reviewer writes
+  one phase's tests, the workflow verifies they start red, the phase is
+  implemented, and the phase gate keeps every finished phase green.
 - **[Dual spec](#dual-spec-mode)** (`DUAL_SPEC=1`) replaces the spec stage:
   A and B write independent candidate specs, cross-review them, and a human
   picks the base (or a merge). The chosen slot becomes owner; the other
@@ -457,13 +458,44 @@ When a spec is imported with review disabled (`IMPORT_SPEC` + `IMPORT_REVIEW=0`)
 
 ## Phased ATDD Mode
 
-Set `PHASES=1` to replace the single up-front acceptance-test stage with a
-per-phase loop. The plan must use `## Phase N: <title>` headings; every
-phase needs an `Acceptance:` line with observable behavior at a stable
-boundary and at least one `- [ ]` task. Phases must be vertical functional
-slices (a working behavior increment), never horizontal technical layers.
-The workflow parses the plan deterministically after the plan review and
-sends structure problems back to the owner before anything is implemented.
+This mode is for big requests — the ones that are really several features
+handed over as one job.
+
+In the default pipeline the reviewer writes every acceptance test up
+front, and the implementer then works through the whole task list with
+only a compile check between tasks. The full test run comes at the very
+end. On a small request that is fine. On a big one it means the finish
+line can arrive with dozens of failing tests and no clue which of the
+twenty tasks broke what.
+
+Phased ATDD splits the job into phases and finishes one before starting
+the next. Each phase gets its own tests, written just before that phase
+is built, and once a phase is done its tests must stay green for the rest
+of the run. A failure then points at the phase you are working on instead
+of at the whole job.
+
+Say the request is "add user accounts to the app: sign-up, login, and
+password reset". That is three phases. Phase 1 gets its sign-up tests, is
+implemented, and goes green. Phase 2 then writes the login tests — and if
+building login breaks sign-up, the phase gate says so right there, while
+the only new code in the run is login's.
+
+Skip this mode for a single feature, a bugfix, a refactor, or a
+documentation change. There is nothing to split, and every phase adds a
+round of test-writing and review. Keep the default pipeline for those.
+
+When `PHASES` is unset, the spec reviewer makes this call for you and the
+human gate may offer to switch the run to phased mode. `PHASES=1` forces
+it on; `PHASES=0` turns the offer off.
+
+In this mode the single up-front acceptance-test stage becomes the
+per-phase loop below. The plan must use `## Phase N: <title>` headings;
+every phase needs an `Acceptance:` line with observable behavior at a
+stable boundary and at least one `- [ ]` task. Phases must be vertical
+functional slices (a working behavior increment), never horizontal
+technical layers. The workflow parses the plan deterministically after
+the plan review and sends structure problems back to the owner before
+anything is implemented.
 
 The default pipeline below uses A and B (A = owner, B = reviewer). When
 `IMPL_*` is set, I writes the per-task loop.
