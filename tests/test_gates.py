@@ -7,9 +7,18 @@ import pytest
 import adversarial_ai_coding.gates as gates
 
 from adversarial_ai_coding.config import WorkflowAbort
+from adversarial_ai_coding.config import (
+    CARGO_TOOLS,
+    DEFAULT_TOOLS,
+    GO_TOOLS,
+    NPM_TOOLS,
+    PYTEST_TOOLS,
+    VCS_TOOLS,
+)
 from adversarial_ai_coding.gates import (
     detect_build_gate,
     detect_gate,
+    detect_tools,
     gate_loop,
     run_shell,
 )
@@ -139,6 +148,43 @@ def test_detect_gate_another_language_still_wins(tmp_path, monkeypatch):
     (tmp_path / "go.mod").touch()
     assert detect_gate(tmp_path) == "go build ./... && go vet ./... && go test ./..."
     assert detect_build_gate(tmp_path) == "go build ./..."
+
+
+def test_detect_tools_names_only_the_ecosystems_present(tmp_path):
+    (tmp_path / "go.mod").touch()
+    assert detect_tools(tmp_path) == f"{VCS_TOOLS},{GO_TOOLS}"
+    (tmp_path / "Cargo.toml").touch()
+    assert detect_tools(tmp_path) == f"{VCS_TOOLS},{GO_TOOLS},{CARGO_TOOLS}"
+
+
+def test_detect_tools_is_a_union_where_the_gate_is_a_first_match(tmp_path):
+    # A Go service with an npm front end runs both test commands, even
+    # though only the Go gate is detected.
+    (tmp_path / "go.mod").touch()
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    assert detect_tools(tmp_path) == f"{VCS_TOOLS},{GO_TOOLS},{NPM_TOOLS}"
+    assert detect_gate(tmp_path) == "go build ./... && go vet ./... && go test ./..."
+
+
+def test_detect_tools_allows_pytest_before_any_test_file_exists(tmp_path):
+    # The gate needs test files; the allowlist is what lets the reviewer
+    # write them and run them in the first place.
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[tool.pytest.ini_options]\naddopts = "-q"\n',
+        encoding="utf-8",
+    )
+    assert detect_tools(tmp_path) == f"{VCS_TOOLS},{PYTEST_TOOLS}"
+    assert detect_gate(tmp_path) == ""
+
+
+def test_detect_tools_keeps_the_whole_default_when_nothing_is_detected(tmp_path):
+    # The gate here is one the user set by hand, so narrowing would only
+    # take away rules the run used to have.
+    assert detect_tools(tmp_path) == DEFAULT_TOOLS
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n', encoding="utf-8"
+    )
+    assert detect_tools(tmp_path) == DEFAULT_TOOLS
 
 
 def test_detect_gate_cargo_and_unknown(tmp_path):

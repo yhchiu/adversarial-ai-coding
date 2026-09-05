@@ -498,7 +498,7 @@ exec my-agent --session aac-reviewer "$@"
 | `AGENTS_TEMPLATE` | workflow checkout 內的 `resources/AGENTS.template.md` | AGENTS.md 規範範本路徑;範本遺失時 bootstrap 會警告並跳過(流程照常) |
 | `PROMPTS_DIR` | workflow checkout 內的 `resources/prompts` | workflow prompt template 目錄;除非要覆寫內建 prompt,通常不用設定 |
 | `SPEC_DIR` | `aac/docs/<時間戳>` | 規格與計畫的存放目錄 |
-| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | 完整 Claude Code `--allowedTools` 值,而且是唯一入口:該旗標在所有參數變數裡都是保留字。設定後會取代預設值。可直接複製的 Go、npm、Cargo 與 Python 範例見[疑難排解指南](docs/troubleshooting.zh-TW.md) |
+| `TOOLS` | 自動偵測 | 完整 Claude Code `--allowedTools` 值,而且是唯一入口:該旗標在所有參數變數裡都是保留字。預設值依工作區偵測,而且是聯集(一個 repo 可能同時是好幾種):一律有 `Bash(git *)`;`go.mod` 加 `Bash(go test *),Bash(go build *),Bash(go vet *)`;`package.json` 加 `Bash(npm test)`;`Cargo.toml` 加 `Bash(cargo build),Bash(cargo test)`;有寫明用 pytest 的 Python 專案加 `Bash(pytest *),Bash(uv run pytest *),Bash(poetry run pytest *),Bash(python -m pytest *),Bash(python3 -m pytest *)`。四種都沒偵測到時保留上述全部規則。設定 `TOOLS` 會取代偵測結果。可直接複製的 Go、npm、Cargo 與 Python 範例見[疑難排解指南](docs/troubleshooting.zh-TW.md) |
 
 Windows 上想在關卡跑 `-race`:`GATE_CMD='go build ./... && go vet ./... && go test -race -ldflags "-extldflags=-Wl,--default-image-base-low" ./...'`
 

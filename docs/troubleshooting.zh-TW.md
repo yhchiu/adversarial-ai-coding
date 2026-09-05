@@ -47,21 +47,30 @@ AAC 以非互動模式呼叫 agent,沒有人能回答權限 prompt。
 
 ### Claude Code:把確切命令放進 `TOOLS`
 
-AAC 把 `TOOLS` 原樣傳給 Claude Code 的 `--allowedTools`。目前完整預設值是:
+AAC 把 `TOOLS` 原樣傳給 Claude Code 的 `--allowedTools`。預設值依工作區
+偵測:一律有 `Bash(git *)`,再加上這個工作區裡每一種生態的規則。
 
-```bash
-TOOLS='Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)'
-```
+| 偵測到 | 加入的規則 |
+|---|---|
+| 一律 | `Bash(git *)` |
+| `go.mod` | `Bash(go test *),Bash(go build *),Bash(go vet *)` |
+| `package.json` | `Bash(npm test)` |
+| `Cargo.toml` | `Bash(cargo build),Bash(cargo test)` |
+| 有寫明用 pytest 的 Python 專案 | `Bash(pytest *),Bash(uv run pytest *),Bash(poetry run pytest *),Bash(python -m pytest *),Bash(python3 -m pytest *)` |
+
+四種都沒偵測到時,以上規則全部保留:那種情況下關卡是你自己設的,猜得更窄
+只會拿掉這次 run 本來就有的規則。實際解析結果會印在啟動資訊裡。
 
 設定 `TOOLS` 會取代整個值,不是附加。請保留這次 run 仍需要的規則,再明確加入
-log 中被擋的命令。例如要加入 Go 格式化,完整命令是:
+log 中被擋的命令。例如一個還需要格式化的 Go 專案,只要寫出它真正用到的:
 
 ```bash
 TOOLS='Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *),Bash(gofmt *)' \
   aac request.md
 ```
 
-上例實際新增的是 `Bash(gofmt *)`。其他最小權限起點如下:
+上例實際新增的是 `Bash(gofmt *)`,其餘是預設值裡的 Go 那一段;預設值本身
+涵蓋關卡偵測認得的每一種生態。其他最小權限起點如下:
 
 ```bash
 # npm 專案:只允許這條 workflow 真的需要的 scripts。

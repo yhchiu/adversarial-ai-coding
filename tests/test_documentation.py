@@ -24,7 +24,13 @@ import ast
 import re
 from pathlib import Path
 
-from adversarial_ai_coding.config import DEFAULT_TOOLS
+from adversarial_ai_coding.config import (
+    CARGO_TOOLS,
+    GO_TOOLS,
+    NPM_TOOLS,
+    PYTEST_TOOLS,
+    VCS_TOOLS,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -186,15 +192,21 @@ def test_troubleshooting_guides_are_linked_and_actionable_bilingually():
         "README.md": "docs/troubleshooting.md",
         "README.zh-TW.md": "docs/troubleshooting.zh-TW.md",
     }
-    default_tools = DEFAULT_TOOLS
+    # The allowlist is detected per ecosystem, so both the settings row and
+    # the guide have to publish every rule set detection can add, read from
+    # the code that defines them.
+    rule_sets = (VCS_TOOLS, GO_TOOLS, NPM_TOOLS, CARGO_TOOLS, PYTEST_TOOLS)
 
     for readme_name, guide_name in documents.items():
         readme = _read(readme_name)
         assert guide_name in readme
-        assert default_tools in _settings_row(readme, "TOOLS")
+        row = _settings_row(readme, "TOOLS")
+        for rules in rule_sets:
+            assert rules in row, f"{readme_name}: TOOLS row must name {rules}"
 
         guide = _read(guide_name)
-        assert default_tools in guide
+        for rules in rule_sets:
+            assert rules in guide, f"{guide_name}: must name {rules}"
         for detail in (
             "Bash(gofmt *)",
             "Bash(npm test)",
@@ -209,10 +221,10 @@ def test_troubleshooting_guides_are_linked_and_actionable_bilingually():
         ):
             assert detail in guide
 
-    # That TOOLS replaces the default rather than extending it is already
-    # covered above: both guides have to print DEFAULT_TOOLS in full, which
-    # is only readable as a replacement value, and the worked example's own
-    # rule is asserted with it.
+    # That TOOLS replaces what was detected rather than extending it is
+    # already covered above: both guides have to publish every rule set
+    # detection can add, which is only readable as a replacement value, and
+    # the worked example's own rule is asserted with it.
 
 
 def test_permission_prompt_adapter_table_is_documented_bilingually():

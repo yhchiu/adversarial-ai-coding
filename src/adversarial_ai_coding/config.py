@@ -24,7 +24,21 @@ def render_template(
         return template
     return template.format(**fields)
 
-DEFAULT_TOOLS = "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
+# One allowlist per ecosystem, each naming the commands that
+# ecosystem's detected gate runs. `gates.detect_tools` picks the
+# sets a workspace actually needs; DEFAULT_TOOLS is their union,
+# used when nothing is detected and by callers with no workspace.
+VCS_TOOLS = "Bash(git *)"
+GO_TOOLS = "Bash(go test *),Bash(go build *),Bash(go vet *)"
+NPM_TOOLS = "Bash(npm test)"
+CARGO_TOOLS = "Bash(cargo build),Bash(cargo test)"
+PYTEST_TOOLS = (
+    "Bash(pytest *),Bash(uv run pytest *),Bash(poetry run pytest *),"
+    "Bash(python -m pytest *),Bash(python3 -m pytest *)"
+)
+DEFAULT_TOOLS = ",".join(
+    (VCS_TOOLS, GO_TOOLS, NPM_TOOLS, CARGO_TOOLS, PYTEST_TOOLS)
+)
 # Rejected configuration names. They are not settings fields.
 REMOVED_ADAPTER_ARG_VARS = ("CLAUDE_ARGS", "CODEX_ARGS", "AGY_ARGS", "OPENCODE_ARGS")
 

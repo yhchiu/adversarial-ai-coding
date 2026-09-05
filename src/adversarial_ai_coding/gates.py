@@ -12,7 +12,15 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from .config import WorkflowAbort
+from .config import (
+    CARGO_TOOLS,
+    DEFAULT_TOOLS,
+    GO_TOOLS,
+    NPM_TOOLS,
+    PYTEST_TOOLS,
+    VCS_TOOLS,
+    WorkflowAbort,
+)
 from .i18n import emit
 from .prompts import render_prompt
 
@@ -36,6 +44,34 @@ def detect_gate(cwd: Path) -> str:
     if _is_python_project(cwd) and _uses_pytest(cwd) and _has_test_files(cwd):
         return _pytest_command(cwd)
     return ""
+
+
+def detect_tools(cwd: Path) -> str:
+    """The Claude allowlist this workspace needs.
+
+    Detection is a union, not a first match like the gate: a repo with a
+    Go service and an npm front end needs both, and an allowlist that
+    stops at the first marker would deny the second one's tests. A
+    workspace that matches nothing keeps the whole default, because the
+    gate there is one the user set by hand and guessing narrower would
+    only take away rules a run already had.
+
+    Unlike the gate, a Python project needs no test files yet: the run
+    exists to write them, and the reviewer has to be able to run what it
+    writes.
+    """
+    detected = [VCS_TOOLS]
+    if (cwd / "go.mod").is_file():
+        detected.append(GO_TOOLS)
+    if (cwd / "package.json").is_file():
+        detected.append(NPM_TOOLS)
+    if (cwd / "Cargo.toml").is_file():
+        detected.append(CARGO_TOOLS)
+    if _is_python_project(cwd) and _uses_pytest(cwd):
+        detected.append(PYTEST_TOOLS)
+    if len(detected) == 1:
+        return DEFAULT_TOOLS
+    return ",".join(detected)
 
 
 def _is_python_project(cwd: Path) -> bool:

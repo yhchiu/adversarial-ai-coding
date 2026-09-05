@@ -25,7 +25,7 @@ from .agents import (
 from .archive import establish_run_archive
 from .config import DOCS_ROOT, WORK_DIR, Settings, SettingsError, WorkflowAbort
 from .dual_spec import dual_spec_preflight
-from .gates import detect_build_gate, detect_gate
+from .gates import detect_build_gate, detect_gate, detect_tools
 from .gitops import (
     current_branch,
     is_inside_work_tree,
@@ -383,6 +383,11 @@ def main(
                     branch=current_branch(workspace),
                 )
         workspace = Path.cwd()
+        # Detected here rather than in Settings.from_env: the workspace is
+        # only known once a worktree may have been created, and this has to
+        # settle before the archive and the snapshot record what the run uses.
+        if not env.get("TOOLS") and not snapshot.get("TOOLS"):
+            settings = replace(settings, tools=detect_tools(workspace))
         wf = workspace / WORK_DIR
 
         # Claim the ignored subtree before anything is written into it: the

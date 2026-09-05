@@ -35,7 +35,15 @@ def test_defaults_match_bash():
     assert s.retry_base_wait == 300
     assert s.retry_max_wait == 3600
     assert s.retry_max_reset_wait == 21600
-    assert s.tools == "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)"
+    # Deliberate divergence: bash allowed the Go gate commands only,
+    # so a Claude agent on an npm, Cargo or Python project could not
+    # run the tests its own detected gate runs.
+    assert s.tools == (
+        "Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *),"
+        "Bash(npm test),Bash(cargo build),Bash(cargo test),Bash(pytest *),"
+        "Bash(uv run pytest *),Bash(poetry run pytest *),"
+        "Bash(python -m pytest *),Bash(python3 -m pytest *)"
+    )
     assert s.spec_dir == "aac/docs/20260710-120000"
 
 

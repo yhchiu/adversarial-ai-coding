@@ -353,6 +353,47 @@ def test_not_a_git_repo_blocked(tmp_path, monkeypatch, capsys):
     assert "root of the target git repository" in capsys.readouterr().err
 
 
+def test_startup_narrows_tools_to_the_detected_ecosystem(new_repo, monkeypatch):
+    from adversarial_ai_coding.config import CARGO_TOOLS, VCS_TOOLS
+
+    monkeypatch.chdir(new_repo)
+    (new_repo / "Cargo.toml").touch()
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    seen = []
+    monkeypatch.setattr(
+        cli, "run_workflow", lambda ctx, task: seen.append(ctx.settings)
+    )
+    rc = cli.main(
+        ["task"],
+        {"AGENT_A": "sh", "AGENT_B": "pwd", "AUTO_BRANCH": "0"},
+        stdin_isatty=False,
+    )
+    assert rc == 0
+    assert seen[0].tools == f"{VCS_TOOLS},{CARGO_TOOLS}"
+
+
+def test_startup_keeps_an_explicit_tools_value(new_repo, monkeypatch):
+    monkeypatch.chdir(new_repo)
+    (new_repo / "Cargo.toml").touch()
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
+    seen = []
+    monkeypatch.setattr(
+        cli, "run_workflow", lambda ctx, task: seen.append(ctx.settings)
+    )
+    rc = cli.main(
+        ["task"],
+        {
+            "AGENT_A": "sh",
+            "AGENT_B": "pwd",
+            "AUTO_BRANCH": "0",
+            "TOOLS": "Bash(git *),Bash(make *)",
+        },
+        stdin_isatty=False,
+    )
+    assert rc == 0
+    assert seen[0].tools == "Bash(git *),Bash(make *)"
+
+
 def test_startup_does_not_require_jq(new_repo, monkeypatch):
     monkeypatch.chdir(new_repo)
     looked_up = []

@@ -653,7 +653,7 @@ quoting-sensitive arguments, or other stateful setup.
 | `AGENTS_TEMPLATE` | workflow checkout's `resources/AGENTS.template.md` | Path to the `AGENTS.md` template. |
 | `PROMPTS_DIR` | workflow checkout's `resources/prompts` | Directory for workflow prompt templates. |
 | `SPEC_DIR` | `aac/docs/<timestamp>` | Directory for `spec.md` and `plan.md`. |
-| `TOOLS` | `Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)` | Complete Claude Code `--allowedTools` value, and the only way to set it: the flag itself is reserved in every argument variable. Setting it replaces the default; see the [Troubleshooting Guide](docs/troubleshooting.md) for copyable Go, npm, Cargo, and Python examples. |
+| `TOOLS` | auto-detected | Complete Claude Code `--allowedTools` value, and the only way to set it: the flag itself is reserved in every argument variable. The default is detected from the workspace and is the union of what it holds, since one repository can be several: `Bash(git *)` always, plus `Bash(go test *),Bash(go build *),Bash(go vet *)` for `go.mod`, `Bash(npm test)` for `package.json`, `Bash(cargo build),Bash(cargo test)` for `Cargo.toml`, and `Bash(pytest *),Bash(uv run pytest *),Bash(poetry run pytest *),Bash(python -m pytest *),Bash(python3 -m pytest *)` for a Python project that names pytest. A workspace matching none of them keeps all of those rules. Setting `TOOLS` replaces whatever was detected; see the [Troubleshooting Guide](docs/troubleshooting.md) for copyable Go, npm, Cargo, and Python examples. |
 
 On Windows, if you want Go race tests in the gate, use:
 

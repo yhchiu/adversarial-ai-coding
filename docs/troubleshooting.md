@@ -51,23 +51,34 @@ The remedy is different for each adapter.
 
 ### Claude Code: put the exact command in `TOOLS`
 
-AAC passes `TOOLS` to Claude Code as `--allowedTools`. The current default is:
+AAC passes `TOOLS` to Claude Code as `--allowedTools`. The default is
+detected from the workspace: `Bash(git *)` always, and then the rules
+of every ecosystem the workspace holds.
 
-```bash
-TOOLS='Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *)'
-```
+| Detected from | Rules added |
+|---|---|
+| always | `Bash(git *)` |
+| `go.mod` | `Bash(go test *),Bash(go build *),Bash(go vet *)` |
+| `package.json` | `Bash(npm test)` |
+| `Cargo.toml` | `Bash(cargo build),Bash(cargo test)` |
+| a Python project naming pytest | `Bash(pytest *),Bash(uv run pytest *),Bash(poetry run pytest *),Bash(python -m pytest *),Bash(python3 -m pytest *)` |
+
+A workspace that matches none of them keeps every rule above, because
+its gate is one you set by hand and a narrower guess would only take
+away rules the run had. The startup line prints what a run resolved to.
 
 Setting `TOOLS` replaces that entire value; it does not append to it. Preserve
-every rule the run still needs and add the blocked command explicitly. For
-example, to add Go formatting, the complete value is:
+every rule the run still needs and add the blocked command explicitly. A Go
+project that also needs formatting can state just what it uses:
 
 ```bash
 TOOLS='Bash(git *),Bash(go test *),Bash(go build *),Bash(go vet *),Bash(gofmt *)' \
   aac request.md
 ```
 
-The rule added in that example is `Bash(gofmt *)`. Other least-privilege
-starting points are:
+The rule added in that example is `Bash(gofmt *)`; everything else in it is
+the Go part of the default, which covers every ecosystem gate detection
+knows. Other least-privilege starting points are:
 
 ```bash
 # npm project: allow only the scripts this workflow needs.
