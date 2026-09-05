@@ -2,34 +2,29 @@
 
 [English](README.md) | 繁體中文
 
-`adversarial-ai-coding` 是一個 AI Agent 開發軟體的流程編排器。
+`adversarial-ai-coding` 是一個多重 AI Agent 開發軟體的流程編排器。
 
 ## 多重 AI 對抗式程式開發工作流
 
-自動化「A 實作、B 對抗式審查與驗收測試」的開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並依 2026 年 agentic 開發的最佳實踐強化:確定性品質關卡、人工檢查點、分級裁決。對應的原始工作流:
-
-其中 A(工作者 agent)與 B(審查者 agent)可以是 **Claude Code CLI**、**Codex CLI**、**Antigravity CLI**、**OpenCode**(使用者已登入的任何模型)或自訂 wrapper,透過各家的 headless(非互動)模式驅動。Stage 5 還可使用獨立的實作 slot I。
+「一個 AI 實作、另外一個 AI 對抗式審查與驗收測試」的自動化開發流程,以 SDD 規格先行與對抗式驗收測試驅動開發為主軸,並實踐強化:確定性品質關卡、人工檢查點、分級裁決,對應的軟體開發工作流。
 
 ## 流程
 
-每次執行由兩個 agent slot 驅動:
-
-  - `A` 是工作者
-  - `B` 是對抗式審查者
-
-建議兩個 slot 用不同廠牌的模型(盲點不同)。每個 slot 可以是 `claude`、`codex`、`agy`、`opencode` 或自訂 wrapper。`opencode` 是多模型 runtime:換 `MODEL_*` 不必再為每家模型加 adapter。兩個 slot 都用 OpenCode 時仍是同一套工具,若要不同 runtime 請搭配 `claude` 或 `codex`。
-
-實作步驟可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
+每次執行有兩個固定 slot:`A` 與 `B`。每個 slot 是一個 CLI(`claude`、`codex`、`agy`、`opencode` 或自訂 wrapper)。預設 A 是 owner,B 是 reviewer 負責對抗式審查並撰寫驗收測試。建議兩個 slot 用不同廠牌的模型(盲點不同)。
 
 各階段的角色分工:
 
 | 階段 | 產出者 | 審查者 |
 | --- | --- | --- |
-| Spec | A | B |
-| Plan | A | B |
-| Acceptance tests | **B** | A |
-| 實作(逐任務迴圈) | A(`IMPL_AGENT` 可換成 I) | build gate,以及後續的 branch review |
-| Branch review / final acceptance | — | B(中間夾一次 A self-review) |
+| Spec | owner(預設 A) | reviewer(預設 B) |
+| Plan | owner | reviewer |
+| Acceptance tests | **reviewer** | owner |
+| 實作(逐任務迴圈) | implementer(預設是 owner) | build gate |
+| Branch review | - | reviewer |
+| Self review | - | owner |
+| Final acceptance | - | reviewer |
+
+實作階段可另外指定第三個 slot `I`(見[強模型規劃、便宜模型實作](#強模型規劃便宜模型實作))。
 
 刻意的職責分離有兩條:**沒有任何 slot 同時寫 spec 和 acceptance tests**(規格要由另一個廠牌的模型操作化成測試,才會逼出規格的模糊與缺口),以及**實作者不寫自己要通過的測試**(否則就是讓 AI 自己出題自己作答)。
 
@@ -47,10 +42,10 @@ commit
 B 一次寫完全部 acceptance tests(TDD red;但 workflow 不驗證 Red)
 A review
 commit acceptance tests
-記錄 + 啟動 protected-test 保護(一次記錄整份清單;此後每次 worker 呼叫都檢查)
+記錄 + 啟動 protected-test 保護(一次記錄整份清單;此後每次會改檔的 agent 呼叫都檢查)
   ↓
 For each task(plan.md 的 - [ ]):
-    A 實作(IMPL_AGENT 可換實作 agent;預設 A)
+    A 實作(IMPL_AGENT 可換實作 agent)
     build gate
     commit
   ↓
@@ -67,20 +62,22 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 
 兩個選用模式會改寫部分流程:
 
-- **[分階段 ATDD](#分階段-atdd-模式phased-atdd)**(`PHASES=1`):plan 拆成垂直 phase,單一測試階段改為逐 phase 迴圈——B 寫該 phase 的測試、workflow 驗證測試起始為紅、實作該 phase,phase gate 保證已完成的 phase 持續全綠。
-- **[雙 spec](#雙-spec-模式)**(`DUAL_SPEC=1`):取代訂規格階段——A/B 各寫獨立候選 spec、交叉審查,由人選出 base(或合併),選中的 slot 接手後續整個流程。
+- **[分階段 ATDD](#分階段-atdd-模式phased-atdd)**(`PHASES=1`):plan 拆成垂直 phase,單一測試階段改為逐 phase 迴圈——reviewer 寫該 phase 的測試、workflow 驗證測試起始為紅、實作該 phase,phase gate 保證已完成的 phase 持續全綠。
+- **[雙 spec](#雙-spec-模式)**(`DUAL_SPEC=1`):取代訂規格階段——A/B 各寫獨立候選 spec、交叉審查,由人選出 base(或合併)。選中的 slot 成為 owner,另一方成為 reviewer;slot 名稱仍是 A 與 B。
 
 為什麼這樣設計(確定性關卡、對抗式測試、分級裁決……)見下一節[核心設計](#核心設計為什麼這樣做);逐 stage 的完整說明(完整流程圖、審查迴圈機制、關卡指令與各 stage 細節)見 [`docs/how-it-works.zh-TW.md`](docs/how-it-works.zh-TW.md)。
 
 ## 核心設計(為什麼這樣做)
 
-- **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 workflow 自己跑,失敗輸出直接餵回給工作者修;AI 的「測試通過」回報只當參考。
-- **對抗式測試完整性**:驗收測試由 reviewer 依規格撰寫、owner 審查;進入受保護階段後,任何 worker 呼叫(包含實作 slot I 與後續 owner 修正)都禁止修改這些測試檔。Workflow 在**每次 worker 動作後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
+- **確定性關卡不外包給 AI**:AI 會為了「讓測試通過」走捷徑(reward hacking),所以 build/vet/test 由 workflow 自己跑,失敗輸出直接餵回給必須修復的 agent;AI 的「測試通過」回報只當參考。
+- **對抗式測試完整性**:驗收測試由 reviewer 依規格撰寫、owner 審查;進入受保護階段後,任何會改檔的呼叫(I 的逐任務實作,以及之後 owner 的修正)都禁止修改這些測試檔。Workflow 在**每次會改檔的呼叫後**用 `git diff` 硬性檢查(已提交與未提交的竄改都抓),屢犯即中止。對測試有異議只能記錄在 spec 的「假設與未決問題」。
 - **人工檢查點在最高槓桿處**:spec 通過 AI 互審後、開始花大錢實作前,暫停等人核准(可先直接編輯 spec 再繼續);流程終點是「等人 merge 的 PR」,不是靜默結束。
 - **分級裁決**:`verdict.json` 為 `{approved, blockers[], suggestions[]}`,只有 blocker 擋關;suggestions 累積到 `aac/.run/suggestions.md`,收尾階段逐條評估,避免審查者拿小事擋關或不好意思擋而放水。
 - **小批次**:一個 checkbox 任務一個 commit,審查與回退都容易。
 - **產物落地成檔案**:A/B 之間靠 `aac/docs/` 檔案與 git diff 溝通,不靠 stdout 傳遞長內容——這是 SDD 的天然優勢。
 - **同一個 worker ref 在迴圈內續 session、reviewer 每輪全新 context**:同一個 worker ref 修改時保留脈絡;切換 ref 會依下方規則丟棄 session。Reviewer 不被前一輪結論定錨——這也是不同廠牌模型互審的價值(盲點不同)。
+
+**worker** 是任何一次會改檔的 agent,不是職稱。寫測試時 reviewer 也是 worker;設了 I 時,逐任務的 worker 是 I。Dual Spec 只在人選完後重綁 owner/reviewer;A、B 這兩個 slot 不變。
 
 ## 前置需求
 
@@ -130,13 +127,13 @@ set "PATH=C:\path\to\adversarial-ai-coding\scripts;%PATH%"
 ```bash
 cd /path/to/your-project
 
-# 預設:A = Claude Code,B = Codex
+# 預設:A = Claude Code(owner),B = Codex(reviewer)
 aac "為 CLI 加上 --json 輸出選項"
 
 # 需求寫成檔案(建議,見下方「需求怎麼寫」)
 aac request.md
 
-# 交換 agent
+# 對調 A/B 的 CLI
 AGENT_A=codex AGENT_B=claude aac request.md
 
 # 同一個內建 CLI 放在兩個 slot,各自使用不同模型
@@ -293,27 +290,28 @@ A、B 各寫比較表 spec-comparison-a/b.md;workflow 產索引 spec-comparison.
 Human 選擇 a / b / ma / mb:
     a、b:採用該候選為 base
     ma、mb:該候選為 base,人工編輯 spec-merge-request.md 列出要從另一份採納的項目(workflow 驗有實際內容)
-    選中的 slot 成為 owner,接手後續流程的「A」角色;另一方成為 reviewer「B」
+    選中的 slot 成為 owner;另一方成為 reviewer
+    slot 名稱仍是 A 與 B,沒有誰「變成 A」
   ↓
 base 複製為 spec.md;(merge 時)owner 依 merge request 合併
 reviewer review spec.md(merge 時加驗採納項目沒漏、沒被扭曲)+ Human Gate → commit
   ↓
-接預設或分階段流程的 Plan 之後(A=owner、B=reviewer)
+接預設或分階段流程的 Plan 之後。之後各 stage 用 owner / reviewer,不再把 A 當職稱
 ```
 
 裁決命令:
 
 - `a`:直接複製 A 的候選成最終 `spec.md`
 - `b`:直接複製 B 的候選成最終 `spec.md`
-- `ma`:以 A 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 A 明確採納 B 的指定項目
-- `mb`:以 B 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 B 明確採納 A 的指定項目
+- `ma`:以 A 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 owner(此時為 slot A)明確採納 B 的指定項目
+- `mb`:以 B 為 base,編輯 `aac/.run/spec-merge-request.md`,要求 owner(此時為 slot B)明確採納 A 的指定項目
 
-被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
+被選中的 owner 後續負責 plan、完整關卡與審查修正、自我 review;選用的實作 slot 只執行前述逐任務迴圈。另一個 A/B slot 成為 reviewer,並負責撰寫受保護驗收測試。A、B 這兩個 slot 不變,只是職責重綁。此模式預設關閉,且刻意要求互動終端與 `HUMAN_GATE=1`;無人值守流程請維持 `DUAL_SPEC=0`。
 
 ## 匯入外部 Spec 或 Plan
 
 先在你慣用的互動工具裡釐清需求,再把成品交給 workflow:
-`IMPORT_SPEC=path` 會把你的檔案當作 `spec.md`,只跳過「worker 撰寫
+`IMPORT_SPEC=path` 會把你的檔案當作 `spec.md`,只跳過「owner 撰寫
 spec」那一步;`IMPORT_PLAN=path`(需同時設定 `IMPORT_SPEC`)對
 `plan.md` 做同樣的事。匯入的產物預設仍會經過 reviewer 的對抗式
 review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
@@ -333,6 +331,8 @@ review;設 `IMPORT_REVIEW=0` 可跳過該 AI review(human gate、格式檢查
 水平技術分層。Plan review 完成後,workflow 會確定性解析 plan;若結構有
 問題,會在任何實作開始前交回 owner 修正。
 
+以下為預設對照:A = owner,B = reviewer。設了 `IMPL_*` 時,逐任務改由 I 寫。
+
 ```text
 Spec(A 寫、B review)
 Human Gate
@@ -348,7 +348,7 @@ For each Phase:
     A review
     workflow 驗證測試正確 Red(regression-guard Phase 則必須 Green)
     commit Phase tests
-    記錄 + 啟動 protected-test 保護(append;此後每次 worker 呼叫都檢查)
+    記錄 + 啟動 protected-test 保護(append;此後每次會改檔的 agent 呼叫都檢查)
     For each task:
         A 實作(IMPL_AGENT 可換實作 agent;預設 A)
         build gate
@@ -369,7 +369,7 @@ finish:產 pr-body.md、(OPEN_PR=1)push + gh pr create
 
 每個 phase 依序執行:
 
-1. B 只撰寫此 phase 的驗收測試;A 審查這些測試。
+1. reviewer 只撰寫此 phase 的驗收測試;owner 審查這些測試。
 2. Workflow 用 `PHASE_GATE_CMD`(或 `GATE_CMD`)執行 red check:由於此
    phase 尚未實作,新測試必須失敗。標題以 `(regression-guard)` 結尾時
    會反轉預期:這些測試用來鎖定既有行為,所以必須立即通過。
@@ -418,8 +418,8 @@ ID。不同的自訂 slot 不得共用 command 名稱,因為 workflow 無法判�
 `IMPL_AGENT` wrapper;三個 `IMPL_*` 值全空時仍會使用 owner 本身,不會建立
 不同的 slot。
 
-若自訂 CLI 需要延續 session,請在 wrapper script 中自行處理。例如讓 worker
-與 reviewer 使用不同的 profile、session ID 或 cache 目錄:
+若自訂 CLI 需要延續 session,請在 wrapper script 中自行處理。例如讓會改檔的
+呼叫與 reviewer 呼叫使用不同的 profile、session ID 或 cache 目錄:
 
 ```bash
 # my-agent-worker
@@ -436,8 +436,9 @@ exec my-agent --session aac-reviewer "$@"
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `AGENT_A` | `claude` | 工作者 agent command:`claude` \| `codex` \| `agy` \| `opencode` 或自訂命令 |
-| `AGENT_B` | `codex` | 審查者 agent command(驗收測試 stage 兩者角色互換) |
+| `AGENT_A` | `claude` | Slot A 的 agent command(預設為 owner):`claude` \| `codex` \| `agy` \| `opencode` 或自訂命令 |
+| `AGENT_B` | `codex` | Slot B 的 agent command(預設為 reviewer)。驗收測試 stage 改由 reviewer 撰寫、owner 審查 |
+
 | `IMPL_AGENT` | 選定 owner 的 command | Stage-5 逐任務實作迴圈使用的 command。內建 command 可與 A/B 同名;自訂實作 wrapper 必須與兩者都不同名 |
 | `MODEL_A` | (CLI 預設) | A 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_A_ARGS` |
 | `MODEL_B` | (CLI 預設) | B 槽內建 agent 的模型;即使 A/B 使用相同 command 也按 slot 解析。自訂 agent 請把模型參數放在 `AGENT_B_ARGS` |
@@ -448,8 +449,8 @@ exec my-agent --session aac-reviewer "$@"
 | `HUMAN_GATE` | `1` | spec 通過 AI 互審後暫停等人核准;無人值守設 `0`(不建議) |
 | `HUMAN_GATE_PLAN` | `0` | `1` = plan 通過 AI 互審後、commit 之前也暫停等人核准。plan 是實作階段的任務佇列(一個 checkbox 一個 commit),plan 錯了後面每個 commit 都跟著錯,這是燒錢前最後一個便宜的介入點。與 `HUMAN_GATE` 互相獨立(`HUMAN_GATE=0 HUMAN_GATE_PLAN=1` 合法),需要互動終端 |
 | `DUAL_SPEC` | `0` | `1` = 啟用雙 spec: A/B 各寫獨立候選、互審一次、各寫比較表、等人選 owner。需要互動終端與 `HUMAN_GATE=1` |
-| `IMPORT_SPEC` | 空 | 使用此檔案作為 `spec.md`;跳過「worker 撰寫 spec」步驟。 |
-| `IMPORT_PLAN` | 空 | 使用此檔案作為 `plan.md`;跳過「worker 撰寫 plan」步驟。需要 `IMPORT_SPEC`。 |
+| `IMPORT_SPEC` | 空 | 使用此檔案作為 `spec.md`;跳過「owner 撰寫 spec」步驟。 |
+| `IMPORT_PLAN` | 空 | 使用此檔案作為 `plan.md`;跳過「owner 撰寫 plan」步驟。需要 `IMPORT_SPEC`。 |
 | `IMPORT_REVIEW` | `1` | 匯入的產物仍會經過 reviewer 的 review loop。`0` 只會跳過匯入產物的 AI review。需要 `IMPORT_SPEC`。 |
 | `PHASES` | `0` | `1` 啟用分階段 ATDD 流程:plan 拆成垂直 phase,每個 phase 先寫自己的受保護驗收測試再實作。此設定決定 stage 圖,resume 時不可變更。未設定 `PHASES` 且未設定 `IMPORT_PLAN` 時,spec reviewer 也會判斷是否適合分階段模式,spec human gate 可能提議啟用(詳見[分階段 ATDD 模式](#分階段-atdd-模式phased-atdd))。 |
 | `PHASE_GATE_CMD` | 空 | 每個 phase 的 red check 與 phase gate 命令。空值時改用 `GATE_CMD`。 |
@@ -609,6 +610,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序;每個 artifa
 | 即時輸出 | 訊息,加上每個工具呼叫一行摘要 | 訊息,加上每個工具呼叫一行摘要 | 原始合併輸出 | 訊息,加上每個工具呼叫一行摘要(工具結束時) |
 
 - Claude、Codex、Agy、OpenCode 都可放在 A、B、I slot;`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。OpenCode 的 `MODEL_*` 是 `provider/model`,AAC 不維護模型清單。worker 只按已捕捉的 id 精準續接,reviewer 每輪都開新 session。
+- `opencode` 是多模型 runtime。兩個 slot 都用 OpenCode 時仍是同一套工具,若要不同 runtime 請搭配 `claude` 或 `codex`。
 - 全程只有一個 active worker session,不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接;只要換到不同 agent ref(例如 slot 或 command 改變),就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**,因為模型值不是 `AgentRef` 的一部分;只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始,迴圈內可累積 context;切回 owner 跑完整關卡時,I 的 ID 會被丟棄,舊 owner session 也不會恢復。Stage 邊界同樣會清除 active session。Workflow prompt 會指向內容完整的 archive prompt 檔,不依賴保留 chat context。
 - workflow 絕不退回 Codex `--last`、Agy `--continue` 或 OpenCode `-c`:fresh call 抓不到 id 時會警告且下輪仍 fresh;已知 id 後某輪抓不到則保留原 id。Claude、Codex、OpenCode 的原始 JSONL 與 Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
 - 內建 agent 執行時都會即時串流輸出,長步驟很少變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `),並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint;它只在列印時加上,封存產物與 run log 永遠不含前綴。Claude、Codex 與 OpenCode 另外會把每個工具呼叫印成一行,標示工具名稱與它操作的檔案、指令或搜尋樣式,其餘輸入一律捨棄,因此一次大量寫檔也只佔一行。Claude 與 Codex 在工具呼叫「開始」時就印,因此跑十分鐘的指令執行中就看得到;OpenCode 只在呼叫「結束」時才印(失敗會標 `(failed)`),所以慢的工具呼叫在回來之前是安靜的。Codex 把 shell 呼叫回報成完整的解譯器命令列,因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉,只顯示你真正在意的那段指令。
@@ -667,9 +669,9 @@ AGENT_B=agy AGENT_B_ARGS='--effort=low' \
 
 ## 受保護測試的逃生口
 
-驗收測試由 reviewer 撰寫後受保護。實作期間,任何 worker(包含實作 slot I 與後續 owner 修正)都不得修改、刪除或略過 `aac/.run/protected-tests.txt` 列出的檔案。acceptance stage 結束後,目前 workflow process 會在記憶體保存 `aac/.run/protected-tests.txt` 與 `aac/.run/protected-base.sha` 的 exact bytes、解析後 paths 與 base commit,並在每個 active worker boundary 前後驗證 exact bytes。即使 path list 為空,兩個 control files 仍受保護。這個 snapshot 只在目前 process 有效;resume 啟動的新 process 會把當時磁碟上的 controls 視為新的起始信任。這不是 OS-level lock,也不保證能防禦兩個 filesystem calls 之間的 concurrent pathname replacement。
+驗收測試由 reviewer 撰寫後受保護。實作期間,任何會改檔的呼叫(I 的逐任務實作,以及之後 owner 的修正)都不得修改、刪除或略過 `aac/.run/protected-tests.txt` 列出的檔案。acceptance stage 結束後,目前 workflow process 會在記憶體保存 `aac/.run/protected-tests.txt` 與 `aac/.run/protected-base.sha` 的 exact bytes、解析後 paths 與 base commit,並在每次會改檔的呼叫前後驗證 exact bytes。即使 path list 為空,兩個 control files 仍受保護。這個 snapshot 只在目前 process 有效;resume 啟動的新 process 會把當時磁碟上的 controls 視為新的起始信任。這不是 OS-level lock,也不保證能防禦兩個 filesystem calls 之間的 concurrent pathname replacement。
 
-若 worker 對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工依序處理:編輯修正後的測試、commit 新內容,再把該新 commit SHA 寫入 `aac/.run/protected-base.sha`;若該測試不應再受保護,則可改由人工從 `aac/.run/protected-tests.txt` 移除 path。確認 controls 已描述預期的 trusted state 後再 resume。
+若 owner、I 或任何會改檔的呼叫對測試有異議,只能把異議寫進 spec 的「假設與未決問題」,不能自行改測試。若受保護測試**真的**錯了,請停止 workflow 並由人工依序處理:編輯修正後的測試、commit 新內容,再把該新 commit SHA 寫入 `aac/.run/protected-base.sha`;若該測試不應再受保護,則可改由人工從 `aac/.run/protected-tests.txt` 移除 path。確認 controls 已描述預期的 trusted state 後再 resume。
 
 ## 安全性注意事項
 
@@ -707,7 +709,7 @@ uv run pytest -q -m "not e2e"
 ### 手動 E2E(會呼叫真實 AI、消耗訂閱配額)
 
 ```bash
-uv run pytest -m e2e -s   # 完整六 stage(預設 sonnet worker/low effort + codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
+uv run pytest -m e2e -s   # 完整六 stage(預設 A=sonnet/low effort + B=codex gpt-5.5/low effort;約 20~40 分、$2~5 等值配額)
 ```
 
 執行器在臨時目錄現生 fixture git repo(Go 小專案 + ASCII 需求書,沉澱自五次真實試跑的教訓),直接引用本 repo 的 Python 套件與 `resources/`(無複本漂移),跑完後自動驗收:六 stage 完成、spec 含 Assumptions 節、plan checkbox 全打勾、受保護測試未被改動、逐任務小 commit、最終關卡由執行器親測、metrics 摘要。成敗都會保留現場路徑供檢視,`E2E_DIR` 可指定位置,agent 與模型可用一般環境變數覆寫。

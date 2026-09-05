@@ -2,7 +2,7 @@
 
 English | [繁體中文](README.zh-TW.md)
 
-`adversarial-ai-coding` is a workflow orchestrator for agentic software development.
+`adversarial-ai-coding` is a workflow orchestrator for multiple agentic software development.
 
 ## Multi-Agent Adversarial Coding Workflow
 
@@ -15,27 +15,25 @@ gates, small commits, and human review before costly implementation starts.
 
 ## How It Works
 
-Every run drives two agent slots: 
-
-  - `A` is the worker
-  - `B` is the adversarial reviewer
-
-Use different AI brands for the two slots — their blind spots differ. Each slot can be `claude` (Claude Code), `codex` (Codex CLI), `agy`
-(Antigravity CLI), `opencode` (OpenCode, any model the user has already
-authenticated), or a custom wrapper command. 
-
-The implementation step can optionally use a third slot `I` (see
-[Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
+Every run has two durable slots, `A` and `B`. Each slot is a CLI (`claude`,
+`codex`, `agy`, `opencode`, or a custom wrapper). By default A is the owner
+and B is the reviewer that reviews the work and writes adversarial acceptance
+tests. Use different brands — their blind spots differ.
 
 Roles at each stage:
 
 | Stage | Writes | Reviews |
 | --- | --- | --- |
-| Spec | A | B |
-| Plan | A | B |
-| Acceptance tests | **B** | A |
-| Implementation (per-task loop) | A (`IMPL_AGENT` can swap in I) | build gate, plus the later branch review |
-| Branch review / final acceptance | — | B (one A self-review in between) |
+| Spec | owner (A by default) | reviewer (B by default) |
+| Plan | owner | reviewer |
+| Acceptance tests | **reviewer** | owner |
+| Implementation (per-task loop) | implementer (owner by default) | build gate |
+| Branch review | - | reviewer |
+| Self review | - | owner |
+| Final acceptance | - | reviewer |
+
+The implementation stage can optionally use a third slot `I` (see
+[Strong Model Plans, Cheap Model Implements](#strong-model-plans-cheap-model-implements)).
 
 Two separations are deliberate: **no slot writes both the spec and the
 acceptance tests** — turning a spec into tests is what forces a second model to
@@ -57,10 +55,10 @@ commit
 B writes all acceptance tests at once (TDD red; the workflow does not verify red)
 A reviews
 commit acceptance tests
-record + arm the protected-test guard (whole list at once; re-checked after every later worker call)
+record + arm the protected-test guard (whole list at once; re-checked after every later producing call)
   ↓
 For each task (- [ ] in plan.md):
-    A implements (IMPL_AGENT swaps the implementer; default A)
+    A implements (IMPL_AGENT swaps the implementer)
     build gate
     commit
   ↓
@@ -77,16 +75,17 @@ finish: write pr-body.md, (OPEN_PR=1) push + gh pr create
 
 Four rules make the pipeline adversarial instead of cooperative:
 
-- **The reviewer writes the acceptance tests.** Roles swap for that stage: B
-  writes the tests, A only reviews them, and the test files become protected —
-  the workflow re-checks them with `git diff` after every later worker action.
+- **The reviewer writes the acceptance tests.** Roles swap for that stage: the
+  reviewer writes the tests, the owner only reviews them, and the test files
+  become protected — the workflow re-checks them with `git diff` after every
+  later producing call.
 - **Quality gates are deterministic.** The workflow runs the build and test
-  commands itself and feeds failures back to the worker; an agent's own "tests
-  pass" claim is never trusted.
+  commands itself and feeds failures back to the agent that must repair them;
+  an agent's own "tests pass" claim is never trusted.
 - **The workflow decides when a review ends.** Every review step loops
-  review → fix → gate until B's `verdict.json` is approved, and aborts after
-  `MAX_ROUNDS`. Only blockers repeat the loop; suggestions accumulate and are
-  handled in the final stage.
+  review → fix → gate until the reviewer's `verdict.json` is approved, and
+  aborts after `MAX_ROUNDS`. Only blockers repeat the loop; suggestions
+  accumulate and are handled in the final stage.
 - **Humans sit at the highest-leverage checkpoints.** A human approves the
   spec before implementation starts (`HUMAN_GATE`), optionally the plan too
   (`HUMAN_GATE_PLAN=1`), and the run ends in a PR for a human to merge.
@@ -95,11 +94,12 @@ Two optional modes reshape parts of the pipeline:
 
 - **[Phased ATDD](#phased-atdd-mode)** (`PHASES=1`) splits the plan into
   vertical phases and replaces the single test stage with a per-phase loop:
-  B writes one phase's tests, the workflow verifies they start red, the phase
-  is implemented, and the phase gate keeps every finished phase green.
+  the reviewer writes one phase's tests, the workflow verifies they start red,
+  the phase is implemented, and the phase gate keeps every finished phase green.
 - **[Dual spec](#dual-spec-mode)** (`DUAL_SPEC=1`) replaces the spec stage:
   A and B write independent candidate specs, cross-review them, and a human
-  picks the base (or a merge). The chosen slot owns the rest of the run.
+  picks the base (or a merge). The chosen slot becomes owner; the other
+  becomes reviewer. Slot names stay A and B.
 
 For the stage-by-stage walkthrough — the full pipeline diagram, review-loop
 mechanics, gate commands, and per-stage notes — see
@@ -109,15 +109,15 @@ mechanics, gate commands, and per-stage notes — see
 
 - **Deterministic gates are not delegated to AI.** An AI may take shortcuts
   (reward hacking) to make tests pass, so the workflow runs build, vet, and
-  test commands itself and sends failures back to the worker. An agent's own
-  report that tests passed is informational only.
+  test commands itself and sends failures back to the agent that must repair
+  them. An agent's own report that tests passed is informational only.
 - **Adversarial test integrity.** The reviewer writes acceptance tests from the
-  spec and the owner reviews them. Once protection is armed, no worker call —
-  including implementation slot I and later owner repairs — may change those
-  test files. The workflow checks `git diff` after every worker action, catches
-  both committed and uncommitted tampering, and aborts on repeated violations.
-  Objections to a test may only be recorded in the spec's Assumptions and Open
-  Questions section.
+  spec and the owner reviews them. Once protection is armed, no producing
+  call — I's per-task implementation, and later owner repairs — may change
+  those test files. The workflow checks `git diff` after every producing call,
+  catches both committed and uncommitted tampering, and aborts on repeated
+  violations. Objections to a test may only be recorded in the spec's
+  Assumptions and Open Questions section.
 - **Human checkpoints sit at the highest-leverage points.** After the spec
   passes adversarial review and before expensive implementation begins, the
   workflow pauses for human approval; the human may edit the spec before
@@ -138,6 +138,11 @@ mechanics, gate commands, and per-stage notes — see
   ref change discards the session according to the rules below. A fresh
   reviewer is not anchored by its previous conclusion, which is another reason
   to pair different AI brands with different blind spots.
+
+A **worker** is any producing agent. It is not a job
+title. The owner, the reviewer (when writing tests), and the implementer can each be the
+worker for a given step. Dual spec can rebind owner and reviewer after a
+human choice; slots A and B do not change, only the jobs move.
 
 ## Requirements
 
@@ -197,8 +202,8 @@ Then run `aac` from the root of the target project:
 cd /path/to/your-project
 ```
 
-Run a request with the default agents, where Claude is the worker and Codex is
-the reviewer:
+Run a request with the default agents, where Claude is slot A (owner) and
+Codex is slot B (reviewer):
 
 ```bash
 aac "Add --json output to the CLI"
@@ -210,7 +215,7 @@ You can also write the request in a file:
 aac request.md
 ```
 
-Swap the worker and reviewer agents:
+Swap the CLIs on slots A and B:
 
 ```bash
 AGENT_A=codex AGENT_B=claude aac request.md
@@ -409,12 +414,14 @@ A and B each write a comparison table (spec-comparison-a/b.md); workflow writes 
 Human chooses a / b / ma / mb:
     a, b:   adopt that candidate as the base
     ma, mb: that candidate is the base; the human edits spec-merge-request.md listing items to adopt from the other (workflow verifies it has real content)
-    the chosen slot becomes owner and takes over the "A" role; the other becomes reviewer "B"
+    the chosen slot becomes owner; the other slot becomes reviewer
+    slot names stay A and B — nobody "becomes A"
   ↓
 base is copied to spec.md; (merge) the owner merges per the merge request
 reviewer reviews spec.md (merge: adopted items must arrive intact and undistorted) + human gate → commit
   ↓
-continues at the Plan stage of the default or phased flow (A = owner, B = reviewer)
+continues at the Plan stage of the default or phased flow, using owner /
+reviewer rather than treating A as a job title
 ```
 
 Decision commands:
@@ -422,22 +429,22 @@ Decision commands:
 - `a`: copy Candidate A to final `spec.md`
 - `b`: copy Candidate B to final `spec.md`
 - `ma`: use Candidate A as base, edit `aac/.run/spec-merge-request.md`, and
-  require A to adopt selected items from Candidate B
+  require the owner (then slot A) to adopt selected items from Candidate B
 - `mb`: use Candidate B as base, edit `aac/.run/spec-merge-request.md`, and
-  require B to adopt selected items from Candidate A
+  require the owner (then slot B) to adopt selected items from Candidate A
 
 After selection, the chosen owner remains responsible for planning, complete
 gate and review repairs, and self-review. The optional implementation slot runs
 only the per-task loop described above. The other A/B slot becomes the reviewer
-and writes the protected acceptance tests. Dual spec mode requires an
-interactive terminal and `HUMAN_GATE=1`; unattended runs should leave it
-disabled.
+and writes the protected acceptance tests. Slots A and B do not change; only
+the jobs move. Dual spec mode requires an interactive terminal and
+`HUMAN_GATE=1`; unattended runs should leave it disabled.
 
 ## Importing an External Spec or Plan
 
 Clarify requirements in whatever interactive tool you prefer, then hand
 the finished files to the workflow: `IMPORT_SPEC=path` uses your file as
-`spec.md` and skips only the "worker writes the spec" step, and
+`spec.md` and skips only the owner writing `spec.md`, and
 `IMPORT_PLAN=path` (requires `IMPORT_SPEC`) does the same for `plan.md`.
 Imported artifacts still get the reviewer's adversarial review by
 default; set `IMPORT_REVIEW=0` to skip that AI review (human gates,
@@ -458,6 +465,9 @@ slices (a working behavior increment), never horizontal technical layers.
 The workflow parses the plan deterministically after the plan review and
 sends structure problems back to the owner before anything is implemented.
 
+The default pipeline below uses A and B (A = owner, B = reviewer). When
+`IMPL_*` is set, I writes the per-task loop.
+
 ```text
 Spec (A writes, B reviews)
 human gate
@@ -473,7 +483,7 @@ For each phase:
     A reviews
     workflow verifies the tests are correctly red (regression-guard phase must be green instead)
     commit phase tests
-    record + arm the protected-test guard (append; re-checked after every later worker call)
+    record + arm the protected-test guard (append; re-checked after every later producing call)
     For each task:
         A implements (IMPL_AGENT swaps the implementer; default A)
         build gate
@@ -494,7 +504,7 @@ finish: write pr-body.md, (OPEN_PR=1) push + gh pr create
 
 For each phase, in order:
 
-1. B writes only this phase's acceptance tests; A reviews them.
+1. The reviewer writes only this phase's acceptance tests; the owner reviews them.
 2. The workflow runs the red check with `PHASE_GATE_CMD` (or `GATE_CMD`):
    the new tests must fail, because the phase is not implemented yet. A
    title ending in `(regression-guard)` inverts the expectation: those
@@ -553,8 +563,8 @@ different `IMPL_AGENT` wrapper; leaving all `IMPL_*` values empty keeps the
 owner itself and does not create a distinct slot.
 
 If a custom CLI needs session continuity, handle it in a wrapper script. For
-example, give the worker and reviewer separate profiles, session ids, or cache
-directories:
+example, give producing calls and reviewer calls separate profiles, session
+ids, or cache directories:
 
 ```bash
 # my-agent-worker
@@ -571,8 +581,8 @@ quoting-sensitive arguments, or other stateful setup.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `AGENT_A` | `claude` | Worker agent command: `claude`, `codex`, `agy`, `opencode`, or a custom command. |
-| `AGENT_B` | `codex` | Reviewer agent command. In the acceptance-test stage, the roles are swapped. |
+| `AGENT_A` | `claude` | Slot A command (owner by default): `claude`, `codex`, `agy`, `opencode`, or a custom command. |
+| `AGENT_B` | `codex` | Slot B command (reviewer by default). In the acceptance-test stage, the reviewer writes and the owner reviews. |
 | `IMPL_AGENT` | selected owner command | Command for the stage-5 per-task implementation loop. Built-ins may match A or B; a custom implementation wrapper must differ from both. |
 | `MODEL_A` | CLI default | Model override for built-in slot A, even when both slots use the same command. Custom agents should pass model flags through `AGENT_A_ARGS`. |
 | `MODEL_B` | CLI default | Model override for built-in slot B, even when both slots use the same command. Custom agents should pass model flags through `AGENT_B_ARGS`. |
@@ -583,8 +593,8 @@ quoting-sensitive arguments, or other stateful setup.
 | `HUMAN_GATE` | `1` | Pause for human approval after the spec review. Set `0` for unattended runs. |
 | `HUMAN_GATE_PLAN` | `0` | `1` also pauses for human approval after the plan review, before `plan.md` is committed. Independent of `HUMAN_GATE`, and requires an interactive terminal. |
 | `DUAL_SPEC` | `0` | `1` enables the dual spec flow: A/B write independent candidates, cross-review once, produce comparison tables, and wait for human owner selection. Requires `HUMAN_GATE=1` and an interactive terminal. |
-| `IMPORT_SPEC` | empty | Use this file as `spec.md`; skip the "worker writes the spec" step. |
-| `IMPORT_PLAN` | empty | Use this file as `plan.md`; skip the "worker writes the plan" step. Requires `IMPORT_SPEC`. |
+| `IMPORT_SPEC` | empty | Use this file as `spec.md`; skip the owner writing `spec.md`. |
+| `IMPORT_PLAN` | empty | Use this file as `plan.md`; skip the owner writing `plan.md`. Requires `IMPORT_SPEC`. |
 | `IMPORT_REVIEW` | `1` | Imported artifacts still go through the reviewer's review loop. `0` skips the AI review of imported artifacts only. Requires `IMPORT_SPEC`. |
 | `PHASES` | `0` | `1` enables the phased ATDD flow: the plan is split into vertical phases, and each phase writes its own protected acceptance tests before its tasks are implemented. Decides the stage graph, so it cannot change across resume. When `PHASES` and `IMPORT_PLAN` are both unset, the spec reviewer also judges fitness and the spec human gate may offer to enable it (see [Phased ATDD Mode](#phased-atdd-mode)). |
 | `PHASE_GATE_CMD` | empty | Gate command for the per-phase red check and phase gate. Empty falls back to `GATE_CMD`. |
@@ -902,13 +912,14 @@ AGENT_B=agy AGENT_B_ARGS='--effort=low' \
 ## Protected Acceptance Tests
 
 Acceptance tests are written by the reviewer and then protected. During
-implementation, the worker must not edit, delete, or skip files listed in
+implementation, no producing call — I's per-task work, and later owner
+repairs — may edit, delete, or skip files listed in
 `aac/.run/protected-tests.txt`.
 
 After the acceptance stage, the active workflow process keeps the exact bytes
 of the protected path list and base control file, together with their parsed
 paths and base commit, in memory. It verifies those exact bytes before and
-after every active worker boundary. An empty path list still protects both
+after every producing call. An empty path list still protects both
 control files. The snapshot is process-local: a resumed process trusts the
 current on-disk controls as its new starting state. It is not an OS-level lock
 or a guarantee against concurrent pathname replacement between filesystem
@@ -938,7 +949,7 @@ the intended trusted state.
   worth the extra cost.
 - `DUAL_SPEC=1` intentionally refuses `HUMAN_GATE=0` and non-interactive
   terminals because the workflow requires a human owner decision.
-- Identical custom agent commands cannot be used as both worker and reviewer.
+- Identical custom agent commands cannot be used as both slot A and slot B.
   Use distinct wrapper command names when both slots share the same underlying
   custom CLI. Identical built-in Claude, Codex, Agy, and OpenCode slots are supported.
 

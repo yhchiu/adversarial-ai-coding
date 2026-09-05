@@ -7,9 +7,9 @@ reference for every file that crosses an agent boundary — verdicts, reviews,
 specs, plans, protected tests, and run state — is
 [artifact-contract.md](artifact-contract.md).
 
-The workflow drives two owner/reviewer slots through a staged pipeline: `A` is
-the worker agent and `B` is the reviewer agent. Stage 5 can also use a separate
-implementation slot, `I`. Any slot can resolve to:
+The workflow drives two durable slots, `A` and `B`. By default A is the owner
+and B is the reviewer. Stage 5 can also use a separate implementation slot,
+`I` (the implementer; owner unless `IMPL_*` is set). Any slot can resolve to:
 
 - `claude` for Claude Code CLI
 - `codex` for Codex CLI
@@ -17,23 +17,25 @@ implementation slot, `I`. Any slot can resolve to:
 - `opencode` for OpenCode (any model the user has already authenticated)
 - A custom agent CLI or wrapper command
 
-Using different agent commands for worker and reviewer is recommended because their
-failure modes are different.
+A worker call is any producing agent call, not a job title. Using different
+agent commands for owner and reviewer is recommended because their failure
+modes are different. Dual spec can rebind owner and reviewer; slot names stay
+A and B. The diagrams below use the default mapping (A = owner, B = reviewer).
 
 Every step marked ⟳ in the pipeline runs the same review loop, shown in the
 second diagram.
 
 ```mermaid
 flowchart TD
-    spec["<b>1 · Write spec</b><br/>A writes · B reviews ⟳"]
+    spec["<b>1 · Write spec</b><br/>owner (A) writes · reviewer (B) reviews ⟳"]
     gate{"2 · Human approves<br/>the spec?"}
-    plan["<b>3 · Write plan</b><br/>A writes the checkbox task list · B reviews ⟳"]
+    plan["<b>3 · Write plan</b><br/>owner (A) writes the checkbox task list · reviewer (B) reviews ⟳"]
     plangate{"Human approves the plan?<br/>(optional: HUMAN_GATE_PLAN=1)"}
-    tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>B writes · A reviews ⟳"]
-    task["<b>5 · Implement next task</b><br/>I (owner by default) codes · build gate (compile only) · protected-test check · commit"]
+    tests["<b>4 · Acceptance tests</b> (roles swapped)<br/>reviewer (B) writes · owner (A) reviews ⟳"]
+    task["<b>5 · Implement next task</b><br/>I (implementer; owner by default) codes · build gate (compile only) · protected-test check · commit"]
     more{"Tasks left?"}
-    branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · B reviews diff ⟳"]
-    final["<b>7 · Final review and fixes</b><br/>A self-review · B final acceptance ⟳"]
+    branch["<b>6 · Full gate + branch review</b><br/>workflow runs GATE_CMD · reviewer (B) reviews diff ⟳"]
+    final["<b>7 · Final review and fixes</b><br/>owner (A) self-review · reviewer (B) final acceptance ⟳"]
     fin(["<b>8 · Finish</b><br/>print push / PR commands"])
     abort(["Abort"])
 
@@ -47,7 +49,7 @@ flowchart TD
     more -- "yes" --> task
     more -- "no" --> branch --> final --> fin
     tests -. "run by the full gate" .-> branch
-    phased["<b>4-5 · Phased loop (PHASES=1)</b><br/>per phase: B writes tests · A reviews ⟳<br/>red check · I implements tasks · phase gate"]
+    phased["<b>4-5 · Phased loop (PHASES=1)</b><br/>per phase: reviewer (B) writes tests · owner (A) reviews ⟳<br/>red check · I implements tasks · phase gate"]
     plangate -. "y · PHASES=1" .-> phased
     phased -.-> branch
 ```
@@ -57,9 +59,9 @@ decides when the loop ends:
 
 ```mermaid
 flowchart LR
-    review["B reviews the scope"] --> verdict{"verdict.json<br/>approved?"}
+    review["reviewer (B) reviews the scope"] --> verdict{"verdict.json<br/>approved?"}
     verdict -- "yes" --> done(["stage continues"])
-    verdict -- "no (blockers)" --> fix["A replies to review.md<br/>and fixes"]
+    verdict -- "no (blockers)" --> fix["owner (A) replies to review.md<br/>and fixes"]
     fix --> dgate["deterministic gate<br/>(if configured)"] --> review
     verdict -. "MAX_ROUNDS exhausted" .-> halt(["abort + notify human"])
 ```
@@ -77,7 +79,7 @@ Stage notes:
    forbidden. With `DUAL_SPEC=1`, A and B write independent candidate specs
    first; see [Dual Spec Mode](../README.md#dual-spec-mode).
    With `IMPORT_SPEC=path`, the workflow copies your file in instead of
-   asking A to write it; see the import contract in
+   asking the owner to write it; see the import contract in
    [import-format.md](import-format.md).
    When `PHASES` is unset and `IMPORT_PLAN` is not set, the spec reviewer also
    writes a phased-fitness judgment to `aac/.run/phased-suggestion.json`,
@@ -96,9 +98,10 @@ Stage notes:
    review, gates, and structure checks still run (`IMPORT_REVIEW=0`
    skips only the AI review of imported files).
 4. **Acceptance tests**: adversarial TDD separates the test author from the
-   implementer, so the roles swap: B writes the tests and A only reviews them.
+   implementer, so the roles swap: the reviewer writes the tests and the owner
+   only reviews them.
    The test files become protected; the workflow hard-checks them with
-   `git diff` after every later worker action. Red tests are expected here
+   `git diff` after every later producing call. Red tests are expected here
    (TDD red phase). See
    [Protected Acceptance Tests](../README.md#protected-acceptance-tests) for
    details and the escape hatch when a protected test is wrong.
@@ -113,10 +116,10 @@ Stage notes:
    fixes, while the reviewer performs branch review and final acceptance.
 6. **Full gate + branch review**: the workflow itself runs `GATE_CMD` — the AI's
    own "tests pass" claim is never trusted — and acceptance tests must pass
-   now. B then reviews the complete branch diff.
-7. **Final review and fixes**: A works through the accumulated
-   `aac/.run/suggestions.md` items and its own self-review findings, then B
-   gives final acceptance.
+   now. The reviewer then reviews the complete branch diff.
+7. **Final review and fixes**: the owner works through the accumulated
+   `aac/.run/suggestions.md` items and its own self-review findings, then the
+   reviewer gives final acceptance.
 8. **Finish**: the workflow prints `git push` / `gh pr create` commands and run
    metrics. `OPEN_PR=1` runs them automatically.
 
