@@ -140,6 +140,10 @@ class Settings:
     retry_max_reset_wait: int
     tools: str
     spec_dir: str
+    # Set by startup when this process will invoke opencode. Not snapshotted:
+    # the next process, including RESUME_RUN, reads the binary again. None
+    # means this process did not select a line; calls then keep OpenCode 1.
+    opencode_major: int | None = None
 
     @classmethod
     def from_env(

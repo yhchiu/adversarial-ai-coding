@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import weakref
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import Callable
@@ -124,16 +123,6 @@ def resolve_model_args(ref: AgentRef, settings: Settings) -> str:
     return " ".join(raw for _, raw in _arg_sources(ref, settings))
 
 
-# Major version of the opencode binary this process already read, keyed by
-# the settings object startup validated. It is not a Settings field: the run
-# snapshot must not carry it, and the next process, including RESUME_RUN,
-# reads the binary again. Calls that never went through startup keep OpenCode
-# 1, which is the contract those calls already speak.
-_OPENCODE_MAJORS: weakref.WeakKeyDictionary[Settings, int] = (
-    weakref.WeakKeyDictionary()
-)
-
-
 def _opencode_major_number(text: str) -> int | None:
     """The first integer in a version string. `1.2.24` is 1, `local` is none."""
     match = re.search(r"\d+", text)
@@ -161,9 +150,15 @@ def _read_opencode_version_text(resolved: str) -> str:
     return f"{completed.stdout or ''}{completed.stderr or ''}"
 
 
-def _remember_opencode_product_line(
+def _select_opencode_product_line(
     settings: Settings, resolved: str, version_text: Callable[[str], str]
 ) -> None:
+    """Read the major version and keep it on `settings` for this process.
+
+    Stored on the object rather than beside it: startup later copies settings
+    with `dataclasses.replace`, and that copy is what the rest of the run
+    holds. The field is not part of the run snapshot.
+    """
     text = version_text(resolved)
     major = _opencode_major_number(text)
     if major is None:
@@ -172,14 +167,7 @@ def _remember_opencode_product_line(
             "The OpenCode version could not be read: {output}",
             output=shown,
         )
-    # A later major is not OpenCode 1 and not the OpenCode 2 contract. Guessing
-    # either one is the failure this read exists to prevent.
-    if major not in (1, 2):
-        raise SettingsError(
-            "OpenCode major version {major} has no contract",
-            major=major,
-        )
-    _OPENCODE_MAJORS[settings] = major
+    object.__setattr__(settings, "opencode_major", major)
 
 
 def validate_agents(
@@ -200,7 +188,7 @@ def validate_agents(
     _validate_reserved_args(settings)
     _validate_custom_impl_command(settings)
     if "opencode" in required:
-        _remember_opencode_product_line(
+        _select_opencode_product_line(
             settings,
             resolved["opencode"],
             opencode_version or _read_opencode_version_text,

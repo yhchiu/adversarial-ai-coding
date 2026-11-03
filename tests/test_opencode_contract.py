@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from adversarial_ai_coding import agents
@@ -83,18 +84,17 @@ def test_startup_skips_the_version_read_when_nothing_invokes_opencode():
         seen.append(name)
         return f"C:/unused/{name}"
 
-    validate_agents(
-        make(
-            {
-                "AGENT_A": "claude",
-                "AGENT_B": "codex",
-                "IMPL_AGENT": "impl-wrapper",
-            }
-        ),
-        which=which,
+    settings = make(
+        {
+            "AGENT_A": "claude",
+            "AGENT_B": "codex",
+            "IMPL_AGENT": "impl-wrapper",
+        }
     )
+    validate_agents(settings, which=which)
 
     assert "opencode" not in seen
+    assert settings.opencode_major is None
 
 
 def test_startup_reads_one_major_when_a_slot_or_impl_invokes_opencode(
@@ -132,7 +132,9 @@ def test_the_next_startup_reads_the_version_again_and_the_snapshot_does_not(
     )
 
     assert not any("version" in key.lower() for key in values)
+    assert "opencode_major" not in values
     assert "1.8.24-distinct" not in values.values()
+    assert replace(first, tools="git").opencode_major == 1
 
     validate_agents(make(env), which=which)
 
@@ -165,6 +167,9 @@ def test_opencode_1_keeps_the_positional_prompt_closed_stdin_and_unguarded_resum
     log, which = install_fake_opencode(tmp_path, monkeypatch, "1 then 9")
     settings = make({"AGENT_A": "opencode", "AGENT_B": "opencode"})
     validate_agents(settings, which=which)
+    # Startup copies settings after validation. The copy is what later calls hold.
+    settings = replace(settings, tools="git")
+    assert settings.opencode_major == 1
     io, _ = make_io(tmp_path)
     session = AgentSession()
 
@@ -192,28 +197,13 @@ def test_opencode_1_keeps_the_positional_prompt_closed_stdin_and_unguarded_resum
     assert session.worker_session == "ses_captured"
 
 
-def test_an_unsupported_major_is_not_treated_as_either_contract(tmp_path, monkeypatch):
-    from adversarial_ai_coding.config import SettingsError
-
-    log, which = install_fake_opencode(tmp_path, monkeypatch, "9 then 1")
-
-    try:
-        validate_agents(make({"AGENT_B": "opencode"}), which=which)
-    except SettingsError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("startup guessed a contract for major 9")
-
-    assert "9" in message
-    assert [item["argv"] for item in invocations(log)] == [["--version"]]
-
-
 def test_major_version_two_is_accepted_at_startup(tmp_path, monkeypatch):
     log, which = install_fake_opencode(tmp_path, monkeypatch, "opencode 2.2.5")
-
-    validate_agents(
-        make({"AGENT_A": "claude", "AGENT_B": "codex", "IMPL_AGENT": "opencode"}),
-        which=which,
+    settings = make(
+        {"AGENT_A": "claude", "AGENT_B": "codex", "IMPL_AGENT": "opencode"}
     )
 
+    validate_agents(settings, which=which)
+
     assert invocations(log) == [{"argv": ["--version"], "stdin": ""}]
+    assert replace(settings, tools="git").opencode_major == 2

@@ -110,6 +110,5 @@
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} 没有 boolean \"phased\" 字段；视为没有 suggestion)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} 没有 string \"reason\"；保留建议但不带 reason)",
   "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "找不到任何执行记录。每次执行启动时会把自己记录在 {docs_root}/ 下,或是 SPEC_DIR 指定的位置。",
-  "The OpenCode version could not be read: {output}": "无法读取 OpenCode 的版本：{output}",
-  "OpenCode major version {major} has no contract": "OpenCode 主版本 {major} 没有对应的契约"
+  "The OpenCode version could not be read: {output}": "无法读取 OpenCode 的版本：{output}"
 }
