@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `--variant low` and `--variant=low` are one value.
-- [ ] Two `--variant` values on one slot fail startup on both product lines, and the message lists both values and the slot variable.
-- [ ] A `--variant` flag with no value fails startup on both product lines.
-- [ ] On OpenCode 1, a single `--variant` is still forwarded, including when that slot has no `MODEL_*`.
-- [ ] `IMPL_ARGS` follows the same rule. Under dual spec, startup fails only when every candidate owner would reject the arguments. A violation that depends on the unchosen candidate still waits for that choice.
-- [ ] The failure uses the existing settings-error locale path and happens before a paid stage.
-- [ ] Tests cover both product lines and the dual-spec timing through startup validation. They do not need a live binary.
+- [x] `--variant low` and `--variant=low` are one value.
+- [x] Two `--variant` values on one slot fail startup on both product lines, and the message lists both values and the slot variable.
+- [x] A `--variant` flag with no value fails startup on both product lines.
+- [x] On OpenCode 1, a single `--variant` is still forwarded, including when that slot has no `MODEL_*`.
+- [x] `IMPL_ARGS` follows the same rule. Under dual spec, startup fails only when every candidate owner would reject the arguments. A violation that depends on the unchosen candidate still waits for that choice.
+- [x] The failure uses the existing settings-error locale path and happens before a paid stage.
+- [x] Tests cover both product lines and the dual-spec timing through startup validation. They do not need a live binary.
