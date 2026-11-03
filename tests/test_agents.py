@@ -925,7 +925,9 @@ def test_validate_agents_allows_opencode_variant_and_quoted_session_mention():
         }
     )
 
-    validate_agents(s, which=lambda name: "C:/fake/" + name)
+    validate_agents(
+        s, which=lambda name: "C:/fake/" + name, opencode_version=lambda _path: "1.2.24"
+    )
 
 
 @pytest.mark.parametrize(
@@ -942,7 +944,9 @@ def test_validate_agents_allows_flags_reserved_by_other_builtin_adapters(
 ):
     s = make({**agent_env, key: value})
 
-    validate_agents(s, which=lambda name: "C:/fake/" + name)
+    validate_agents(
+        s, which=lambda name: "C:/fake/" + name, opencode_version=lambda _path: "1.2.24"
+    )
 
 
 def test_validate_agents_allows_workflow_tokens_in_custom_agent_args():
@@ -1001,7 +1005,11 @@ def test_validate_agents_allows_other_adapter_flags_in_builtin_slot_args(
 ):
     settings = make({f"AGENT_{slot}": adapter, f"AGENT_{slot}_ARGS": value})
 
-    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+    validate_agents(
+        settings,
+        which=lambda name: "C:/fake/" + name,
+        opencode_version=lambda _path: "1.2.24",
+    )
 
 
 @pytest.mark.parametrize(
@@ -1069,7 +1077,11 @@ def test_validate_agents_does_not_union_impl_adapter_reserved_rules(
 ):
     settings = make({"IMPL_AGENT": adapter, "IMPL_ARGS": value})
 
-    validate_agents(settings, which=lambda name: "C:/fake/" + name)
+    validate_agents(
+        settings,
+        which=lambda name: "C:/fake/" + name,
+        opencode_version=lambda _path: "1.2.24",
+    )
 
 
 def test_validate_agents_allows_workflow_tokens_for_custom_impl_agent():

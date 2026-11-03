@@ -694,7 +694,9 @@ def test_opencode_retry_resumes_id_captured_by_failed_attempt(monkeypatch, tmp_p
 
 def test_opencode_same_agent_validation_and_reserved_args():
     same = settings({"AGENT_A": "opencode", "AGENT_B": "opencode"})
-    agents.validate_agents(same, which=lambda name: "C:/fake/" + name)
+    agents.validate_agents(
+        same, which=lambda name: "C:/fake/" + name, opencode_version=lambda _path: "1.2.24"
+    )
 
     for value in (
         "--format json",

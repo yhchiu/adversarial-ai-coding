@@ -278,6 +278,15 @@ def test_quota_detection_channel_is_documented_bilingually():
     assert "HTTP status" in chinese
 
 
+def test_opencode_major_version_chooses_the_contract_bilingually():
+    english = _section(_read("README.md"), "Agent CLI Session Behavior")
+    chinese = _section(_read("README.zh-TW.md"), "Agent CLI 差異與限制")
+    assert "major version" in english
+    assert "OpenCode 1" in english and "OpenCode 2" in english
+    assert "主版本" in chinese
+    assert "OpenCode 1" in chinese and "OpenCode 2" in chinese
+
+
 def test_opencode_permission_and_reserved_args_are_documented_bilingually():
     """`--auto` is a safety note, not only a table cell.
 

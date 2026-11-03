@@ -109,5 +109,7 @@
   "(warning: {name} is unreadable as JSON ({exc}); treating it as no suggestion)": "(warning: {name} は正しい JSON ではありません（{exc}）。suggestion なしとして扱います)",
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} に boolean の \"phased\" がありません。suggestion なしとして扱います)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} に string の \"reason\" がありません。reason なしで提案を残します)",
-  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "実行の記録が見つかりません。実行は開始時に {docs_root}/ 以下、または SPEC_DIR が指す場所に自身を記録します。"
+  "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "実行の記録が見つかりません。実行は開始時に {docs_root}/ 以下、または SPEC_DIR が指す場所に自身を記録します。",
+  "The OpenCode version could not be read: {output}": "OpenCode のバージョンを読み取れませんでした: {output}",
+  "OpenCode major version {major} has no contract": "OpenCode のメジャーバージョン {major} には契約がありません"
 }

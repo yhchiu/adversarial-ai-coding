@@ -832,7 +832,10 @@ Claude, Codex, Agy, and OpenCode may each be used in A, B, and I. OpenCode
 is the BYO-model runtime: `MODEL_A=google/gemini-2.5-pro` and
 `MODEL_B=ollama/qwen3.6` do not need new AAC adapters. Two OpenCode slots
 still share one runtime; pair OpenCode with Claude or Codex when you want
-different tool stacks. Worker calls resume only
+different tool stacks. When a run will invoke `opencode`, startup reads the
+installed major version once, and that major version chooses the OpenCode 1
+or OpenCode 2 contract. The version is not written to the run snapshot, so
+the next process, including `RESUME_RUN`, reads it again. Worker calls resume only
 by their captured ID, while every reviewer call starts fresh. There is one
 active worker session, not one saved session per slot. Calls with the same full
 agent ref can resume within a loop; any handoff to a different agent ref, such
