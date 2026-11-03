@@ -608,6 +608,12 @@ class AgentIO:
     raw_out: Path
     verdict_path: Path
     echo: Callable[[str], None]
+    # Seconds an OpenCode error asked us to wait. Set by the call, cleared
+    # at the start of the next one so a retry does not reuse a stale delay.
+    quota_retry_after: int | None = None
+    # Seconds an OpenCode error asked us to wait. Set by the call, cleared
+    # at the start of the next one so a retry does not reuse a stale delay.
+    quota_retry_after: int | None = None
 
 
 @dataclass
@@ -617,15 +623,17 @@ class AgentResult:
     `quota_text` is the narrow channel quota detection reads: only the text
     an adapter can vouch for as coming from the agent itself, never from a
     command the agent ran. `quota_reset_epoch` is an exact reset time when
-    the agent reported one, sparing the parser a wall-clock string. Both
-    are excluded from equality because they are diagnostic plumbing, not
-    part of what the call produced.
+    the agent reported one, sparing the parser a wall-clock string.
+    `quota_retry_after` is a wait in seconds when the agent named one.
+    All three are excluded from equality because they are diagnostic
+    plumbing, not part of what the call produced.
     """
 
     rc: int
     text: str
     quota_text: str = field(default="", compare=False)
     quota_reset_epoch: int | None = field(default=None, compare=False)
+    quota_retry_after: int | None = field(default=None, compare=False)
 
 
 def _resolve_argv0(name: str) -> str:
@@ -1294,6 +1302,7 @@ class OpenCodeEvent:
     session_id: str = ""
     cost: float | None = None
     quota: str = ""
+    retry_after: int | None = None
 
 
 def _opencode_session_id(payload: dict[str, object]) -> str:
@@ -1341,21 +1350,40 @@ def _opencode_tool_summary(part: dict[str, object]) -> str:
     return f"{summary} (failed)" if state.get("status") == "error" else summary
 
 
+def _numeric_status(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
 def _opencode_error_status(error: dict[str, object]) -> str:
     """The HTTP status an opencode error reports, worded for the detector.
 
-    opencode passes the provider's own error through, and a 429 does not
-    always say "rate limit": Gemini says "Resource has been exhausted".
-    The status is the one part of the payload every provider agrees on,
-    so it travels with the message instead of being dropped.
+    OpenCode 1 puts it on `error.data.statusCode`. OpenCode 2 puts it on
+    `error.status`. A 429 does not always say "rate limit": Gemini says
+    "Resource has been exhausted". The status travels with the message
+    so the existing wording match still sees it.
     """
+    status = None
     data = error.get("data")
-    if not isinstance(data, dict):
+    if isinstance(data, dict):
+        status = _numeric_status(data.get("statusCode"))
+    if status is None:
+        status = _numeric_status(error.get("status"))
+    if status is None:
         return ""
-    status = data.get("statusCode")
-    if isinstance(status, bool) or not isinstance(status, (int, float)):
-        return ""
-    return f"status {int(status)}"
+    return f"status {status}"
+
+
+def _opencode_retry_after_seconds(error: dict[str, object]) -> int | None:
+    """`retryAfterMs` as whole seconds, rounded up. Unusable values are None."""
+    raw = error.get("retryAfterMs")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+        return None
+    whole = int(raw)
+    if raw > whole:
+        whole += 1
+    return (whole + 999) // 1000
 
 
 def _opencode_error_body(error: dict[str, object]) -> str:
@@ -1421,10 +1449,15 @@ def render_opencode_event(line: str) -> OpenCodeEvent:
         return OpenCodeEvent(session_id=session_id, cost=float(cost))
     if event_type == "error":
         message = _opencode_error_message(payload)
+        error = payload.get("error")
+        retry_after = (
+            _opencode_retry_after_seconds(error) if isinstance(error, dict) else None
+        )
         return OpenCodeEvent(
             echo=[message] if message else [],
             session_id=session_id,
             quota=message,
+            retry_after=retry_after,
         )
     return OpenCodeEvent(session_id=session_id)
 
@@ -1457,6 +1490,7 @@ def _run_opencode_json(
     quota: list[str] = []
     costs: list[float] = []
     session_id = ""
+    io.quota_retry_after = None
     assert proc.stdout is not None
     io.raw_out.parent.mkdir(parents=True, exist_ok=True)
     io.agent_out.parent.mkdir(parents=True, exist_ok=True)
@@ -1473,6 +1507,8 @@ def _run_opencode_json(
                 costs.append(event.cost)
             if event.quota:
                 quota.append(event.quota)
+            if event.retry_after is not None:
+                io.quota_retry_after = event.retry_after
             for text in event.echo:
                 rendered.append(text)
                 rendered_file.write(text + "\n")
@@ -1611,7 +1647,9 @@ def _worker_opencode(
             "call will start a fresh session)"
         )
     session.last_cost = cost
-    return AgentResult(rc, out, quota_text=quota_text)
+    return AgentResult(
+        rc, out, quota_text=quota_text, quota_retry_after=io.quota_retry_after
+    )
 
 
 def _reviewer_opencode(
@@ -1632,7 +1670,9 @@ def _reviewer_opencode(
     ]
     rc, out, _, quota_text, cost = _run_opencode_json(argv, io, ref)
     session.last_cost = cost
-    return AgentResult(rc, out, quota_text=quota_text)
+    return AgentResult(
+        rc, out, quota_text=quota_text, quota_retry_after=io.quota_retry_after
+    )
 
 
 def _run_generic(

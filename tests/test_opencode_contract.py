@@ -11,6 +11,7 @@ import pytest
 from adversarial_ai_coding import agents
 from adversarial_ai_coding.agents import AgentIO, AgentRef, AgentSession, validate_agents
 from adversarial_ai_coding.config import Settings, SettingsError
+from adversarial_ai_coding.ratelimit import QUOTA_ABORT_RC, RetryEvents, agent_call
 from adversarial_ai_coding.runstate import snapshot_values
 
 
@@ -315,3 +316,135 @@ def test_impl_variant_conflict_waits_until_every_owner_would_reject_it():
     with pytest.raises(SettingsError, match="IMPL_ARGS"):
         agents.impl_ref(AgentRef("A", "opencode"), mixed)
     agents.impl_ref(AgentRef("B", "claude"), mixed)
+
+
+def _error_event(error: dict) -> str:
+    return json.dumps({"type": "error", "sessionID": "ses_q", "error": error})
+
+
+def _quota_call(tmp_path, monkeypatch, error, env, *, role):
+    install_fake_opencode(tmp_path, monkeypatch, "2.2.5")
+    monkeypatch.setenv("OPENCODE_FAKE_ERROR", _error_event(error))
+    monkeypatch.setenv("OPENCODE_FAKE_FAILS", "1")
+    monkeypatch.setenv("OPENCODE_FAKE_RC", "1")
+    monkeypatch.setenv("OPENCODE_FAKE_STATE", str(tmp_path / "fails.txt"))
+    slept = []
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "RETRY_ON_LIMIT": "1",
+            "RETRY_MAX": "2",
+            "RETRY_BASE_WAIT": "7",
+            "RETRY_MAX_RESET_WAIT": "21600",
+            **env,
+        }
+    )
+    io, _ = make_io(tmp_path)
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=lambda *args, **kwargs: None,
+        notify=lambda message: None,
+        sleep=slept.append,
+    )
+    run = agents.run_worker if role == "worker" else agents.run_reviewer
+    slot = "A" if role == "worker" else "B"
+    result = agent_call(
+        lambda: run(
+            AgentRef(slot, "opencode"), "prompt text", settings, AgentSession(), io
+        ),
+        settings=settings,
+        events=events,
+        now=lambda: 1_700_000_000,
+    )
+    return result, slept
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer"])
+def test_status_429_uses_retry_after_even_without_rate_limit_words(
+    tmp_path, monkeypatch, role
+):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {
+            "message": "Resource has been exhausted",
+            "status": 429,
+            "retryAfterMs": 5000,
+        },
+        {},
+        role=role,
+    )
+
+    assert result.rc == 0
+    assert slept == [5]
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer"])
+def test_opencode_1_status_code_429_still_retries(tmp_path, monkeypatch, role):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {"data": {"statusCode": 429, "message": "Resource has been exhausted"}},
+        {},
+        role=role,
+    )
+
+    assert result.rc == 0
+    assert slept == [7]
+
+
+def test_retry_after_longer_than_the_cap_does_not_sleep(tmp_path, monkeypatch):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {"message": "slow down", "status": 429, "retryAfterMs": 30_000},
+        {"RETRY_MAX_RESET_WAIT": "10"},
+        role="worker",
+    )
+
+    assert result.rc == QUOTA_ABORT_RC
+    assert slept == []
+
+
+def test_a_missing_retry_after_keeps_the_wording_parser(tmp_path, monkeypatch):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {"message": "try again in 20s", "status": 429},
+        {},
+        role="worker",
+    )
+
+    assert result.rc == 0
+    assert slept == [50]
+
+
+def test_an_unusable_retry_after_keeps_backoff(tmp_path, monkeypatch):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {"message": "Resource has been exhausted", "status": 429, "retryAfterMs": -1},
+        {},
+        role="reviewer",
+    )
+
+    assert result.rc == 0
+    assert slept == [7]
+
+
+def test_spending_limit_text_does_not_retry(tmp_path, monkeypatch):
+    result, slept = _quota_call(
+        tmp_path,
+        monkeypatch,
+        {
+            "message": "personal-team-blocked:spending-limit",
+            "status": 403,
+            "retryAfterMs": 5000,
+        },
+        {},
+        role="worker",
+    )
+
+    assert result.rc == QUOTA_ABORT_RC
+    assert slept == []

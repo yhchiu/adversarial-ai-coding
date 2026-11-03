@@ -266,7 +266,10 @@ def agent_call(
             return AgentResult(QUOTA_ABORT_RC, result.text)
         current_epoch = now() if now else int(datetime.now().timestamp())
         wait = None
-        if result.quota_reset_epoch is not None:
+        if result.quota_retry_after is not None:
+            # A delay the agent named beats both a parsed clock and backoff.
+            wait = result.quota_retry_after
+        if wait is None and result.quota_reset_epoch is not None:
             # An exact reported reset time beats parsing wording for one.
             wait = wait_until_epoch(result.quota_reset_epoch, current_epoch)
         if wait is None:
