@@ -6,9 +6,11 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from adversarial_ai_coding import agents
 from adversarial_ai_coding.agents import AgentIO, AgentRef, AgentSession, validate_agents
-from adversarial_ai_coding.config import Settings
+from adversarial_ai_coding.config import Settings, SettingsError
 from adversarial_ai_coding.runstate import snapshot_values
 
 
@@ -207,3 +209,109 @@ def test_major_version_two_is_accepted_at_startup(tmp_path, monkeypatch):
 
     assert invocations(log) == [{"argv": ["--version"], "stdin": ""}]
     assert replace(settings, tools="git").opencode_major == 2
+
+
+def _which_unused(name):
+    return f"C:/unused/{name}"
+
+
+@pytest.mark.parametrize("version", ["1.2.24", "2.2.5"])
+def test_two_variant_values_fail_startup_on_either_product_line(version):
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "codex",
+            "AGENT_A_ARGS": "--variant low --variant=high",
+        }
+    )
+
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS") as exc_info:
+        validate_agents(
+            settings,
+            which=_which_unused,
+            opencode_version=lambda _path: version,
+        )
+
+    message = str(exc_info.value)
+    assert "low" in message
+    assert "high" in message
+
+
+@pytest.mark.parametrize(
+    "args",
+    ["--variant", "--variant=", "--variant --thinking"],
+)
+@pytest.mark.parametrize("version", ["1.2.24", "2.0.0"])
+def test_a_variant_flag_with_no_value_fails_startup(args, version):
+    settings = make({"AGENT_B": "opencode", "AGENT_B_ARGS": args})
+
+    with pytest.raises(SettingsError, match="AGENT_B_ARGS") as exc_info:
+        validate_agents(
+            settings,
+            which=_which_unused,
+            opencode_version=lambda _path: version,
+        )
+
+    assert "--variant" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("args", ["--variant low", "--variant=low"])
+def test_one_variant_spelling_is_a_single_value(args):
+    validate_agents(
+        make({"AGENT_A": "opencode", "AGENT_A_ARGS": args}),
+        which=_which_unused,
+        opencode_version=lambda _path: "1.2.24",
+    )
+
+
+def test_opencode_1_forwards_one_variant_without_a_model(tmp_path, monkeypatch):
+    log, which = install_fake_opencode(tmp_path, monkeypatch, "1.2.24")
+    settings = make({"AGENT_A": "opencode", "AGENT_A_ARGS": "--variant low"})
+    validate_agents(settings, which=which)
+    io, _ = make_io(tmp_path)
+
+    agents.run_worker(
+        AgentRef("A", "opencode"), "prompt text", settings, AgentSession(), io
+    )
+
+    run = invocations(log)[-1]["argv"]
+    assert "--variant" in run
+    assert "low" in run
+    assert "-m" not in run
+    assert run[-1] == "prompt text"
+
+
+def test_impl_variant_conflict_waits_until_every_owner_would_reject_it():
+    both = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--variant low --variant high",
+        }
+    )
+    with pytest.raises(SettingsError, match="IMPL_ARGS") as exc_info:
+        validate_agents(
+            both,
+            which=_which_unused,
+            opencode_version=lambda _path: "2.2.5",
+        )
+    assert "low" in str(exc_info.value) and "high" in str(exc_info.value)
+
+    mixed = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--variant low --variant high",
+        }
+    )
+    validate_agents(
+        mixed,
+        which=_which_unused,
+        opencode_version=lambda _path: "1.2.24",
+    )
+
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        agents.impl_ref(AgentRef("A", "opencode"), mixed)
+    agents.impl_ref(AgentRef("B", "claude"), mixed)

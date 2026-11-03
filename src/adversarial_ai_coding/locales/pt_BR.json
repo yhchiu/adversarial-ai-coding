@@ -110,5 +110,7 @@
   "(warning: {name} has no boolean \"phased\" field; treating it as no suggestion)": "(warning: {name} não tem o campo boolean \"phased\"; tratando como sem suggestion)",
   "(warning: {name} has no string \"reason\"; keeping the recommendation without one)": "(warning: {name} não tem o string \"reason\"; mantendo a recomendação sem reason)",
   "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "Nenhuma execução encontrada. Uma execução se registra em {docs_root}/ ao iniciar, ou onde quer que SPEC_DIR aponte.",
-  "The OpenCode version could not be read: {output}": "Não foi possível ler a versão do OpenCode: {output}"
+  "The OpenCode version could not be read: {output}": "Não foi possível ler a versão do OpenCode: {output}",
+  "{variable} sets --variant with no value": "{variable} define --variant sem valor",
+  "{variable} sets more than one OpenCode variant: {values}": "{variable} define mais de um variant do OpenCode: {values}"
 }

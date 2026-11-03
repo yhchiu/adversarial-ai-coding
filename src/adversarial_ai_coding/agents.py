@@ -344,9 +344,48 @@ def _tools_conflict(variable: str) -> SettingsError:
     )
 
 
+def _reject_opencode_variant_conflict(variable: str, tokens: list[str]) -> None:
+    """One slot may name one variant. Both product lines share this rule.
+
+    `--variant low` and `--variant=low` are the same kind of value. Two of
+    them, or a flag with nothing after it, would make the call and the
+    archived settings describe different levels.
+    """
+    values: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--variant":
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
+                raise SettingsError(
+                    "{variable} sets --variant with no value",
+                    variable=variable,
+                )
+            values.append(tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("--variant="):
+            value = token.removeprefix("--variant=")
+            if not value:
+                raise SettingsError(
+                    "{variable} sets --variant with no value",
+                    variable=variable,
+                )
+            values.append(value)
+        index += 1
+    if len(values) > 1:
+        raise SettingsError(
+            "{variable} sets more than one OpenCode variant: {values}",
+            variable=variable,
+            values=", ".join(values),
+        )
+
+
 def _validate_builtin_arg_tokens(
     variable: str, adapter: str, tokens: list[str]
 ) -> None:
+    if adapter == "opencode":
+        _reject_opencode_variant_conflict(variable, tokens)
     for index, token in enumerate(tokens):
         if adapter == "agy":
             # Go flags have no attached short form and agy has no -m, so
