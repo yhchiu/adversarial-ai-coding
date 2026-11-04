@@ -64,6 +64,15 @@ The automatic lifecycle rules apply to the built-in agents:
 | Agy | `agy --print ...` | `agy --print ... --conversation <conversation-id>` | Always fresh; no `--conversation` |
 | OpenCode | `opencode run --format json --auto ...` | `opencode run --format json --auto ... --session <session-id>` | Always fresh; no `--session` |
 
+OpenCode 2 checks a worker Resume before it passes `--session`. The check is
+another invocation of the same `opencode` command. It is not `run`, it does
+not receive the prompt, and it is given that call's `--server` and
+`--standalone`. Output of `Session not found: <id>` for the captured id warns
+that this call is not the captured conversation, drops the id, and makes a
+Fresh call. Any other check result fails that call. The reviewer stays Fresh
+and is not checked. OpenCode 1 still passes `--session` with no existence
+check.
+
 If a fresh worker call does not report an ID, the next worker call is fresh
 again. If an established worker call omits an ID, the last known ID is retained.
 The workflow never guesses by using Codex `--last`, Agy `--continue`, or

@@ -448,3 +448,226 @@ def test_spending_limit_text_does_not_retry(tmp_path, monkeypatch):
 
     assert result.rc == QUOTA_ABORT_RC
     assert slept == []
+
+
+def prepare_line(tmp_path, monkeypatch, version, env=None):
+    log, which = install_fake_opencode(tmp_path, monkeypatch, version)
+    settings = make({"AGENT_A": "opencode", "AGENT_B": "opencode", **(env or {})})
+    validate_agents(settings, which=which)
+    if log.is_file():
+        log.unlink()
+    return log, replace(settings, tools="git")
+
+
+def holding(session_id):
+    ref = AgentRef("A", "opencode")
+    return ref, AgentSession(worker_session=session_id, owner=ref)
+
+
+def test_opencode_2_resume_checks_before_passing_session(tmp_path, monkeypatch):
+    log, settings = prepare_line(
+        tmp_path,
+        monkeypatch,
+        "opencode 2.2.5",
+        {"AGENT_A_ARGS": "--server http://127.0.0.1:9 --standalone --thinking"},
+    )
+    ref, session = holding("ses_captured")
+    io, _ = make_io(tmp_path)
+
+    agents.run_worker(ref, "resume this prompt", settings, session, io)
+
+    check, run = invocations(log)
+    assert check["argv"] == [
+        "api",
+        "GET",
+        "/api/session/ses_captured",
+        "--server",
+        "http://127.0.0.1:9",
+        "--standalone",
+    ]
+    assert check["stdin"] == ""
+    assert "resume this prompt" not in check["argv"]
+    assert run["argv"][0] == "run"
+    assert "--thinking" in run["argv"]
+    assert run["argv"][-3:] == ["--session", "ses_captured", "resume this prompt"]
+    assert session.worker_session == "ses_captured"
+
+
+def test_a_missing_conversation_becomes_a_fresh_call_and_can_be_resumed(
+    tmp_path, monkeypatch
+):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_old")
+    io, echoed = make_io(tmp_path)
+    monkeypatch.setenv("OPENCODE_FAKE_ABSENT", "ses_old")
+    monkeypatch.setenv("OPENCODE_FAKE_SESSION", "ses_new")
+
+    agents.run_worker(ref, "again", settings, session, io)
+
+    assert session.worker_session == "ses_new"
+    assert any("not the captured conversation" in line for line in echoed)
+    check, fresh = invocations(log)
+    assert check["argv"][2] == "/api/session/ses_old"
+    assert "--session" not in fresh["argv"]
+    assert fresh["argv"][-1] == "again"
+
+    monkeypatch.delenv("OPENCODE_FAKE_ABSENT")
+    agents.run_worker(ref, "later", settings, session, io)
+
+    later_check, later_run = invocations(log)[-2:]
+    assert later_check["argv"][2] == "/api/session/ses_new"
+    assert later_run["argv"][-3:] == ["--session", "ses_new", "later"]
+
+
+def test_a_fresh_call_with_no_id_does_not_send_the_lost_id(tmp_path, monkeypatch):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_old")
+    io, echoed = make_io(tmp_path)
+    monkeypatch.setenv("OPENCODE_FAKE_ABSENT", "ses_old")
+    monkeypatch.setenv("OPENCODE_FAKE_OMIT_SESSION", "1")
+
+    agents.run_worker(ref, "again", settings, session, io)
+    agents.run_worker(ref, "next", settings, session, io)
+
+    assert session.worker_session == ""
+    assert any("did not report a session ID" in line for line in echoed)
+    runs = [item for item in invocations(log) if item["argv"][:1] == ["run"]]
+    assert all("ses_old" not in item["argv"] for item in runs)
+    assert invocations(log)[-1]["argv"][0] == "run"
+
+
+def test_an_empty_conversation_is_still_resumed(tmp_path, monkeypatch):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_empty")
+    io, _ = make_io(tmp_path)
+    monkeypatch.setenv("OPENCODE_FAKE_CHECK_RC", "0")
+    monkeypatch.setenv(
+        "OPENCODE_FAKE_CHECK_OUTPUT", '{"id": "ses_empty", "messages": []}'
+    )
+
+    agents.run_worker(ref, "continue", settings, session, io)
+
+    check, run = invocations(log)
+    assert check["argv"][2] == "/api/session/ses_empty"
+    assert check["stdin"] == ""
+    assert run["argv"][-3:] == ["--session", "ses_empty", "continue"]
+
+
+def test_another_check_result_fails_without_a_fresh_call_or_a_quota_retry(
+    tmp_path, monkeypatch
+):
+    log, settings = prepare_line(
+        tmp_path,
+        monkeypatch,
+        "2.2.5",
+        {"RETRY_ON_LIMIT": "1", "RETRY_MAX": "2", "RETRY_BASE_WAIT": "7"},
+    )
+    ref, session = holding("ses_captured")
+    io, _ = make_io(tmp_path)
+    monkeypatch.setenv("OPENCODE_FAKE_CHECK_RC", "1")
+    monkeypatch.setenv("OPENCODE_FAKE_CHECK_OUTPUT", "status 429 rate limit")
+    slept = []
+    events = RetryEvents(
+        archive_attempt=lambda attempt, rc: None,
+        log_retry=lambda *args, **kwargs: None,
+        notify=lambda message: None,
+        sleep=slept.append,
+    )
+
+    result = agent_call(
+        lambda: agents.run_worker(ref, "again", settings, session, io),
+        settings=settings,
+        events=events,
+        now=lambda: 1_700_000_000,
+    )
+
+    assert result.rc == 1
+    assert "rate limit" in result.text
+    assert slept == []
+    assert session.worker_session == "ses_captured"
+    assert [item["argv"][0] for item in invocations(log)] == ["api"]
+
+
+def test_a_check_that_does_not_run_fails_that_call(tmp_path, monkeypatch):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_captured")
+    io, _ = make_io(tmp_path)
+    monkeypatch.setattr(
+        agents.shutil, "which", lambda name: str(tmp_path / "missing-opencode.exe")
+    )
+
+    result = agents.run_worker(ref, "again", settings, session, io)
+
+    assert result.rc != 0
+    assert result.text
+    assert result.quota_text == ""
+    assert session.worker_session == "ses_captured"
+    assert invocations(log) == []
+
+
+def test_a_not_found_line_for_a_different_id_is_not_absence(tmp_path, monkeypatch):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_old")
+    io, echoed = make_io(tmp_path)
+    monkeypatch.setenv("OPENCODE_FAKE_CHECK_RC", "1")
+    monkeypatch.setenv("OPENCODE_FAKE_CHECK_OUTPUT", "Session not found: ses_other")
+
+    result = agents.run_worker(ref, "again", settings, session, io)
+
+    assert result.rc == 1
+    assert session.worker_session == "ses_old"
+    assert not any("not the captured conversation" in line for line in echoed)
+    assert [item["argv"][0] for item in invocations(log)] == ["api"]
+
+
+def test_the_first_worker_call_and_the_reviewer_are_not_checked(
+    tmp_path, monkeypatch
+):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    io, _ = make_io(tmp_path)
+    session = AgentSession()
+    ref = AgentRef("A", "opencode")
+
+    agents.run_worker(ref, "first", settings, session, io)
+    agents.run_reviewer(AgentRef("B", "opencode"), "review", settings, session, io)
+
+    assert [item["argv"][0] for item in invocations(log)] == ["run", "run"]
+    assert "--session" not in invocations(log)[1]["argv"]
+    assert session.worker_session == "ses_captured"
+
+
+def test_the_snapshot_does_not_restore_an_opencode_conversation(
+    tmp_path, monkeypatch
+):
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5")
+    ref, session = holding("ses_captured")
+    io, _ = make_io(tmp_path)
+    agents.run_worker(ref, "continue", settings, session, io)
+    values = snapshot_values(
+        settings,
+        branch="",
+        gate_cmd="",
+        build_gate_cmd="",
+        phase_gate_cmd="",
+        task_arg="",
+        task_source_kind="literal",
+        task_source_path="",
+    )
+
+    assert session.worker_session == "ses_captured"
+    assert "ses_captured" not in values.values()
+    assert "worker_session" not in values
+    assert invocations(log)[0]["argv"][0] == "api"
+
+
+def test_entering_the_next_stage_still_clears_the_captured_id(make_ctx):
+    from adversarial_ai_coding.workflow import begin_stage
+
+    ctx = make_ctx()
+    ctx.session.worker_session = "ses_captured"
+    ctx.session.owner = ctx.ref("A")
+
+    begin_stage(ctx, "write-code")
+
+    assert ctx.session.worker_session == ""
+    assert ctx.session.owner is None

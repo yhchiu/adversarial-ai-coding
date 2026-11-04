@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 
 def _emit_configured_error() -> bool:
@@ -33,6 +34,30 @@ def _emit_configured_error() -> bool:
     sys.exit(int(os.environ.get("OPENCODE_FAKE_RC", "1")))
 
 
+def _answer_session_lookup(argv: list[str]) -> None:
+    """One session's metadata, not its transcript.
+
+    `OPENCODE_FAKE_ABSENT` lists ids whose lookup prints the confirmed
+    absence line. Any other forced body is a check failure.
+    """
+    session_id = unquote(argv[2].removeprefix("/api/session/").split("?", 1)[0])
+    absent = {
+        item
+        for item in os.environ.get("OPENCODE_FAKE_ABSENT", "").split(",")
+        if item
+    }
+    if session_id in absent:
+        sys.stdout.write(f"Session not found: {session_id}\n")
+        sys.exit(1)
+    body = os.environ.get("OPENCODE_FAKE_CHECK_OUTPUT", "")
+    forced = os.environ.get("OPENCODE_FAKE_CHECK_RC", "")
+    if body or forced:
+        if body:
+            sys.stdout.write(body if body.endswith("\n") else body + "\n")
+        sys.exit(int(forced or "1"))
+    sys.stdout.write(json.dumps({"id": session_id, "messages": []}) + "\n")
+
+
 def main() -> None:
     argv = sys.argv[1:]
     stdin = sys.stdin.read()
@@ -45,6 +70,14 @@ def main() -> None:
     if argv[:1] == ["--version"]:
         sys.stdout.write(os.environ.get("OPENCODE_FAKE_VERSION", "1.2.24"))
         return
+    if (
+        len(argv) >= 3
+        and argv[0] == "api"
+        and argv[1] == "GET"
+        and argv[2].startswith("/api/session/")
+    ):
+        _answer_session_lookup(argv)
+        return
     if _emit_configured_error():
         return
     session = os.environ.get("OPENCODE_FAKE_SESSION", "ses_captured")
@@ -52,16 +85,10 @@ def main() -> None:
         index = argv.index("--session")
         if index + 1 < len(argv):
             session = argv[index + 1]
-    sys.stdout.write(
-        json.dumps(
-            {
-                "type": "text",
-                "sessionID": session,
-                "part": {"text": "ok"},
-            }
-        )
-        + "\n"
-    )
+    payload: dict[str, object] = {"type": "text", "part": {"text": "ok"}}
+    if os.environ.get("OPENCODE_FAKE_OMIT_SESSION") != "1":
+        payload["sessionID"] = session
+    sys.stdout.write(json.dumps(payload) + "\n")
 
 
 if __name__ == "__main__":

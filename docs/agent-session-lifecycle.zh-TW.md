@@ -59,6 +59,13 @@ worker 全新或續接
 | Agy | `agy --print ...` | `agy --print ... --conversation <conversation-id>` | 永遠全新，不傳 `--conversation` |
 | OpenCode | `opencode run --format json --auto ...` | `opencode run --format json --auto ... --session <session-id>` | 永遠全新，不傳 `--session` |
 
+OpenCode 2 在 worker 續接並傳出 `--session` 之前，會先確認該對話仍然存在。
+這個檢查是同一個 `opencode` 指令的另一次呼叫，不是 `run`，不接收提示詞，並帶上
+該次呼叫的 `--server` 與 `--standalone`。若輸出對該 id 出現
+`Session not found: <id>`，會警告這次呼叫不是先前捕捉到的對話，捨棄該 id，並改為
+全新呼叫。其他檢查結果則讓該次呼叫失敗。Reviewer 永遠全新，不會被檢查。
+OpenCode 1 仍直接傳 `--session`，不做存在檢查。
+
 若全新 worker 呼叫沒有回報 ID，下一次 worker 呼叫仍然全新。若已建立的
 worker session 某次沒有再回報 ID，則保留最後一個已知 ID。Workflow 絕不以
 Codex `--last`、Agy `--continue` 或 OpenCode `-c` / `--continue` 猜測要接哪個對話。

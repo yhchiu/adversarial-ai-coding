@@ -18,6 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import Callable
+from urllib.parse import quote
 
 from .config import Settings, SettingsError
 
@@ -1617,6 +1618,103 @@ def _reviewer_agy(
     return AgentResult(rc, out, quota_text=out)
 
 
+def _opencode_server_args(tokens: list[str]) -> list[str]:
+    """`--server` and `--standalone` in the order the call will pass them."""
+    copied: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        name, separator, _value = token.partition("=")
+        if name == "--standalone":
+            copied.append(token)
+            index += 1
+            continue
+        if name == "--server" and separator:
+            copied.append(token)
+            index += 1
+            continue
+        if token == "--server":
+            copied.append(token)
+            if index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                copied.append(tokens[index + 1])
+                index += 2
+                continue
+        index += 1
+    return copied
+
+
+def _opencode_session_absent(output: str, session_id: str) -> bool:
+    """True when the check names this exact id as missing."""
+    return (
+        re.search(
+            rf"Session not found: {re.escape(session_id)}(?![A-Za-z0-9_-])",
+            output,
+        )
+        is not None
+    )
+
+
+def _run_opencode_session_check(argv: list[str]) -> tuple[int | None, str]:
+    """Combined output of one lookup. None means the check did not run."""
+    try:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        return None, exc.strerror or str(exc)
+    return completed.returncode, f"{completed.stdout or ''}{completed.stderr or ''}"
+
+
+def _fail_opencode_check(
+    io: AgentIO, ref: AgentRef, rc: int, text: str
+) -> AgentResult:
+    """A check that is not confirmed absence. Not a quota retry."""
+    io.quota_retry_after = None
+    shown = text.strip() or "opencode session check did not run"
+    io.agent_out.parent.mkdir(parents=True, exist_ok=True)
+    io.agent_out.write_text(shown + "\n", encoding="utf-8")
+    _echo_agent(io, ref, shown)
+    return AgentResult(rc, shown, quota_text="")
+
+
+def _guard_opencode_resume(
+    ref: AgentRef,
+    settings: Settings,
+    session: AgentSession,
+    io: AgentIO,
+) -> AgentResult | None:
+    """Look up an OpenCode 2 conversation before Resume.
+
+    Confirmed absence drops the id and lets the caller make a Fresh call.
+    Anything else, including a check that does not run, fails this call.
+    """
+    session_id = session.worker_session
+    argv = [
+        _resolve_argv0("opencode"),
+        "api",
+        "GET",
+        "/api/session/" + quote(session_id, safe=""),
+        *_opencode_server_args(agent_args(ref, settings)),
+    ]
+    rc, output = _run_opencode_session_check(argv)
+    if _opencode_session_absent(output, session_id):
+        session.worker_session = ""
+        io.echo(
+            "(warning: opencode did not find captured conversation "
+            f"{session_id}; this call is not the captured conversation)"
+        )
+        return None
+    if rc is None or rc != 0:
+        return _fail_opencode_check(io, ref, 1 if rc is None else rc, output)
+    return None
+
+
 def _worker_opencode(
     ref: AgentRef,
     prompt: str,
@@ -1624,6 +1722,12 @@ def _worker_opencode(
     session: AgentSession,
     io: AgentIO,
 ) -> AgentResult:
+    if settings.opencode_major == 2 and session.worker_session:
+        # Session get reports the confirmed absence text without exporting
+        # the transcript. `run` would create a missing id instead.
+        failed = _guard_opencode_resume(ref, settings, session, io)
+        if failed is not None:
+            return failed
     argv = [
         _resolve_argv0("opencode"),
         "run",

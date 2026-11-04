@@ -278,6 +278,20 @@ def test_quota_detection_channel_is_documented_bilingually():
     assert "HTTP status" in chinese
 
 
+def test_opencode_2_resume_check_is_documented_bilingually():
+    english = _read("docs/agent-session-lifecycle.md")
+    chinese = _read("docs/agent-session-lifecycle.zh-TW.md")
+    for guide in (english, chinese):
+        assert "OpenCode 2" in guide
+        assert "Session not found" in guide
+        assert "--server" in guide
+        assert "--standalone" in guide
+    assert "Fresh" in english
+    assert "not the captured conversation" in english
+    assert "全新" in chinese
+    assert "不是先前捕捉到的對話" in chinese
+
+
 def test_opencode_major_version_chooses_the_contract_bilingually():
     english = _section(_read("README.md"), "Agent CLI Session Behavior")
     chinese = _section(_read("README.zh-TW.md"), "Agent CLI 差異與限制")
