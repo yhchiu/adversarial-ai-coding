@@ -1682,7 +1682,9 @@ def _run_opencode_json(
     )
     if stdin_text is not None:
         assert proc.stdin is not None
-        proc.stdin.write(stdin_text)
+        # Text mode would rewrite \n as \r\n on Windows. The prompt bytes
+        # are the UTF-8 of the string AAC assembled, with no extra newline.
+        proc.stdin.buffer.write(stdin_text.encode("utf-8"))
         proc.stdin.close()
     rendered: list[str] = []
     quota: list[str] = []

@@ -60,7 +60,9 @@ def _answer_session_lookup(argv: list[str]) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
-    stdin = sys.stdin.read()
+    # Bytes, not text mode: text mode would turn \r\n back into \n and hide
+    # a prompt that Windows rewrote before it reached opencode.
+    stdin = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     log_path = os.environ.get("OPENCODE_FAKE_LOG", "")
     if log_path:
         with open(log_path, "a", encoding="utf-8") as handle:
