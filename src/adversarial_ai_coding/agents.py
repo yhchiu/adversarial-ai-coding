@@ -611,9 +611,6 @@ class AgentIO:
     # Seconds an OpenCode error asked us to wait. Set by the call, cleared
     # at the start of the next one so a retry does not reuse a stale delay.
     quota_retry_after: int | None = None
-    # Seconds an OpenCode error asked us to wait. Set by the call, cleared
-    # at the start of the next one so a retry does not reuse a stale delay.
-    quota_retry_after: int | None = None
 
 
 @dataclass
