@@ -835,7 +835,9 @@ still share one runtime; pair OpenCode with Claude or Codex when you want
 different tool stacks. When a run will invoke `opencode`, startup reads the
 installed major version once, and that major version chooses the OpenCode 1
 or OpenCode 2 contract. The version is not written to the run snapshot, so
-the next process, including `RESUME_RUN`, reads it again. Worker calls resume only
+the next process, including `RESUME_RUN`, reads it again. OpenCode 2 sends the
+prompt on stdin and does not pass a positional message, so spaces, newlines,
+and quotes stay exactly as written. Worker calls resume only
 by their captured ID, while every reviewer call starts fresh. There is one
 active worker session, not one saved session per slot. Calls with the same full
 agent ref can resume within a loop; any handoff to a different agent ref, such
@@ -981,6 +983,9 @@ the intended trusted state.
 - `opencode` runs with `--auto`, which approves every permission you have not
   explicitly denied in your OpenCode config. Deny rules are the only filter, so
   write them first or prefer a worktree or container, as with `agy`.
+- OpenCode 2 allows `external_directory` by default. To ask before using a
+  path outside the workspace, add this permission entry. AAC does not write
+  it: `{ "action": "external_directory", "resource": "*", "effect": "ask" }`
 - Branches and worktrees isolate Git state, but they do not isolate the full
   filesystem or network. Use a container for stronger isolation.
 - Two AI agents can consume a lot of quota. `MAX_ROUNDS`, graded verdicts, and

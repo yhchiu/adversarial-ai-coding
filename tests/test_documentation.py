@@ -278,6 +278,19 @@ def test_quota_detection_channel_is_documented_bilingually():
     assert "HTTP status" in chinese
 
 
+def test_opencode_2_prompt_and_directory_are_documented_bilingually():
+    english = _section(_read("README.md"), "Agent CLI Session Behavior")
+    chinese = _section(_read("README.zh-TW.md"), "Agent CLI 差異與限制")
+    assert "stdin" in english and "OpenCode 2" in english
+    assert "標準輸入" in chinese and "OpenCode 2" in chinese
+    for readme in (_read("README.md"), _read("README.zh-TW.md")):
+        assert "--variant low" in readme
+        assert (
+            '{ "action": "external_directory", "resource": "*", "effect": "ask" }'
+            in readme
+        )
+
+
 def test_opencode_2_resume_check_is_documented_bilingually():
     english = _read("docs/agent-session-lifecycle.md")
     chinese = _read("docs/agent-session-lifecycle.zh-TW.md")

@@ -112,5 +112,8 @@
   "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "실행 기록을 찾을 수 없습니다. 실행은 시작할 때 {docs_root}/ 아래, 또는 SPEC_DIR 이 가리키는 곳에 자신을 기록합니다.",
   "The OpenCode version could not be read: {output}": "OpenCode 버전을 읽을 수 없습니다: {output}",
   "{variable} sets --variant with no value": "{variable} 의 --variant 에 값이 없습니다",
-  "{variable} sets more than one OpenCode variant: {values}": "{variable} 에 OpenCode variant 가 둘 이상입니다: {values}"
+  "{variable} sets more than one OpenCode variant: {values}": "{variable} 에 OpenCode variant 가 둘 이상입니다: {values}",
+  "{variable} contains a bare word: {word}": "{variable} 에 플래그가 아닌 단어가 있습니다: {word}",
+  "{variable} contains --": "{variable} 에 -- 가 있습니다",
+  "{variable} sets --variant without a model": "{variable} 는 모델 없이 --variant 를 설정합니다"
 }

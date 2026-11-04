@@ -112,5 +112,8 @@
   "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "実行の記録が見つかりません。実行は開始時に {docs_root}/ 以下、または SPEC_DIR が指す場所に自身を記録します。",
   "The OpenCode version could not be read: {output}": "OpenCode のバージョンを読み取れませんでした: {output}",
   "{variable} sets --variant with no value": "{variable} の --variant に値がありません",
-  "{variable} sets more than one OpenCode variant: {values}": "{variable} に OpenCode の variant が複数あります: {values}"
+  "{variable} sets more than one OpenCode variant: {values}": "{variable} に OpenCode の variant が複数あります: {values}",
+  "{variable} contains a bare word: {word}": "{variable} にフラグではない語があります: {word}",
+  "{variable} contains --": "{variable} に -- があります",
+  "{variable} sets --variant without a model": "{variable} はモデルなしで --variant を設定しています"
 }

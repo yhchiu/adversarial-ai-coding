@@ -634,7 +634,7 @@ Archive 產物檔名前綴 `NNN-` 是單一 run 內的生成順序；每個 arti
 
 - Claude、Codex、Agy、OpenCode 都可放在 A、B、I slot；`MODEL_A`、`MODEL_B`、`IMPL_MODEL` 仍各自生效。OpenCode 的 `MODEL_*` 是 `provider/model`，AAC 不維護模型清單。worker 只按已捕捉的 id 精準續接，reviewer 每輪都開新 session。
 - `opencode` 是多模型 runtime。兩個 slot 都用 OpenCode 時仍是同一套工具，若要不同 runtime 請搭配 `claude` 或 `codex`。
-- 這次執行會呼叫 `opencode` 時，啟動時讀一次已安裝的主版本，由這個主版本決定 OpenCode 1 或 OpenCode 2 的契約。主版本不寫入 run snapshot，下一個行程（包含 `RESUME_RUN`）會再讀一次。
+- 這次執行會呼叫 `opencode` 時，啟動時讀一次已安裝的主版本，由這個主版本決定 OpenCode 1 或 OpenCode 2 的契約。主版本不寫入 run snapshot，下一個行程（包含 `RESUME_RUN`）會再讀一次。OpenCode 2 把提示詞寫入標準輸入，不把它當成位置參數，因此空白、換行與引號都保持原樣。
 - 全程只有一個 active worker session，不是每個 slot 各自保存一個。相同的完整 agent ref 可在同一迴圈續接；只要換到不同 agent ref(例如 slot 或 command 改變)，就立即丟棄已捕捉的 ID 並 fresh start。**只更換模型本身不會丟棄 active session**，因為模型值不是 `AgentRef` 的一部分；只有 slot/command 的 ref identity 改變(或 stage 邊界重設)才會丟棄。因此 I 進入逐任務迴圈時從新 session 開始，迴圈內可累積 context；切回 owner 跑完整關卡時，I 的 ID 會被丟棄，舊 owner session 也不會恢復。Stage 邊界同樣會清除 active session。Workflow prompt 會指向內容完整的 archive prompt 檔，不依賴保留 chat context。
 - workflow 絕不退回 Codex `--last`、Agy `--continue` 或 OpenCode `-c`:fresh call 抓不到 id 時會警告且下輪仍 fresh；已知 id 後某輪抓不到則保留原 id。Claude、Codex、OpenCode 的原始 JSONL 與 Agy log 都會存成每 attempt 的 `.cli.raw` artifact。
 - 內建 agent 執行時都會即時串流輸出，長步驟很少變成無聲等待。每一行串流都會加上 slot 與指令的前綴(例如 `[A claude] `)，並套用 `AGENT` 顏色類別。前綴的作用是讓 agent 自己寫的 `### 標題` 不會被誤判成 workflow 的 human checkpoint；它只在列印時加上，封存產物與 run log 永遠不含前綴。Claude、Codex 與 OpenCode 另外會把每個工具呼叫印成一行，標示工具名稱與它操作的檔案、指令或搜尋樣式，其餘輸入一律捨棄，因此一次大量寫檔也只佔一行。Claude 與 Codex 在工具呼叫「開始」時就印，因此跑十分鐘的指令執行中就看得到；OpenCode 只在呼叫「結束」時才印(失敗會標 `(failed)`)，所以慢的工具呼叫在回來之前是安靜的。Codex 把 shell 呼叫回報成完整的解譯器命令列，因此 `powershell -Command` 或 `bash -c` 這層包裝會被剝掉，只顯示你真正在意的那段指令。
@@ -702,6 +702,7 @@ AGENT_B=agy AGENT_B_ARGS='--effort=low' \
 - 確定性關卡由 workflow 執行，不採信 AI 自己回報的測試結果。
 - **agy agent 使用 `--dangerously-skip-permissions`**(該 CLI 無細粒度白名單)，只建議搭配 `USE_WORKTREE=1` 或容器使用。
 - **opencode agent 使用 `--auto`**:只要你沒有在 OpenCode 設定裡明確 deny 的權限一律自動核准。deny 規則是唯一的過濾器，請先寫好，或比照 agy 搭配 `USE_WORKTREE=1` 或容器使用。
+- OpenCode 2 預設允許 `external_directory`。若要在使用工作區外的路徑之前先詢問，加入這筆權限。AAC 不會替你寫入：`{ "action": "external_directory", "resource": "*", "effect": "ask" }`
 - claude / codex 都以最小權限運作；真正的完整隔離是容器(devcontainer)，branch/worktree 只隔離 git 狀態，不隔離檔案系統與網路。
 - 兩個 AI 互審**很燒 token**:`MAX_ROUNDS`、分級裁決、`commit_if_dirty`(無變更就跳過 commit 呼叫)都是止損機制。中止時已通過的 stage 均已 commit，可從斷點人工接手。
 - 雙 spec 模式會多花第二份候選、互審與比較表的 AI 呼叫；只有在規格決策值得額外成本時再開。

@@ -68,6 +68,10 @@ def impl_ref(owner: AgentRef, settings: Settings) -> AgentRef:
     # every rule of the resolved command applies, including the ones that
     # had to wait at startup while two dual-spec candidates were live.
     _validate_impl_args(settings, (ref.name,))
+    if ref.name == "opencode":
+        _check_opencode_slot(
+            settings, "IMPL_ARGS", agent_model(ref, settings), settings.impl_args
+        )
     return ref
 
 
@@ -194,6 +198,7 @@ def validate_agents(
             resolved["opencode"],
             opencode_version or _read_opencode_version_text,
         )
+        _validate_opencode_speech(settings)
     # Built-in agents resume by exact session IDs. Custom agents still have an
     # unknown session model, so identical custom command names remain blocked.
     if settings.agent_a == settings.agent_b:
@@ -380,6 +385,188 @@ def _reject_opencode_variant_conflict(variable: str, tokens: list[str]) -> None:
             variable=variable,
             values=", ".join(values),
         )
+
+
+# OpenCode 2 consumes the token after these flags. worktree is optional:
+# alone it is boolean, and a following flag is not its name.
+_OPENCODE_REQUIRED_VALUES = {
+    "--session",
+    "-s",
+    "--model",
+    "-m",
+    "--agent",
+    "--format",
+    "--file",
+    "-f",
+    "--title",
+    "--server",
+    "--variant",
+}
+_OPENCODE_OPTIONAL_VALUES = {"--worktree", "-w"}
+
+
+def _opencode_value_flag(token: str) -> tuple[str, bool] | None:
+    """A known value flag and whether its value is attached to the token."""
+    if token.startswith("--"):
+        name = token.partition("=")[0]
+        if name not in _OPENCODE_REQUIRED_VALUES and name not in _OPENCODE_OPTIONAL_VALUES:
+            return None
+        return name, "=" in token
+    for name in ("-w", "-s", "-m", "-f"):
+        if token == name:
+            return name, False
+        if token.startswith(name):
+            return name, True
+    return None
+
+
+def _opencode_flag_variants(tokens: list[str]) -> list[str]:
+    values: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--variant":
+            if index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                values.append(tokens[index + 1])
+                index += 2
+                continue
+            index += 1
+            continue
+        if token.startswith("--variant="):
+            value = token.removeprefix("--variant=")
+            if value:
+                values.append(value)
+        index += 1
+    return values
+
+
+def _without_opencode_variant(tokens: list[str]) -> list[str]:
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--variant":
+            if index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                index += 2
+            else:
+                index += 1
+            continue
+        if token.startswith("--variant="):
+            index += 1
+            continue
+        kept.append(token)
+        index += 1
+    return kept
+
+
+def _reject_opencode_2_words(variable: str, tokens: list[str]) -> None:
+    """Bare words and `--` are not slot args on OpenCode 2.
+
+    A known value flag consumes the next token when that token is not
+    itself a flag. Boolean flags and unknown flags consume nothing.
+    """
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            raise SettingsError("{variable} contains --", variable=variable)
+        if not token.startswith("-"):
+            raise SettingsError(
+                "{variable} contains a bare word: {word}",
+                variable=variable,
+                word=token,
+            )
+        flag = _opencode_value_flag(token)
+        if (
+            flag is not None
+            and not flag[1]
+            and index + 1 < len(tokens)
+            and not tokens[index + 1].startswith("-")
+        ):
+            index += 2
+            continue
+        index += 1
+
+
+def _reject_opencode_model_variant(
+    variable: str, model: str, tokens: list[str], *, major: int | None
+) -> None:
+    """Fold-time conflicts. `#` plus `--variant` fails on both product lines."""
+    embedded = model.partition("#")[2] if "#" in model else None
+    flags = _opencode_flag_variants(tokens)
+    if embedded is not None and flags:
+        raise SettingsError(
+            "{variable} sets more than one OpenCode variant: {values}",
+            variable=variable,
+            values=", ".join([embedded, *flags]),
+        )
+    if major != 2:
+        return
+    _reject_opencode_2_words(variable, tokens)
+    if flags and not model:
+        raise SettingsError(
+            "{variable} sets --variant without a model",
+            variable=variable,
+        )
+
+
+def _check_opencode_slot(
+    settings: Settings, variable: str, model: str, raw: str
+) -> None:
+    if not raw:
+        return
+    _reject_opencode_model_variant(
+        variable,
+        model,
+        _split_cli_args(variable, raw),
+        major=settings.opencode_major,
+    )
+
+
+def _models_when_impl_is_opencode(settings: Settings) -> list[str]:
+    """Every model an OpenCode implementation slot might still resolve to."""
+    if settings.impl_agent == "opencode" and settings.impl_model:
+        return [settings.impl_model]
+    owners = [("A", settings.agent_a, settings.model_a)]
+    if settings.dual_spec:
+        owners.append(("B", settings.agent_b, settings.model_b))
+    if settings.impl_agent == "opencode":
+        inherited = [model for _slot, command, model in owners if command == "opencode"]
+        return inherited or [""]
+    return [
+        settings.impl_model or model
+        for _slot, command, model in owners
+        if command == "opencode"
+    ]
+
+
+def _validate_opencode_speech(settings: Settings) -> None:
+    """OpenCode 2 grammar, plus a model variant that fights `--variant`."""
+    if settings.agent_a == "opencode":
+        _check_opencode_slot(
+            settings, "AGENT_A_ARGS", settings.model_a, settings.agent_a_args
+        )
+    if settings.agent_b == "opencode":
+        _check_opencode_slot(
+            settings, "AGENT_B_ARGS", settings.model_b, settings.agent_b_args
+        )
+    if not settings.impl_args:
+        return
+    rejections: list[SettingsError | None] = []
+    for candidate in _impl_candidates(settings):
+        if candidate != "opencode":
+            rejections.append(None)
+            continue
+        models = _models_when_impl_is_opencode(settings)
+        errors: list[SettingsError] = []
+        for model in models:
+            try:
+                _check_opencode_slot(settings, "IMPL_ARGS", model, settings.impl_args)
+            except SettingsError as exc:
+                errors.append(exc)
+        rejections.append(errors[0] if models and len(errors) == len(models) else None)
+    if rejections and all(item is not None for item in rejections):
+        raise rejections[0]
 
 
 def _validate_builtin_arg_tokens(
@@ -1286,9 +1473,15 @@ def _reviewer_codex(
 def _opencode_model_args(ref: AgentRef, settings: Settings) -> list[str]:
     args: list[str] = []
     model = agent_model(ref, settings)
+    tokens = agent_args(ref, settings)
+    if settings.opencode_major == 2:
+        flags = _opencode_flag_variants(tokens)
+        tokens = _without_opencode_variant(tokens)
+        if len(flags) == 1 and model and "#" not in model:
+            model = f"{model}#{flags[0]}"
     if model:
         args += ["-m", model]
-    args += agent_args(ref, settings)
+    args += tokens
     return args
 
 
@@ -1473,17 +1666,24 @@ def _format_opencode_cost(amounts: list[float]) -> str:
 
 
 def _run_opencode_json(
-    argv: list[str], io: AgentIO, ref: AgentRef
+    argv: list[str],
+    io: AgentIO,
+    ref: AgentRef,
+    stdin_text: str | None = None,
 ) -> tuple[int, str, str, str, str]:
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
+    if stdin_text is not None:
+        assert proc.stdin is not None
+        proc.stdin.write(stdin_text)
+        proc.stdin.close()
     rendered: list[str] = []
     quota: list[str] = []
     costs: list[float] = []
@@ -1738,8 +1938,13 @@ def _worker_opencode(
     ]
     if session.worker_session:
         argv += ["--session", session.worker_session]
-    argv.append(prompt)
-    rc, out, session_id, quota_text, cost = _run_opencode_json(argv, io, ref)
+    if settings.opencode_major == 2:
+        rc, out, session_id, quota_text, cost = _run_opencode_json(
+            argv, io, ref, prompt
+        )
+    else:
+        argv.append(prompt)
+        rc, out, session_id, quota_text, cost = _run_opencode_json(argv, io, ref)
     if session_id:
         session.worker_session = session_id
     elif not session.worker_session:
@@ -1767,9 +1972,12 @@ def _reviewer_opencode(
         "json",
         "--auto",
         *_opencode_model_args(ref, settings),
-        prompt,
     ]
-    rc, out, _, quota_text, cost = _run_opencode_json(argv, io, ref)
+    if settings.opencode_major == 2:
+        rc, out, _, quota_text, cost = _run_opencode_json(argv, io, ref, prompt)
+    else:
+        argv.append(prompt)
+        rc, out, _, quota_text, cost = _run_opencode_json(argv, io, ref)
     session.last_cost = cost
     return AgentResult(
         rc, out, quota_text=quota_text, quota_retry_after=io.quota_retry_after

@@ -112,5 +112,8 @@
   "No runs found. A run records itself under {docs_root}/ when it starts, or wherever SPEC_DIR pointed.": "找不到任何執行記錄。每次執行啟動時會把自己記錄在 {docs_root}/ 下,或是 SPEC_DIR 指定的位置。",
   "The OpenCode version could not be read: {output}": "無法讀取 OpenCode 的版本：{output}",
   "{variable} sets --variant with no value": "{variable} 的 --variant 沒有值",
-  "{variable} sets more than one OpenCode variant: {values}": "{variable} 設定了超過一個 OpenCode variant：{values}"
+  "{variable} sets more than one OpenCode variant: {values}": "{variable} 設定了超過一個 OpenCode variant：{values}",
+  "{variable} contains a bare word: {word}": "{variable} 含有一個沒有旗標的字：{word}",
+  "{variable} contains --": "{variable} 含有 --",
+  "{variable} sets --variant without a model": "{variable} 設定了 --variant，但沒有模型"
 }

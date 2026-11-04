@@ -489,7 +489,9 @@ def test_opencode_2_resume_checks_before_passing_session(tmp_path, monkeypatch):
     assert "resume this prompt" not in check["argv"]
     assert run["argv"][0] == "run"
     assert "--thinking" in run["argv"]
-    assert run["argv"][-3:] == ["--session", "ses_captured", "resume this prompt"]
+    assert run["argv"][-2:] == ["--session", "ses_captured"]
+    assert run["stdin"] == "resume this prompt"
+    assert "resume this prompt" not in run["argv"]
     assert session.worker_session == "ses_captured"
 
 
@@ -509,14 +511,16 @@ def test_a_missing_conversation_becomes_a_fresh_call_and_can_be_resumed(
     check, fresh = invocations(log)
     assert check["argv"][2] == "/api/session/ses_old"
     assert "--session" not in fresh["argv"]
-    assert fresh["argv"][-1] == "again"
+    assert fresh["stdin"] == "again"
+    assert "again" not in fresh["argv"]
 
     monkeypatch.delenv("OPENCODE_FAKE_ABSENT")
     agents.run_worker(ref, "later", settings, session, io)
 
     later_check, later_run = invocations(log)[-2:]
     assert later_check["argv"][2] == "/api/session/ses_new"
-    assert later_run["argv"][-3:] == ["--session", "ses_new", "later"]
+    assert later_run["argv"][-2:] == ["--session", "ses_new"]
+    assert later_run["stdin"] == "later"
 
 
 def test_a_fresh_call_with_no_id_does_not_send_the_lost_id(tmp_path, monkeypatch):
@@ -550,7 +554,8 @@ def test_an_empty_conversation_is_still_resumed(tmp_path, monkeypatch):
     check, run = invocations(log)
     assert check["argv"][2] == "/api/session/ses_empty"
     assert check["stdin"] == ""
-    assert run["argv"][-3:] == ["--session", "ses_empty", "continue"]
+    assert run["argv"][-2:] == ["--session", "ses_empty"]
+    assert run["stdin"] == "continue"
 
 
 def test_another_check_result_fails_without_a_fresh_call_or_a_quota_retry(
@@ -671,3 +676,208 @@ def test_entering_the_next_stage_still_clears_the_captured_id(make_ctx):
 
     assert ctx.session.worker_session == ""
     assert ctx.session.owner is None
+
+
+@pytest.mark.parametrize("role", ["worker", "reviewer", "impl"])
+def test_opencode_2_writes_the_exact_prompt_to_stdin(tmp_path, monkeypatch, role):
+    prompt = 'keep this\nprompt "exactly"'
+    env = (
+        {"AGENT_A": "claude", "AGENT_B": "codex", "IMPL_AGENT": "opencode"}
+        if role == "impl"
+        else {}
+    )
+    log, settings = prepare_line(tmp_path, monkeypatch, "2.2.5", env)
+    io, _ = make_io(tmp_path)
+    if role == "worker":
+        agents.run_worker(
+            AgentRef("A", "opencode"), prompt, settings, AgentSession(), io
+        )
+    elif role == "reviewer":
+        agents.run_reviewer(
+            AgentRef("B", "opencode"), prompt, settings, AgentSession(), io
+        )
+    else:
+        agents.run_worker(
+            AgentRef("I", "opencode"), prompt, settings, AgentSession(), io
+        )
+
+    run = invocations(log)[-1]
+    assert run["argv"][0] == "run"
+    assert prompt not in run["argv"]
+    assert run["stdin"] == prompt
+
+
+def test_opencode_2_folds_one_variant_into_the_model(tmp_path, monkeypatch):
+    log, settings = prepare_line(
+        tmp_path,
+        monkeypatch,
+        "2.2.5",
+        {"MODEL_A": "google/gemini-2.5-pro", "AGENT_A_ARGS": "--variant low"},
+    )
+    ref = AgentRef("A", "opencode")
+    io, _ = make_io(tmp_path)
+
+    agents.run_worker(ref, "prompt text", settings, AgentSession(), io)
+
+    run = invocations(log)[-1]["argv"]
+    assert "-m" in run
+    assert "google/gemini-2.5-pro#low" in run
+    assert "--variant" not in run
+    assert "low" not in run
+    assert agents.agent_model(ref, settings) == "google/gemini-2.5-pro"
+    assert agents.resolve_model_args(ref, settings) == "--variant low"
+
+
+def test_opencode_2_passes_a_model_that_already_names_a_variant(
+    tmp_path, monkeypatch
+):
+    log, settings = prepare_line(
+        tmp_path,
+        monkeypatch,
+        "2.2.5",
+        {"MODEL_A": "google/gemini-2.5-pro#high"},
+    )
+    io, _ = make_io(tmp_path)
+
+    agents.run_worker(
+        AgentRef("A", "opencode"), "prompt text", settings, AgentSession(), io
+    )
+
+    run = invocations(log)[-1]["argv"]
+    assert "google/gemini-2.5-pro#high" in run
+    assert "--variant" not in run
+
+
+@pytest.mark.parametrize("version", ["1.2.24", "2.2.5"])
+def test_a_model_variant_plus_a_flag_fails_startup(version):
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "MODEL_A": "google/gemini-2.5-pro#high",
+            "AGENT_A_ARGS": "--variant low",
+        }
+    )
+
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS") as exc_info:
+        validate_agents(
+            settings,
+            which=_which_unused,
+            opencode_version=lambda _path: version,
+        )
+
+    message = str(exc_info.value)
+    assert "high" in message and "low" in message
+
+
+def test_opencode_2_rejects_a_variant_without_a_model():
+    settings = make({"AGENT_A": "opencode", "AGENT_A_ARGS": "--variant low"})
+
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS") as exc_info:
+        validate_agents(
+            settings,
+            which=_which_unused,
+            opencode_version=lambda _path: "2.2.5",
+        )
+
+    assert "without a model" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        "--file README.md --title Note --agent build --server http://127.0.0.1:9 --worktree demo -w other -f notes.txt",
+        "--worktree",
+        "--worktree --thinking",
+        "-w",
+        "-w name",
+    ],
+)
+def test_opencode_2_accepts_known_flag_values(args):
+    validate_agents(
+        make({"AGENT_A": "opencode", "AGENT_A_ARGS": args}),
+        which=_which_unused,
+        opencode_version=lambda _path: "2.2.5",
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "word"),
+    [("--thinking low", "low"), ("--mystery low", "low"), ("keep", "keep")],
+)
+def test_opencode_2_rejects_a_bare_word(args, word):
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS") as exc_info:
+        validate_agents(
+            make({"AGENT_A": "opencode", "AGENT_A_ARGS": args}),
+            which=_which_unused,
+            opencode_version=lambda _path: "2.2.5",
+        )
+
+    assert word in str(exc_info.value)
+
+
+def test_opencode_2_rejects_a_double_dash():
+    with pytest.raises(SettingsError, match="AGENT_A_ARGS") as exc_info:
+        validate_agents(
+            make({"AGENT_A": "opencode", "AGENT_A_ARGS": "--thinking --"}),
+            which=_which_unused,
+            opencode_version=lambda _path: "2.2.5",
+        )
+
+    assert "--" in str(exc_info.value)
+
+
+def test_opencode_1_still_accepts_a_bare_word():
+    validate_agents(
+        make({"AGENT_A": "opencode", "AGENT_A_ARGS": "--thinking low"}),
+        which=_which_unused,
+        opencode_version=lambda _path: "1.2.24",
+    )
+
+
+def test_impl_opencode_2_words_wait_until_every_owner_would_reject_them():
+    both = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "keep",
+        }
+    )
+    with pytest.raises(SettingsError, match="IMPL_ARGS"):
+        validate_agents(
+            both, which=_which_unused, opencode_version=lambda _path: "2.2.5"
+        )
+
+    mixed = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "claude",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "keep",
+        }
+    )
+    validate_agents(
+        mixed, which=_which_unused, opencode_version=lambda _path: "2.2.5"
+    )
+    with pytest.raises(SettingsError, match="bare word"):
+        agents.impl_ref(AgentRef("A", "opencode"), mixed)
+    agents.impl_ref(AgentRef("B", "claude"), mixed)
+
+
+def test_impl_variant_without_a_model_waits_for_the_owner():
+    settings = make(
+        {
+            "AGENT_A": "opencode",
+            "AGENT_B": "opencode",
+            "MODEL_A": "google/gemini-2.5-pro",
+            "DUAL_SPEC": "1",
+            "IMPL_ARGS": "--variant low",
+        }
+    )
+
+    validate_agents(
+        settings, which=_which_unused, opencode_version=lambda _path: "2.2.5"
+    )
+    agents.impl_ref(AgentRef("A", "opencode"), settings)
+    with pytest.raises(SettingsError, match="without a model"):
+        agents.impl_ref(AgentRef("B", "opencode"), settings)
