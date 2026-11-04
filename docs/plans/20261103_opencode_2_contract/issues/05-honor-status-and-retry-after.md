@@ -4,14 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A 429 in `error.status` counts as a rate limit even when the text does not say "rate limit".
-- [ ] The process exit code is preserved, so a non-zero failure is what lets the existing quota loop retry a classified 429.
-- [ ] A usable `retryAfterMs` on a classified quota failure is the wait.
-- [ ] A `retryAfterMs` longer than `RETRY_MAX_RESET_WAIT` stops the run as resumable and does not sleep.
-- [ ] A missing or unusable `retryAfterMs` leaves the current wording parser and backoff in place.
-- [ ] Grok spending-limit text still stops the run as resumable and does not retry.
-- [ ] OpenCode 1 still treats `error.data.statusCode` 429 as a rate limit.
-- [ ] Reported cost remains the sum of `step_finish` costs. A reported zero and a missing report stay distinct.
-- [ ] Tests drive the worker and reviewer calls with a fake `opencode` and the existing quota retry. They do not need a live binary, and they do not add a separate parser test seam.
+- [x] A 429 in `error.status` counts as a rate limit even when the text does not say "rate limit".
+- [x] The process exit code is preserved, so a non-zero failure is what lets the existing quota loop retry a classified 429.
+- [x] A usable `retryAfterMs` on a classified quota failure is the wait.
+- [x] A `retryAfterMs` longer than `RETRY_MAX_RESET_WAIT` stops the run as resumable and does not sleep.
+- [x] A missing or unusable `retryAfterMs` leaves the current wording parser and backoff in place.
+- [x] Grok spending-limit text still stops the run as resumable and does not retry.
+- [x] OpenCode 1 still treats `error.data.statusCode` 429 as a rate limit.
+- [x] Reported cost remains the sum of `step_finish` costs. A reported zero and a missing report stay distinct.
+- [x] Tests drive the worker and reviewer calls with a fake `opencode` and the existing quota retry. They do not need a live binary, and they do not add a separate parser test seam.
