@@ -346,6 +346,9 @@ def test_print_agents_missing_template_fails(capsys, tmp_path):
 
 def test_not_a_git_repo_blocked(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
+    # Lookup runs before the git-root check. Stub it so a machine without
+    # sh or pwd still reaches the refusal this test is about.
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "C:/fake/" + name)
     rc = cli.main(
         ["task"], {"AGENT_A": "sh", "AGENT_B": "pwd"}, stdin_isatty=False
     )
